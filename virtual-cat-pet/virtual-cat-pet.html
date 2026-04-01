@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Virtual Cat Pet</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    /* ── Reset & base ───────────────────────────────────────────── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: #0F380F;           /* darkest green — page bg */
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      font-family: 'Press Start 2P', monospace;
+      color: #9BBC0F;
+    }
+
+    /* ── Outer widget ───────────────────────────────────────────── */
+    #widget {
+      background-color: #306230;           /* UI chrome */
+      border: 3px solid #0F380F;
+      border-radius: 18px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7),
+                  0 2px 4px rgba(0, 0, 0, 0.5);
+      max-width: 360px;
+      width: 100%;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────── */
+    #header {
+      background-color: #0F380F;
+      border-radius: 8px;
+      text-align: center;
+      padding: 8px 4px;
+      font-size: 10px;
+      letter-spacing: 0.05em;
+      color: #9BBC0F;
+    }
+
+    /* ── Screen area ────────────────────────────────────────────── */
+    #screen {
+      background-color: #9BBC0F;           /* lightest green — LCD bg */
+      border-radius: 6px;
+      box-shadow: inset 0 3px 10px rgba(15, 56, 15, 0.55),
+                  inset 0 0 3px rgba(15, 56, 15, 0.35);
+      padding: 12px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 140px;
+    }
+
+    #cat-screen {
+      font-family: monospace;
+      white-space: pre;
+      line-height: 1.2;
+      font-size: 13px;
+      color: #0F380F;                      /* cat art — darkest on light screen */
+      /* Fixed dimensions prevent layout reflow during animation */
+      width: 14ch;
+      min-height: 8lh;
+      overflow: hidden;
+    }
+
+    /* ── Stat bars section ──────────────────────────────────────── */
+    #stats {
+      background-color: #9BBC0F;
+      border-radius: 6px;
+      box-shadow: inset 0 2px 6px rgba(15, 56, 15, 0.35);
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 7px;
+      color: #0F380F;
+    }
+
+    .stat-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .stat-label {
+      width: 62px;
+      flex-shrink: 0;
+    }
+
+    .stat-bar {
+      font-family: monospace;
+      font-size: 11px;
+      letter-spacing: -0.5px;
+      color: #306230;
+    }
+
+    /* ── Age / status line ──────────────────────────────────────── */
+    #info-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 6px;
+      color: #0F380F;
+      padding: 0 2px;
+    }
+
+    /* ── Button row ─────────────────────────────────────────────── */
+    #buttons {
+      display: flex;
+      justify-content: space-around;
+      gap: 8px;
+    }
+
+    button {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 7px;
+      background-color: #306230;           /* button face */
+      color: #9BBC0F;                      /* button text */
+      border: 2px solid #0F380F;
+      border-radius: 8px;
+      padding: 8px 10px;
+      cursor: pointer;
+      flex: 1;
+      transition: filter 0.05s;
+      box-shadow: 0 3px 0 #0F380F;
+    }
+
+    button:hover {
+      filter: brightness(1.15);
+    }
+
+    button:active {
+      transform: translateY(3px);
+      box-shadow: none;
+      filter: brightness(0.9);
+    }
+
+    button:disabled {
+      filter: brightness(0.55);
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: 0 3px 0 #0F380F;
+    }
+
+    /* ── Resurrect button (hidden by default) ───────────────────── */
+    #btn-resurrect {
+      display: none;
+      width: 100%;
+      font-size: 7px;
+    }
+
+    /* ── Name-prompt overlay (visible by default) ───────────────── */
+    #name-prompt {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background-color: #0F380F;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 20px;
+      padding: 24px;
+    }
+
+    #name-prompt h1 {
+      font-size: 10px;
+      color: #9BBC0F;
+      text-align: center;
+      line-height: 1.8;
+    }
+
+    #name-prompt p {
+      font-size: 7px;
+      color: #8BAC0F;
+      text-align: center;
+      line-height: 2;
+    }
+
+    #name-prompt input[type="text"] {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 10px;
+      background-color: #9BBC0F;
+      color: #0F380F;
+      border: 3px solid #306230;
+      border-radius: 6px;
+      padding: 8px 12px;
+      width: 100%;
+      max-width: 260px;
+      text-align: center;
+      outline: none;
+    }
+
+    #name-prompt input[type="text"]:focus {
+      border-color: #9BBC0F;
+    }
+
+    #name-prompt button {
+      font-size: 8px;
+      padding: 10px 20px;
+      width: auto;
+      flex: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Name-prompt overlay (shown on first run) ──────────────── -->
+  <div id="name-prompt">
+    <h1>VIRTUAL<br>CAT PET</h1>
+    <p>What will you name<br>your new cat?</p>
+    <input type="text" id="name-input" maxlength="12" placeholder="e.g. Mochi" />
+    <button id="btn-start">START &gt;</button>
+  </div>
+
+  <!-- ── Main game widget ──────────────────────────────────────── -->
+  <div id="widget">
+
+    <!-- Header: cat name -->
+    <div id="header">
+      <span id="cat-name">— — —</span>
+    </div>
+
+    <!-- LCD screen: cat animation -->
+    <div id="screen">
+      <pre id="cat-screen">
+  /\_____/\
+ (  o   o  )
+ (  =^=  )
+  (--m-m--)
+      </pre>
+    </div>
+
+    <!-- Stat bars -->
+    <div id="stats">
+      <div class="stat-row">
+        <span class="stat-label">&#x1F356; Hunger</span>
+        <span class="stat-bar" id="stat-hunger">██████████</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">&#x2665; Happy</span>
+        <span class="stat-bar" id="stat-happiness">██████████</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">&#x271A; Health</span>
+        <span class="stat-bar" id="stat-health">██████████</span>
+      </div>
+      <!-- Age / status info row -->
+      <div id="info-row">
+        <span id="age-label">Day 0</span>
+        <span id="status-label">idle</span>
+      </div>
+    </div>
+
+    <!-- Action buttons -->
+    <div id="buttons">
+      <button id="btn-feed">Feed</button>
+      <button id="btn-play">Play</button>
+      <button id="btn-care">Care</button>
+    </div>
+
+    <!-- Resurrect button (hidden until death) -->
+    <button id="btn-resurrect">&#x2764; Resurrect</button>
+
+  </div>
+
+
+  <script>
+    /* ── CookieManager ───────────────────────────────────────────────
+     * Pure utility for persisting game state via the `vcat_state` cookie.
+     * No DOM access, no game-logic knowledge.
+     * ────────────────────────────────────────────────────────────── */
+    const CookieManager = {
+      COOKIE_NAME: 'vcat_state',
+
+      /**
+       * Serialise stateObj to URI-encoded JSON and write it as a cookie
+       * that expires 365 days from now.
+       * @param {object} stateObj
+       */
+      save(stateObj) {
+        const expires = new Date();
+        expires.setFullYear(expires.getFullYear() + 1);
+        document.cookie = `${this.COOKIE_NAME}=${encodeURIComponent(JSON.stringify(stateObj))}; expires=${expires.toUTCString()}; path=/`;
+      },
+
+      /**
+       * Read and parse the `vcat_state` cookie.
+       * @returns {object|null} parsed state object, or null if absent / corrupt
+       */
+      load() {
+        const prefix = `${this.COOKIE_NAME}=`;
+        const entry = document.cookie
+          .split('; ')
+          .find(c => c.startsWith(prefix));
+        if (!entry) return null;
+        try {
+          return JSON.parse(decodeURIComponent(entry.slice(prefix.length)));
+        } catch (_) {
+          return null;
+        }
+      },
+
+      /**
+       * Delete the `vcat_state` cookie by back-dating its expiry.
+       */
+      clear() {
+        document.cookie = `${this.COOKIE_NAME}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
+      }
+    };
+  </script>
+
+  <script>
+    /* ── CAT_FRAMES ──────────────────────────────────────────────────
+     * All 8 animation states × 2 frames each.
+     * Every frame is drawn on a 14-column × 8-row grid (padded with
+     * spaces so the <pre> bounding box never changes width).
+     * ────────────────────────────────────────────────────────────── */
+    const CAT_FRAMES = {
+
+      /* Sitting cat — tail sways left / right */
+      idle: [
+        // frame 0: tail left
+        "  /\\_____/\\ \n" +
+        " (  o   o  )\n" +
+        "  (  =^=  ) \n" +
+        "  (       ) \n" +
+        "   )     (  \n" +
+        "  (_,---,_) \n" +
+        " ~           \n" +
+        "             ",
+        // frame 1: tail right
+        "  /\\_____/\\ \n" +
+        " (  o   o  )\n" +
+        "  (  =^=  ) \n" +
+        "  (       ) \n" +
+        "   )     (  \n" +
+        "  (_,---,_) \n" +
+        "           ~ \n" +
+        "             "
+      ],
+
+      /* Cat looking upward with empty bowl */
+      hungry: [
+        // frame 0
+        "  /\\_____/\\ \n" +
+        " (  ^ . ^  )\n" +
+        "  (  =^=  ) \n" +
+        "  (       ) \n" +
+        "   )     (  \n" +
+        "  (_,---,_) \n" +
+        "  [  ..  ]  \n" +
+        "             ",
+        // frame 1: eyes looking further up
+        "  /\\_____/\\ \n" +
+        " (  ^ ^ ^  )\n" +
+        "  (  =^=  ) \n" +
+        "  (       ) \n" +
+        "   )     (  \n" +
+        "  (_,---,_) \n" +
+        "  [  ..  ]  \n" +
+        "             "
+      ],
+
+      /* Cat with drooping ears / sad expression */
+      unhappy: [
+        // frame 0
+        " \\._____./  \n" +
+        " (  - . -  )\n" +
+        "  ( =^=   ) \n" +
+        "  (       ) \n" +
+        "   )     (  \n" +
+        "  (_,---,_) \n" +
+        "  . . . . . \n" +
+        "             ",
+        // frame 1: slightly different droop
+        " \\._____./  \n" +
+        " (  - _ -  )\n" +
+        "  ( =^=   ) \n" +
+        "  (       ) \n" +
+        "   )     (  \n" +
+        "  (_,---,_) \n" +
+        "  . . . . . \n" +
+        "             "
+      ],
+
+      /* Cat lying down, sick — wavy lines alternate position */
+      sick: [
+        // frame 0: waves above
+        "  ~~  ~~    \n" +
+        " /\\_______/\\\n" +
+        "(  x . x   )\n" +
+        " \\__________/\n" +
+        "             \n" +
+        "             \n" +
+        "             \n" +
+        "             ",
+        // frame 1: waves shifted
+        "   ~~ ~~    \n" +
+        " /\\_______/\\\n" +
+        "(  x . x   )\n" +
+        " \\__________/\n" +
+        "             \n" +
+        "             \n" +
+        "             \n" +
+        "             "
+      ],
+
+      /* Cat at bowl — head dips in frame 1 */
+      eating: [
+        // frame 0: head up
+        "  /\\_____/\\ \n" +
+        " (  o   o  )\n" +
+        "  (  =^=  ) \n" +
+        "  (       ) \n" +
+        "   )     (  \n" +
+        "  (_,---,_) \n" +
+        "  [~~~~~~]  \n" +
+        "             ",
+        // frame 1: head dipped to bowl
+        "  /\\_____/\\ \n" +
+        " (  -   -  )\n" +
+        "  (  =^=  ) \n" +
+        "  (       ) \n" +
+        "   )    ,(  \n" +
+        "  (_,-v-,_) \n" +
+        "  [~~~~~~]  \n" +
+        "             "
+      ],
+
+      /* Cat batting a ball — ball moves left ↔ right */
+      playing: [
+        // frame 0: ball on left
+        "  /\\_____/\\ \n" +
+        " (  ^ . ^  )\n" +
+        "  (  =^=  ) \n" +
+        "  (  o    ) \n" +
+        " o )     (  \n" +
+        "  (_,---,_) \n" +
+        "             \n" +
+        "             ",
+        // frame 1: ball on right
+        "  /\\_____/\\ \n" +
+        " (  ^ . ^  )\n" +
+        "  (  =^=  ) \n" +
+        "  (    o  ) \n" +
+        "   )     ( o\n" +
+        "  (_,---,_) \n" +
+        "             \n" +
+        "             "
+      ],
+
+      /* Cat curled up sleeping — z count alternates */
+      sleeping: [
+        // frame 0
+        "             \n" +
+        "    z        \n" +
+        "  /\\_____/\\ \n" +
+        " ( - . -   )\n" +
+        "  (__^____) \n" +
+        "  (  ___  ) \n" +
+        "  (_______)  \n" +
+        "             ",
+        // frame 1
+        "             \n" +
+        "    z  Z     \n" +
+        "  /\\_____/\\ \n" +
+        " ( - . -   )\n" +
+        "  (__^____) \n" +
+        "  (  ___  ) \n" +
+        "  (_______)  \n" +
+        "             "
+      ],
+
+      /* Cat on its back, × eyes */
+      dead: [
+        // frame 0
+        "  /\\_____/\\ \n" +
+        " (  x   x  )\n" +
+        "  (  =^=  ) \n" +
+        "  (_______) \n" +
+        "  /|     |\\ \n" +
+        " / |     | \\\n" +
+        "   |     |  \n" +
+        "             ",
+        // frame 1 (identical — no animation)
+        "  /\\_____/\\ \n" +
+        " (  x   x  )\n" +
+        "  (  =^=  ) \n" +
+        "  (_______) \n" +
+        "  /|     |\\ \n" +
+        " / |     | \\\n" +
+        "   |     |  \n" +
+        "             "
+      ]
+    };
+  </script>
+
+  <script>
+    /* ── GameState ────────────────────────────────────────────────────
+     * In-memory game state. Always initialise via GameState.init().
+     * Persist any mutation with GameState.save().
+     * ────────────────────────────────────────────────────────────── */
+    const GameState = {
+      /* ── State fields (defaults shown) ── */
+      name:         '',
+      hunger:       80,
+      happiness:    80,
+      health:       100,
+      age:          0,
+      lastTick:     0,
+      neglectSince: null,
+      isDead:       false,
+      forceSick:    false,
+      cooldowns:    { feed: 0, play: 0, care: 0 },
+
+      /* ── Fresh-start defaults ── */
+      _defaults() {
+        return {
+          hunger:       80,
+          happiness:    80,
+          health:       100,
+          age:          0,
+          lastTick:     Date.now(),
+          neglectSince: null,
+          isDead:       false,
+          forceSick:    false,
+          cooldowns:    { feed: 0, play: 0, care: 0 }
+        };
+      },
+
+      /**
+       * Initialise state from cookie or show the name-prompt overlay.
+       * Called once on DOMContentLoaded.
+       */
+      init() {
+        const loaded = CookieManager.load();
+        const overlay = document.getElementById('name-prompt');
+
+        if (loaded && typeof loaded === 'object') {
+          // Restore from cookie, back-filling any missing fields.
+          const merged = Object.assign({}, this._defaults(), loaded);
+          // lastTick must be preserved exactly as loaded (for offline catch-up).
+          if (loaded.lastTick !== undefined) merged.lastTick = loaded.lastTick;
+          Object.assign(this, merged);
+          overlay.style.display = 'none';
+          this._startGame();
+        } else {
+          // No valid cookie — show the name prompt.
+          overlay.style.display = '';
+          this._bindNamePrompt(overlay);
+        }
+      },
+
+      /**
+       * Wire up the name-prompt submit button (once).
+       * @param {HTMLElement} overlay
+       */
+      _bindNamePrompt(overlay) {
+        const input  = document.getElementById('name-input');
+        const button = document.getElementById('btn-start');
+
+        const onSubmit = () => {
+          const trimmed = input.value.trim();
+          if (!trimmed) return; // reject blank — keep overlay visible
+          // Populate fresh state.
+          Object.assign(this, this._defaults(), { name: trimmed });
+          CookieManager.save(this);
+          overlay.style.display = 'none';
+          // Remove handler to prevent double-init.
+          button.removeEventListener('click', onSubmit);
+          this._startGame();
+        };
+
+        button.addEventListener('click', onSubmit);
+        // Also allow pressing Enter in the input field.
+        input.addEventListener('keydown', e => {
+          if (e.key === 'Enter') onSubmit();
+        });
+      },
+
+      /**
+       * Kick off the game loop. Called after state is ready.
+       * (Actual loop logic lives in later stories; this is the hook.)
+       */
+      _startGame() {
+        // Wire action buttons (ActionHandler defined in a later <script> block).
+        if (typeof ActionHandler !== 'undefined') ActionHandler.init();
+        // Delegate full game startup to the Game orchestrator (defined last).
+        if (typeof Game !== 'undefined') Game.start();
+      },
+
+      /**
+       * Convenience method — persists the current in-memory state.
+       * All components call this after mutating state.
+       */
+      save() {
+        CookieManager.save(this);
+      }
+    };
+
+    /* Auto-initialise once the DOM is ready. */
+    document.addEventListener('DOMContentLoaded', () => GameState.init());
+  </script>
+
+  <script>
+    /* ── DecayEngine ─────────────────────────────────────────────────
+     * Applies time-based stat decay to GameState.
+     * tick(elapsedMs) — apply decay for the given duration in ms.
+     * catchUp()       — apply offline decay since GameState.lastTick.
+     * ────────────────────────────────────────────────────────────── */
+    const DecayEngine = {
+      /** Maximum offline catch-up time (7 days in ms) — UX safety cap. */
+      MAX_CATCHUP_MS: 604_800_000,
+
+      /**
+       * Apply stat decay for `elapsedMs` milliseconds.
+       * Jitter (±20 %) is applied independently to hunger and happiness.
+       * Health only decays when hunger < 20 OR happiness < 20.
+       * Age always increases. All stats are clamped after mutation.
+       * Returns immediately if GameState.isDead.
+       * @param {number} elapsedMs
+       */
+      tick(elapsedMs) {
+        if (GameState.isDead) return;
+
+        // Guard against negative elapsed (clock skew / tampered cookie).
+        const ms = Math.max(0, elapsedMs);
+
+        // ── Hunger: −1 pt per 240 000 ms with jitter ──────────────
+        const hungerJitter    = 0.8 + Math.random() * 0.4; // [0.8, 1.2]
+        const hungerDelta     = (ms / 240_000) * hungerJitter;
+        GameState.hunger      = Math.max(0, Math.min(100, GameState.hunger - hungerDelta));
+
+        // ── Happiness: −1 pt per 360 000 ms with jitter ───────────
+        const happinessJitter = 0.8 + Math.random() * 0.4;
+        const happinessDelta  = (ms / 360_000) * happinessJitter;
+        GameState.happiness   = Math.max(0, Math.min(100, GameState.happiness - happinessDelta));
+
+        // ── Health: −1 pt per 480 000 ms (no jitter), conditional ─
+        if (GameState.hunger < 20 || GameState.happiness < 20) {
+          const healthDelta   = ms / 480_000;
+          GameState.health    = Math.max(0, Math.min(100, GameState.health - healthDelta));
+        }
+
+        // ── Age: +1 day per 3 600 000 ms (no jitter) ──────────────
+        GameState.age         = Math.max(0, GameState.age + ms / 3_600_000);
+
+        // Persist after every live tick.
+        GameState.lastTick = Date.now();
+        GameState.save();
+      },
+
+      /**
+       * Compute the elapsed time since GameState.lastTick and call tick()
+       * to catch up any offline decay. Caps catch-up at MAX_CATCHUP_MS.
+       * Should be called once during page-load initialisation.
+       */
+      catchUp() {
+        const now     = Date.now();
+        let   elapsed = now - GameState.lastTick;
+
+        if (elapsed < 0)                    elapsed = 0;
+        if (elapsed > this.MAX_CATCHUP_MS)  elapsed = this.MAX_CATCHUP_MS;
+
+        this.tick(elapsed);
+        // Ensure lastTick reflects the moment of catch-up, not the
+        // potentially far-past value captured inside tick().
+        GameState.lastTick = Date.now();
+        GameState.save();
+      }
+    };
+  </script>
+
+  <script>
+    /* ── NeglectChecker ──────────────────────────────────────────────
+     * Called after every DecayEngine.tick().
+     * Tracks how long the cat has been in a critically low state and
+     * triggers forceSick after 120 continuous minutes of neglect.
+     * ────────────────────────────────────────────────────────────── */
+    const NeglectChecker = {
+      /**
+       * Evaluate neglect conditions against the current GameState.
+       * Mutates GameState.neglectSince and GameState.forceSick.
+       * Does nothing if GameState.isDead.
+       */
+      evaluate() {
+        if (GameState.isDead) return;
+
+        const neglected = GameState.hunger < 20 || GameState.happiness < 20;
+
+        if (neglected) {
+          // Start neglect timer if not already running.
+          if (GameState.neglectSince === null) {
+            GameState.neglectSince = Date.now();
+          }
+          // Check if 120 minutes of neglect have elapsed.
+          if (Date.now() - GameState.neglectSince >= 7_200_000) {
+            GameState.forceSick = true;
+          }
+        } else {
+          // Both stats recovered — reset neglect timer.
+          // NOTE: forceSick is NOT cleared here; only the Care action clears it.
+          GameState.neglectSince = null;
+        }
+      }
+    };
+  </script>
+
+  <script>
+    /* ── ActionHandler ───────────────────────────────────────────────
+     * Implements the Feed, Play, and Care player actions.
+     * Reads / mutates GameState, then calls GameState.save().
+     * Transient animation state is stored here for StateClassifier.
+     * ────────────────────────────────────────────────────────────── */
+    const ActionHandler = {
+      /** Current transient animation name ('eating' | 'playing' | null) */
+      transientState: null,
+      /** Timestamp (ms) when the transient animation expires */
+      transientUntil: 0,
+
+      /**
+       * Feed the cat: +35 hunger (capped 100), 2-min cooldown, eating anim.
+       * No-op when dead or cooldown active.
+       */
+      feed() {
+        if (GameState.isDead) return;
+        if (Date.now() < GameState.cooldowns.feed) return;
+
+        GameState.hunger = Math.min(100, GameState.hunger + 35);
+        GameState.cooldowns.feed = Date.now() + 120_000;
+        this.transientState = 'eating';
+        this.transientUntil = Date.now() + 2_000;
+        GameState.save();
+      },
+
+      /**
+       * Play with the cat: +28 happiness (capped 100), 3-min cooldown, playing anim.
+       * No-op when dead, sick (forceSick), or cooldown active.
+       */
+      play() {
+        if (GameState.isDead) return;
+        if (GameState.forceSick) return;
+        if (Date.now() < GameState.cooldowns.play) return;
+
+        GameState.happiness = Math.min(100, GameState.happiness + 28);
+        GameState.cooldowns.play = Date.now() + 180_000;
+        this.transientState = 'playing';
+        this.transientUntil = Date.now() + 2_000;
+        GameState.save();
+      },
+
+      /**
+       * Care for the cat: +40 health (capped 100), clears forceSick, 5-min cooldown.
+       * No-op when dead, cooldown active, AND neither forceSick nor health < 40.
+       */
+      care() {
+        if (GameState.isDead) return;
+        if (Date.now() < GameState.cooldowns.care) return;
+        // Care is only available when sick or health is critically low.
+        if (!GameState.forceSick && GameState.health >= 40) return;
+
+        GameState.health = Math.min(100, GameState.health + 40);
+        GameState.forceSick = false;
+        GameState.cooldowns.care = Date.now() + 300_000;
+        GameState.save();
+      },
+
+      /**
+       * Wire click listeners to the three action buttons.
+       * Called once during game startup.
+       */
+      init() {
+        document.getElementById('btn-feed').addEventListener('click', () => this.feed());
+        document.getElementById('btn-play').addEventListener('click', () => this.play());
+        document.getElementById('btn-care').addEventListener('click', () => this.care());
+      }
+    };
+  </script>
+
+  <script>
+    /* ── StateClassifier ─────────────────────────────────────────────
+     * Pure function that maps GameState + ActionHandler transient flags
+     * onto exactly one cat-state string.
+     * Priority order (highest first):
+     *   dead → sick → eating → playing → sleeping → hungry → unhappy → idle
+     * ────────────────────────────────────────────────────────────── */
+    const StateClassifier = {
+      /** Timestamp (ms) until which the cat is sleeping (0 = not sleeping) */
+      sleepUntil: 0,
+
+      /**
+       * Return the current cat state string.
+       * @returns {'dead'|'sick'|'eating'|'playing'|'sleeping'|'hungry'|'unhappy'|'idle'}
+       */
+      classify() {
+        if (GameState.isDead) return 'dead';
+        if (GameState.forceSick || GameState.health < 30) return 'sick';
+
+        const now = Date.now();
+        if (ActionHandler.transientState === 'eating'  && now < ActionHandler.transientUntil) return 'eating';
+        if (ActionHandler.transientState === 'playing' && now < ActionHandler.transientUntil) return 'playing';
+        if (now < this.sleepUntil) return 'sleeping';
+        if (GameState.hunger < 30) return 'hungry';
+        if (GameState.happiness < 30) return 'unhappy';
+        return 'idle';
+      },
+
+      /**
+       * Called once per 10-second game tick.
+       * If the cat is otherwise idle, roll a ~1.67 % chance to trigger a
+       * 30-second sleep event (≈ 10 % / 6 ticks per minute).
+       */
+      tickSleep() {
+        // Only trigger sleep when the cat is currently in the idle state.
+        if (this.classify() !== 'idle') return;
+        if (Math.random() < 0.0167) {
+          this.sleepUntil = Date.now() + 30_000;
+        }
+      }
+    };
+  </script>
+
+  <script>
+    /* ── AnimationRenderer ───────────────────────────────────────────
+     * Drives the cat ASCII animation at ~4 FPS (250 ms interval).
+     * Uses StateClassifier.classify() and CAT_FRAMES to update
+     * the #cat-screen <pre> element each tick.
+     * ────────────────────────────────────────────────────────────── */
+    const AnimationRenderer = {
+      /** The setInterval handle (null when stopped) */
+      _intervalId:  null,
+      /** Currently displayed frame index (0 or 1) */
+      _frameIdx:    0,
+      /** Last state returned by StateClassifier.classify() */
+      _prevState:   null,
+
+      /**
+       * Start the 4-FPS animation loop.
+       * Safe to call even if already running (idempotent).
+       */
+      start() {
+        if (this._intervalId !== null) return; // already running
+        this._intervalId = setInterval(() => this._tick(), 250);
+      },
+
+      /**
+       * Stop the animation loop and freeze the display.
+       */
+      stop() {
+        if (this._intervalId !== null) {
+          clearInterval(this._intervalId);
+          this._intervalId = null;
+        }
+      },
+
+      /**
+       * Single animation tick — called every 250 ms.
+       * Determines the current state, resets frame on transition,
+       * then writes the appropriate frame to #cat-screen.
+       */
+      _tick() {
+        const state = StateClassifier.classify();
+
+        // Reset to frame 0 on any state transition.
+        if (state !== this._prevState) {
+          this._frameIdx = 0;
+          this._prevState = state;
+        } else {
+          // Toggle between frame 0 and frame 1.
+          this._frameIdx = this._frameIdx === 0 ? 1 : 0;
+        }
+
+        const el = document.getElementById('cat-screen');
+        if (el && CAT_FRAMES[state]) {
+          el.textContent = CAT_FRAMES[state][this._frameIdx];
+        }
+
+        // Also refresh non-animation UI (cooldown countdowns etc.) at 4 FPS.
+        if (typeof UIRenderer !== 'undefined') UIRenderer.render();
+      }
+    };
+  </script>
+
+  <script>
+    /* ── UIRenderer ──────────────────────────────────────────────────
+     * Reads GameState (and StateClassifier) and updates all non-animation
+     * DOM elements: stat bars, age/status labels, button states.
+     * Call UIRenderer.render() on every game tick.
+     * ────────────────────────────────────────────────────────────── */
+    const UIRenderer = {
+      /**
+       * Render one frame of UI state into the DOM.
+       * Safe to call before game start — returns early if GameState has
+       * no name yet (uninitialised).
+       */
+      render() {
+        // Guard: don't render until state is populated.
+        if (!GameState || !GameState.name) return;
+
+        const now = Date.now();
+
+        /* ── Cat name ────────────────────────────────────────────── */
+        this._setText('cat-name', GameState.name);
+
+        /* ── Stat bars ───────────────────────────────────────────── */
+        this._setBar('stat-hunger',    GameState.hunger);
+        this._setBar('stat-happiness', GameState.happiness);
+        this._setBar('stat-health',    GameState.health);
+
+        /* ── Age / status ────────────────────────────────────────── */
+        this._setText('age-label',    `Day ${Math.floor(GameState.age)}`);
+        this._setText('status-label', StateClassifier.classify());
+
+        /* ── Dead / alive visibility ─────────────────────────────── */
+        const buttons    = ['btn-feed', 'btn-play', 'btn-care'];
+        const resurrect  = document.getElementById('btn-resurrect');
+
+        if (GameState.isDead) {
+          buttons.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+          });
+          if (resurrect) resurrect.style.display = '';
+          return; // nothing more to render when dead
+        }
+
+        // Ensure action buttons are visible and resurrect is hidden.
+        buttons.forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.style.display = '';
+        });
+        if (resurrect) resurrect.style.display = 'none';
+
+        /* ── Feed button ─────────────────────────────────────────── */
+        this._renderButton('btn-feed', GameState.cooldowns.feed, now, false);
+
+        /* ── Play button ─────────────────────────────────────────── */
+        this._renderButton('btn-play', GameState.cooldowns.play, now, GameState.forceSick);
+
+        /* ── Care button ─────────────────────────────────────────── */
+        const careBlocked = !GameState.forceSick && GameState.health >= 40;
+        this._renderButton('btn-care', GameState.cooldowns.care, now, careBlocked);
+      },
+
+      /* ── Helpers ────────────────────────────────────────────────── */
+
+      /**
+       * Set an element's textContent by id (no-op if missing).
+       */
+      _setText(id, text) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+      },
+
+      /**
+       * Render a stat bar as filled (█) / empty (░) blocks (10 total).
+       * @param {string} id   Element id
+       * @param {number} value Stat value 0–100
+       */
+      _setBar(id, value) {
+        const filled = Math.round(Math.max(0, Math.min(100, value)) / 10);
+        const bar    = '█'.repeat(filled) + '░'.repeat(10 - filled);
+        this._setText(id, bar);
+      },
+
+      /**
+       * Render a single action button.
+       * @param {string}  id           Element id
+       * @param {number}  cooldownEnd  Timestamp when cooldown expires
+       * @param {number}  now          Current timestamp
+       * @param {boolean} extraBlock   Additional reason to disable (sick, care condition, etc.)
+       */
+      _renderButton(id, cooldownEnd, now, extraBlock) {
+        const el = document.getElementById(id);
+        if (!el) return;
+
+        const baseLabel = { 'btn-feed': 'Feed', 'btn-play': 'Play', 'btn-care': 'Care' }[id] || '';
+        const remaining = cooldownEnd - now;
+
+        if (remaining > 0) {
+          // On cooldown — show countdown, disable.
+          const secs = Math.ceil(remaining / 1000);
+          el.textContent = `00:${String(secs).padStart(2, '0')}`;
+          el.disabled = true;
+        } else if (extraBlock) {
+          // Structurally unavailable (not on cooldown, but still blocked).
+          el.textContent = baseLabel;
+          el.disabled = true;
+        } else {
+          // Available.
+          el.textContent = baseLabel;
+          el.disabled = false;
+        }
+      }
+    };
+  </script>
+
+  <script>
+    /* ── Game ────────────────────────────────────────────────────────
+     * Top-level orchestrator. Wires all subsystems into the game loop.
+     * Called by GameState._startGame() after state is ready.
+     * ────────────────────────────────────────────────────────────── */
+    const Game = {
+      /** Handle returned by the 10-second setInterval (null = stopped) */
+      _loopId: null,
+
+      /**
+       * Start (or restart) the game.
+       * Safe to call when already running — stops first.
+       */
+      start() {
+        this.stop(); // clear any existing loop
+
+        // 1. Apply offline catch-up decay.
+        DecayEngine.catchUp();
+
+        // 2. Initial render.
+        UIRenderer.render();
+
+        // 3. Start animation loop.
+        AnimationRenderer.start();
+
+        // 4. Start the 10-second game tick.
+        this._loopId = setInterval(() => this._tick(), 10_000);
+
+        // 5. Wire the resurrect button (idempotent via flag).
+        this._bindResurrect();
+      },
+
+      /**
+       * Stop the game loop and animation.
+       */
+      stop() {
+        if (this._loopId !== null) {
+          clearInterval(this._loopId);
+          this._loopId = null;
+        }
+        AnimationRenderer.stop();
+      },
+
+      /**
+       * 10-second tick — the heartbeat of the game.
+       */
+      _tick() {
+        // a. Apply live decay.
+        DecayEngine.tick(10_000);
+
+        // b. Evaluate neglect → sickness (NeglectChecker from STORY-006).
+        if (typeof NeglectChecker !== 'undefined') NeglectChecker.evaluate();
+
+        // c. Check death condition.
+        if (!GameState.isDead && GameState.health <= 0) {
+          GameState.isDead = true;
+        }
+
+        // d. Tick sleep probability.
+        StateClassifier.tickSleep();
+
+        // e-f. Update lastTick and persist.
+        GameState.lastTick = Date.now();
+        GameState.save();
+
+        // g. Render UI.
+        UIRenderer.render();
+      },
+
+      /**
+       * Wire the #btn-resurrect click handler (once).
+       */
+      _bindResurrect() {
+        if (this._resurrectBound) return;
+        this._resurrectBound = true;
+
+        document.getElementById('btn-resurrect').addEventListener('click', () => {
+          const overlay = document.getElementById('name-prompt');
+          // Update overlay text to communicate death context.
+          const pEl = overlay.querySelector('p');
+          if (pEl) pEl.innerHTML = 'Your cat has died.<br>Give your new cat a name:';
+
+          overlay.style.display = '';
+
+          const input  = document.getElementById('name-input');
+          const button = document.getElementById('btn-start');
+          input.value  = '';
+
+          const onResurrect = () => {
+            const trimmed = input.value.trim();
+            if (!trimmed) return;
+
+            // Reset to fresh defaults with new name.
+            Object.assign(GameState, GameState._defaults(), { name: trimmed });
+            CookieManager.save(GameState);
+            overlay.style.display = 'none';
+
+            // Reset overlay text for future first-run use.
+            if (pEl) pEl.innerHTML = 'What will you name<br>your new cat?';
+
+            button.removeEventListener('click', onResurrect);
+            input.removeEventListener('keydown', keyHandler);
+
+            // The loop is already running — next tick will pick up fresh state.
+            UIRenderer.render();
+          };
+
+          const keyHandler = e => { if (e.key === 'Enter') onResurrect(); };
+
+          button.addEventListener('click', onResurrect);
+          input.addEventListener('keydown', keyHandler);
+        });
+      }
+    };
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Royal Game of Ur</title>
+  <style>
+    :root {
+      --bg: #0f0f14;
+      --surface: #1c1c28;
+      --surface-alt: #252535;
+      --accent-light: #e8d5a3;
+      --accent-shadow: #5b3fa6;
+      --rosette: #c8a84b;
+      --highlight: #4fc3f7;
+      --text: #f0ece0;
+      --text-muted: #7a7a9a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: var(--bg);
+      margin: 0;
+      padding: 0;
+    }
+
+    main {
+      max-width: min(100vw, 480px);
+      margin: 0 auto;
+      padding: 1rem 0.5rem;
+    }
+
+    /* Trays styling */
+    #tray-light,
+    #tray-shadow {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      padding: 1rem;
+      background-color: var(--surface);
+      border-radius: 0.5rem;
+      margin: 0.5rem 0;
+    }
+
+    .tray-label {
+      font-size: 0.875rem;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .tray-label.light {
+      color: var(--accent-light);
+    }
+
+    .tray-label.shadow {
+      color: var(--accent-shadow);
+    }
+
+    .tray-pieces {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      flex-grow: 1;
+      flex-wrap: wrap;
+    }
+
+    .borne-off-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.25rem;
+      flex-shrink: 0;
+    }
+
+    .borne-off-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .borne-off-badge {
+      font-size: 1.25rem;
+      font-weight: 700;
+      min-width: 2rem;
+      text-align: center;
+      color: var(--text);
+    }
+
+    /* Piece styling */
+    @keyframes slide-in {
+      from {
+        opacity: 0.6;
+        transform: scale(0.8);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    .piece {
+      width: 2.75rem;
+      height: 2.75rem;
+      border-radius: 50%;
+      cursor: pointer;
+      touch-action: manipulation;
+      user-select: none;
+      transition: box-shadow 0.2s ease;
+      min-width: 44px;
+      min-height: 44px;
+      animation: slide-in 200ms ease-out;
+    }
+
+    .piece-light {
+      background-color: var(--accent-light);
+    }
+
+    .piece-shadow {
+      background-color: var(--accent-shadow);
+    }
+
+    .piece:hover:not(:disabled) {
+      box-shadow: 0 0 0.5rem rgba(255, 255, 255, 0.2);
+    }
+
+    /* ── Board Grid ──────────────────────────────────────────── */
+
+    #board {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      gap: 3px;
+      width: 100%;
+      background-color: var(--bg);
+      padding: 3px;
+      border-radius: 6px;
+      margin: 0.5rem 0;
+    }
+
+    .square {
+      aspect-ratio: 1;
+      min-height: 44px;
+      border-radius: 4px;
+      background-color: var(--surface);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      cursor: default;
+    }
+
+    .square.inactive {
+      visibility: hidden;
+    }
+
+    .square.battle-lane {
+      background-color: var(--surface-alt);
+    }
+
+    .square.rosette {
+      border: 2px solid var(--rosette);
+    }
+
+    .square.rosette.battle-lane {
+      background-color: var(--surface-alt);
+    }
+
+    .rosette-svg {
+      width: 65%;
+      height: 65%;
+      display: block;
+      pointer-events: none;
+    }
+
+    /* ── Dice Area ───────────────────────────────────────────── */
+
+    #dice-area {
+      background-color: var(--surface);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      margin: 0.5rem 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .dice-row {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+    }
+
+    .die {
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .die svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+
+    .die[data-value="0"] .die-face {
+      fill: var(--surface-alt);
+      stroke: var(--text-muted);
+      stroke-width: 2;
+    }
+
+    .die[data-value="1"] .die-face {
+      fill: var(--accent-light);
+      stroke: var(--accent-light);
+      stroke-width: 1;
+    }
+
+    @keyframes spin-tumble {
+      0%   { transform: rotate(0deg) scale(1); }
+      40%  { transform: rotate(360deg) scale(0.6); }
+      100% { transform: rotate(720deg) scale(1); }
+    }
+
+    .die.rolling {
+      animation: spin-tumble 600ms ease-out forwards;
+    }
+
+    #dice-sum {
+      font-size: 1rem;
+      color: var(--text);
+      min-height: 1.5rem;
+      text-align: center;
+    }
+
+    #btn-roll {
+      background-color: var(--accent-light);
+      color: var(--bg);
+      border: none;
+      border-radius: 0.5rem;
+      padding: 0.75rem 2rem;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      touch-action: manipulation;
+      min-height: 44px;
+      min-width: 120px;
+      transition: opacity 0.2s ease;
+    }
+
+    #btn-roll:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    #btn-roll:hover:not(:disabled) {
+      opacity: 0.85;
+    }
+
+    /* ── Piece Interaction Highlights ────────────────────────── */
+
+    .piece.movable {
+      box-shadow: 0 0 0 3px var(--highlight);
+      cursor: pointer;
+    }
+
+    .piece.selected {
+      box-shadow: 0 0 0 3px var(--rosette), 0 0 8px var(--rosette);
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 6px var(--highlight); }
+      50% { box-shadow: 0 0 16px var(--highlight); }
+    }
+
+    .square.valid-move {
+      outline: 2px solid var(--highlight);
+      animation: pulse-glow 800ms ease-in-out infinite alternate;
+      cursor: pointer;
+    }
+
+    @keyframes pop-out {
+      0%   { transform: scale(1);   opacity: 1; }
+      100% { transform: scale(1.4); opacity: 0; }
+    }
+
+    .piece.pop-out {
+      animation: pop-out 200ms ease-out forwards;
+      pointer-events: none;
+    }
+
+    /* Status bar */
+    #status-bar {
+      text-align: center;
+      font-size: 1rem;
+      color: var(--text);
+      padding: 0.5rem;
+      min-height: 2rem;
+    }
+
+    /* Win overlay */
+    #win-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+
+    @keyframes fade-in {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+
+    #win-overlay.visible {
+      display: flex;
+      animation: fade-in 400ms ease-out;
+    }
+
+    #win-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      padding: 2rem;
+      background-color: var(--surface);
+      border-radius: 0.75rem;
+      max-width: 90vw;
+    }
+
+    .win-motif {
+      width: 3rem;
+      height: 3rem;
+    }
+
+    #win-message {
+      font-size: 2rem;
+      font-weight: 700;
+      margin: 0;
+      text-align: center;
+    }
+
+    #win-subline {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin: 0;
+      text-align: center;
+    }
+
+    #btn-play-again {
+      background-color: var(--accent-light);
+      color: var(--bg);
+      border: none;
+      border-radius: 0.5rem;
+      padding: 0.75rem 2rem;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      touch-action: manipulation;
+      min-height: 44px;
+      min-width: 120px;
+    }
+
+    #btn-play-again:hover {
+      opacity: 0.85;
+    }
+
+    /* Focus-visible styles for keyboard accessibility */
+    .square:focus-visible,
+    .piece:focus-visible,
+    button:focus-visible {
+      outline: 2px solid var(--highlight);
+      outline-offset: 2px;
+    }
+
+    /* Respect user's motion preferences */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="win-overlay" role="dialog" aria-modal="true" aria-labelledby="win-message">
+    <div id="win-card">
+      <svg class="win-motif" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g fill="var(--rosette)" transform="translate(12 12)"><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(0)"/><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(60)"/><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(120)"/><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(180)"/><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(240)"/><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(300)"/><circle r="3"/></g></svg>
+      <h2 id="win-message"></h2>
+      <p id="win-subline">All pieces borne off — victory!</p>
+      <button id="btn-play-again" aria-label="Play again">Play Again</button>
+    </div>
+  </div>
+
+  <main>
+    <div id="status-bar" aria-live="polite" aria-atomic="true"></div>
+
+    <div id="tray-shadow">
+      <div class="tray-label shadow">Shadow</div>
+      <div class="tray-pieces" id="tray-shadow-pieces"></div>
+      <div class="borne-off-section">
+        <div class="borne-off-label">Borne Off</div>
+        <div class="borne-off-badge" id="borne-shadow">0</div>
+      </div>
+    </div>
+
+    <div id="board"></div>
+
+    <div id="tray-light">
+      <div class="tray-label light">Light</div>
+      <div class="tray-pieces" id="tray-light-pieces"></div>
+      <div class="borne-off-section">
+        <div class="borne-off-label">Borne Off</div>
+        <div class="borne-off-badge" id="borne-light">0</div>
+      </div>
+    </div>
+
+    <div id="dice-area"></div>
+  </main>
+
+  <script>
+    // ── Game Data Model ──────────────────────────────────────
+    // PLAYER_PATH maps path positions (1-14) to board square IDs for each player
+    const PLAYER_PATH = [
+      // Player 0 (Light): pos 1-4 (home), pos 5-12 (battle lane), pos 13-14 (end zone)
+      [
+        undefined,  // pos 0: off-board (waiting)
+        'r0c3', 'r0c2', 'r0c1', 'r0c0',  // pos 1-4: home lane
+        'r1c0', 'r1c1', 'r1c2', 'r1c3', 'r1c4', 'r1c5', 'r1c6', 'r1c7',  // pos 5-12: battle lane
+        'r0c7', 'r0c6',  // pos 13-14: end zone
+        undefined  // pos 15: borne off (not a square)
+      ],
+      // Player 1 (Shadow): pos 1-4 (home), pos 5-12 (battle lane), pos 13-14 (end zone)
+      [
+        undefined,  // pos 0: off-board (waiting)
+        'r2c3', 'r2c2', 'r2c1', 'r2c0',  // pos 1-4: home lane
+        'r1c0', 'r1c1', 'r1c2', 'r1c3', 'r1c4', 'r1c5', 'r1c6', 'r1c7',  // pos 5-12: battle lane
+        'r2c7', 'r2c6',  // pos 13-14: end zone
+        undefined  // pos 15: borne off (not a square)
+      ]
+    ];
+
+    // Rosette positions (path indices) — same for both players
+    const ROSETTE_POSITIONS = [1, 4, 8];
+
+    // Safe square position where captures are not allowed
+    const SAFE_SQUARE_POSITION = 8;
+
+    // Battle lane range where captures can occur
+    const BATTLE_LANE_RANGE = { min: 5, max: 12 };
+
+    /**
+     * Factory function to create initial game state.
+     * Returns a fresh GameState object with all pieces in starting positions.
+     * Pure function — no side effects, no DOM access.
+     */
+    function createInitialState() {
+      return {
+        board: new Map(),  // squareId → { player: 0|1, pieceId: string }
+        players: [
+          {
+            id: 0,
+            label: 'Light',
+            pieces: [
+              { id: 'L0', position: 0 },
+              { id: 'L1', position: 0 },
+              { id: 'L2', position: 0 },
+              { id: 'L3', position: 0 },
+              { id: 'L4', position: 0 },
+              { id: 'L5', position: 0 },
+              { id: 'L6', position: 0 }
+            ],
+            borneOff: 0
+          },
+          {
+            id: 1,
+            label: 'Shadow',
+            pieces: [
+              { id: 'S0', position: 0 },
+              { id: 'S1', position: 0 },
+              { id: 'S2', position: 0 },
+              { id: 'S3', position: 0 },
+              { id: 'S4', position: 0 },
+              { id: 'S5', position: 0 },
+              { id: 'S6', position: 0 }
+            ],
+            borneOff: 0
+          }
+        ],
+        currentPlayer: 0,
+        phase: 'roll',
+        diceValues: [0, 0, 0, 0],
+        diceResult: 0,
+        validMoves: [],
+        selectedPieceId: null
+      };
+    }
+
+    // Module-level game state
+    // eslint-disable-next-line prefer-const
+    let gameState = createInitialState();
+
+    // ── Data Model Assertions ────────────────────────────────
+    if (typeof console !== 'undefined' && console.assert) {
+      // Test that createInitialState() returns independent objects
+      const state1 = createInitialState();
+      const state2 = createInitialState();
+      console.assert(state1 !== state2, 'createInitialState() should return different objects');
+      console.assert(state1.board !== state2.board, 'board Maps should be independent');
+      console.assert(state1.players !== state2.players, 'players arrays should be independent');
+
+      // Test PLAYER_PATH mappings
+      console.assert(PLAYER_PATH[0][1] === 'r0c3', 'Player 0 pos 1 should be r0c3');
+      console.assert(PLAYER_PATH[1][1] === 'r2c3', 'Player 1 pos 1 should be r2c3');
+      console.assert(PLAYER_PATH[0][8] === 'r1c3', 'Player 0 pos 8 should be r1c3');
+      console.assert(PLAYER_PATH[1][8] === 'r1c3', 'Player 1 pos 8 should be r1c3 (shared)');
+      console.assert(PLAYER_PATH[0][5] === 'r1c0', 'Player 0 pos 5 should be r1c0');
+      console.assert(PLAYER_PATH[0][12] === 'r1c7', 'Player 0 pos 12 should be r1c7');
+
+      // Test that all pieces start at position 0
+      state1.players.forEach((player, playerIdx) => {
+        player.pieces.forEach((piece, pieceIdx) => {
+          console.assert(piece.position === 0, `Player ${playerIdx} piece ${pieceIdx} should start at position 0`);
+        });
+      });
+
+      console.log('✓ Data model assertions passed');
+    }
+
+    // ── Rules Engine (Pure Functions) ────────────────────────
+
+    /**
+     * Returns true if pathPos is a rosette position.
+     * Pure: no side-effects, no DOM access.
+     * @param {number} pathPos
+     * @returns {boolean}
+     */
+    function isRosette(pathPos) {
+      return ROSETTE_POSITIONS.includes(pathPos);
+    }
+
+    /**
+     * Returns true if moving to targetPos would capture an opponent's piece.
+     * Captures can only happen in the battle lane (5–12) and not on pos 8 (safe rosette).
+     * Pure: reads only from the state board Map.
+     * @param {number} targetPos
+     * @param {number} currentPlayer
+     * @param {object} state
+     * @returns {boolean}
+     */
+    function wouldCapture(targetPos, currentPlayer, state) {
+      if (targetPos < BATTLE_LANE_RANGE.min || targetPos > BATTLE_LANE_RANGE.max) return false;
+      if (targetPos === SAFE_SQUARE_POSITION) return false;
+      const squareKey = PLAYER_PATH[currentPlayer][targetPos];
+      const occupant = state.board.get(squareKey);
+      return occupant !== undefined && occupant.player !== currentPlayer;
+    }
+
+    /**
+     * Returns all valid moves for the given player given the dice result.
+     * Pure: only reads from state, returns a new array.
+     * @param {number} playerIndex
+     * @param {number} diceResult
+     * @param {object} state
+     * @returns {Array<{pieceId: string, fromPos: number, toPos: number, captures: boolean}>}
+     */
+    function getValidMoves(playerIndex, diceResult, state) {
+      if (diceResult === 0) return [];
+
+      const moves = [];
+      const player = state.players[playerIndex];
+
+      for (const piece of player.pieces) {
+        const fromPos = piece.position;
+        const toPos = fromPos + diceResult;
+
+        // Cannot overshoot past pos 15
+        if (toPos > 15) continue;
+
+        if (toPos === 15) {
+          // Bearing off — always valid when landing exactly on 15
+          moves.push({ pieceId: piece.id, fromPos, toPos: 15, captures: false });
+          continue;
+        }
+
+        // Determine target square on the board
+        const squareKey = PLAYER_PATH[playerIndex][toPos];
+        if (!squareKey) continue; // no valid board square at this position
+
+        const occupant = state.board.get(squareKey);
+
+        // Blocked by a friendly piece
+        if (occupant && occupant.player === playerIndex) continue;
+
+        // Cannot capture on the safe rosette (pos 8)
+        if (toPos === SAFE_SQUARE_POSITION && occupant && occupant.player !== playerIndex) continue;
+
+        moves.push({
+          pieceId: piece.id,
+          fromPos,
+          toPos,
+          captures: wouldCapture(toPos, playerIndex, state),
+        });
+      }
+
+      return moves;
+    }
+
+    /**
+     * Applies a move to the state, returning a NEW state object (does NOT mutate input).
+     * Handles: normal advance, bearing off (toPos === 15), and captures.
+     * @param {{pieceId: string, fromPos: number, toPos: number, captures: boolean}} move
+     * @param {object} state
+     * @returns {object} new game state
+     */
+    function applyMove(move, state) {
+      // Shallow-deep clone sufficient per the implementation hints
+      const newState = {
+        ...state,
+        players: state.players.map(function (p) {
+          return { ...p, pieces: p.pieces.map(function (pc) { return { ...pc }; }) };
+        }),
+        board: new Map(state.board),
+        validMoves: [],
+        selectedPieceId: null,
+      };
+
+      // Find which player owns this piece
+      const playerIndex = newState.players.findIndex(function (p) {
+        return p.pieces.some(function (pc) { return pc.id === move.pieceId; });
+      });
+      const player = newState.players[playerIndex];
+      const piece = player.pieces.find(function (pc) { return pc.id === move.pieceId; });
+
+      // Remove the piece from its current board square (if it was on the board)
+      if (move.fromPos > 0) {
+        const fromKey = PLAYER_PATH[playerIndex][move.fromPos];
+        if (fromKey) newState.board.delete(fromKey);
+      }
+
+      // Handle capture: reset the captured opponent piece to position 0
+      if (move.captures) {
+        const toKey = PLAYER_PATH[playerIndex][move.toPos];
+        const capturedEntry = newState.board.get(toKey);
+        if (capturedEntry) {
+          const opponentPiece = newState.players[capturedEntry.player].pieces.find(
+            function (pc) { return pc.id === capturedEntry.pieceId; }
+          );
+          if (opponentPiece) opponentPiece.position = 0;
+          newState.board.delete(toKey);
+        }
+      }
+
+      // Update the moving piece's position
+      piece.position = move.toPos;
+
+      if (move.toPos === 15) {
+        // Bearing off: increment counter, do not place on board
+        player.borneOff += 1;
+      } else {
+        // Place piece on the destination square
+        const toKey = PLAYER_PATH[playerIndex][move.toPos];
+        if (toKey) {
+          newState.board.set(toKey, { player: playerIndex, pieceId: piece.id });
+        }
+      }
+
+      return newState;
+    }
+
+    /**
+     * Returns true if the given player has borne off all 7 pieces (win condition).
+     * Pure: only reads borneOff counter from state.
+     * @param {number} playerIndex
+     * @param {object} state
+     * @returns {boolean}
+     */
+    function checkWin(playerIndex, state) {
+      return state.players[playerIndex].borneOff === 7;
+    }
+
+    // ── State Machine & Stubs ────────────────────────────────
+
+    /**
+     * Update the status bar text content.
+     * Uses aria-live="polite" element with id="status-bar".
+     * @param {string} msg
+     */
+    function updateStatus(msg) {
+      const el = document.getElementById('status-bar');
+      if (el) el.textContent = msg || '';
+    }
+
+    /**
+     * Generate the appropriate status message for the current game state.
+     * @param {string} phase - 'roll', 'select', 'rosette', 'capture', 'auto-pass', or 'won'
+     * @param {number} playerIndex - 0 or 1
+     * @param {number} diceResult - the roll total (0-4)
+     * @returns {string}
+     */
+    function getStatusMessage(phase, playerIndex, diceResult) {
+      const playerLabel = gameState.players[playerIndex].label;
+      const otherPlayerLabel = gameState.players[1 - playerIndex].label;
+
+      if (phase === 'roll') {
+        return playerLabel + "\u2019s turn \u2014 roll the dice";
+      } else if (phase === 'select') {
+        return playerLabel + " rolled " + diceResult + " \u2014 choose a piece to move";
+      } else if (phase === 'rosette') {
+        return playerLabel + " landed on the rosette \u2014 roll again!";
+      } else if (phase === 'capture') {
+        return playerLabel + " captured an opponent\u2019s piece!";
+      } else if (phase === 'auto-pass') {
+        if (diceResult === 0) {
+          return playerLabel + " rolled 0 \u2014 no moves, turn passes";
+        }
+        return "No legal moves for " + playerLabel + " \u2014 turn passes to " + otherPlayerLabel;
+      } else if (phase === 'won') {
+        return playerLabel + " wins! \ud83c\udfc6";
+      }
+      return "";
+    }
+
+    /**
+     * Helper: find the path position index for a given squareId for a specific player.
+     * Searches PLAYER_PATH[playerIndex] positions 1–14.
+     * @param {string} squareId
+     * @param {number} playerIndex
+     * @returns {number|undefined}
+     */
+    function squareIdToPathPos(squareId, playerIndex) {
+      const path = PLAYER_PATH[playerIndex];
+      for (let pos = 1; pos <= 14; pos++) {
+        if (path[pos] === squareId) return pos;
+      }
+      return undefined;
+    }
+
+    /**
+     * Helper: get the piece ID of an opponent occupying the capture square.
+     * Returns null if no capture.
+     * @param {{pieceId: string, fromPos: number, toPos: number, captures: boolean}} move
+     * @param {object} state
+     * @returns {string|null}
+     */
+    function getCapturedPieceId(move, state) {
+      const playerIndex = state.currentPlayer;
+      const toKey = PLAYER_PATH[playerIndex][move.toPos];
+      if (!toKey) return null;
+      const occupant = state.board.get(toKey);
+      return occupant ? occupant.pieceId : null;
+    }
+
+    /**
+     * Remove all highlight classes from pieces and board squares.
+     * Called at the start of each new turn and after a move.
+     */
+    function clearHighlights() {
+      document.querySelectorAll('.piece').forEach(function (el) {
+        el.classList.remove('movable', 'selected', 'valid-move');
+      });
+      document.querySelectorAll('.square').forEach(function (el) {
+        el.classList.remove('valid-move', 'selected');
+        el.removeAttribute('aria-label');
+      });
+    }
+
+    /**
+     * Highlight valid moves: adds .movable to pieces with at least one legal move
+     * and .valid-move to their destination board squares.
+     */
+    function highlightMoves() {
+      clearHighlights();
+
+      // Collect unique piece IDs that have valid moves
+      const movablePieceIds = new Set(gameState.validMoves.map(function (m) { return m.pieceId; }));
+
+      // Collect destination squareIds (only on-board positions 1–14)
+      const validSquareIds = new Set();
+      gameState.validMoves.forEach(function (move) {
+        if (move.toPos >= 1 && move.toPos <= 14) {
+          const squareId = PLAYER_PATH[gameState.currentPlayer][move.toPos];
+          if (squareId) validSquareIds.add(squareId);
+        }
+      });
+
+      // Apply .movable
+      movablePieceIds.forEach(function (pieceId) {
+        const el = document.querySelector('[data-piece-id="' + pieceId + '"]');
+        if (el) el.classList.add('movable');
+      });
+
+      // Apply .valid-move to board squares and add aria-label
+      validSquareIds.forEach(function (squareId) {
+        const el = document.querySelector('[data-square-id="' + squareId + '"]');
+        if (el) {
+          el.classList.add('valid-move');
+          // Find the path position for this square
+          const pathPos = squareIdToPathPos(squareId, gameState.currentPlayer);
+          if (pathPos !== undefined) {
+            el.setAttribute('aria-label', 'Move to position ' + pathPos);
+          }
+        }
+      });
+    }
+
+    /**
+     * Select a piece for moving.
+     * Guards: phase must be 'select'; piece must have at least one valid move.
+     * Sets selectedPieceId, marks piece with .selected, re-highlights only
+     * the valid destinations for this specific piece.
+     * @param {string} pieceId
+     */
+    function selectPiece(pieceId) {
+      if (gameState.phase !== 'select') return;
+
+      const pieceMoves = gameState.validMoves.filter(function (m) {
+        return m.pieceId === pieceId;
+      });
+      if (pieceMoves.length === 0) return;
+
+      clearHighlights();
+      gameState.selectedPieceId = pieceId;
+
+      // Mark selected piece
+      const pieceEl = document.querySelector('[data-piece-id="' + pieceId + '"]');
+      if (pieceEl) pieceEl.classList.add('selected');
+
+      // Keep .movable on other pieces that still have moves
+      const movablePieceIds = new Set(gameState.validMoves.map(function (m) { return m.pieceId; }));
+      movablePieceIds.forEach(function (pid) {
+        if (pid !== pieceId) {
+          const el = document.querySelector('[data-piece-id="' + pid + '"]');
+          if (el) el.classList.add('movable');
+        }
+      });
+
+      // Highlight only this piece's valid destination squares
+      pieceMoves.forEach(function (move) {
+        if (move.toPos >= 1 && move.toPos <= 14) {
+          const squareId = PLAYER_PATH[gameState.currentPlayer][move.toPos];
+          if (squareId) {
+            const el = document.querySelector('[data-square-id="' + squareId + '"]');
+            if (el) el.classList.add('valid-move');
+          }
+        }
+      });
+    }
+
+    /**
+     * Execute a move for the selected piece to the given path position.
+     * Guards: selectedPieceId must be set; toPosition must be valid for that piece.
+     * Applies the move, updates DOM, handles capture/rosette/win/turn transitions.
+     * @param {number} toPosition  path position integer (1–15)
+     */
+    function movePiece(toPosition) {
+      if (!gameState.selectedPieceId) return;
+
+      const move = gameState.validMoves.find(function (m) {
+        return m.pieceId === gameState.selectedPieceId && m.toPos === toPosition;
+      });
+      if (!move) return;
+
+      // Capture piece ID before applying move
+      const capturedId = move.captures ? getCapturedPieceId(move, gameState) : null;
+
+      // Record which player made the move (before applyMove may change currentPlayer)
+      const movedByPlayer = gameState.currentPlayer;
+
+      // Apply move and update game state
+      gameState = applyMove(move, gameState);
+      // Preserve current player so win/turn checks reference the correct player
+      gameState.currentPlayer = movedByPlayer;
+
+      // Update DOM
+      renderPieces();
+      clearHighlights();
+
+      // Capture animation: play pop-out on the returned piece
+      if (capturedId) {
+        const capturedEl = document.querySelector('[data-piece-id="' + capturedId + '"]');
+        if (capturedEl) {
+          capturedEl.classList.add('pop-out');
+          capturedEl.addEventListener('animationend', function handler() {
+            capturedEl.classList.remove('pop-out');
+            capturedEl.removeEventListener('animationend', handler);
+          }, { once: true });
+        }
+        updateStatus(getStatusMessage('capture', movedByPlayer, 0));
+      }
+
+      // Check win condition
+      if (checkWin(movedByPlayer, gameState)) {
+        gameState.phase = 'won';
+        const winMsg = getStatusMessage('won', movedByPlayer, 0);
+        updateStatus(winMsg);
+        showWinScreen(movedByPlayer);
+        return;
+      }
+
+      // Rosette: same player rolls again; otherwise hand off
+      if (isRosette(toPosition)) {
+        updateStatus(getStatusMessage('rosette', movedByPlayer, 0));
+        nextTurn(true);
+      } else {
+        nextTurn(false);
+      }
+    }
+
+    /**
+     * Render all pieces to their current positions in the DOM.
+     * - position 0   → waiting tray
+     * - position 15  → borne-off (hidden; badge updated)
+     * - 1–14         → appended as child of the matching board square
+     */
+    function renderPieces() {
+      // Update borne-off badge counts
+      const borneLight = document.getElementById('borne-light');
+      const borneShadow = document.getElementById('borne-shadow');
+      if (borneLight) {
+        borneLight.textContent = String(gameState.players[0].borneOff);
+        borneLight.setAttribute('aria-label', 'Light borne off: ' + gameState.players[0].borneOff);
+      }
+      if (borneShadow) {
+        borneShadow.textContent = String(gameState.players[1].borneOff);
+        borneShadow.setAttribute('aria-label', 'Shadow borne off: ' + gameState.players[1].borneOff);
+      }
+
+      const trayContainers = [
+        document.getElementById('tray-light-pieces'),
+        document.getElementById('tray-shadow-pieces')
+      ];
+
+      gameState.players.forEach(function (player, playerIndex) {
+        player.pieces.forEach(function (piece, pieceIndex) {
+          const el = document.querySelector('[data-piece-id="' + piece.id + '"]');
+          if (!el) return;
+
+          // Update aria-label based on position
+          const playerLabel = player.label;
+          let posLabel;
+          if (piece.position === 0) {
+            posLabel = 'waiting';
+          } else if (piece.position === 15) {
+            posLabel = 'borne off';
+          } else {
+            posLabel = 'position ' + piece.position;
+          }
+          el.setAttribute('aria-label', playerLabel + ' piece ' + (pieceIndex + 1) + ', ' + posLabel);
+
+          if (piece.position === 0) {
+            // Return to waiting tray
+            const tray = trayContainers[playerIndex];
+            if (tray && el.parentElement !== tray) {
+              el.style.display = '';
+              tray.appendChild(el);
+            } else {
+              el.style.display = '';
+            }
+          } else if (piece.position === 15) {
+            // Borne off: hide element
+            el.style.display = 'none';
+          } else {
+            // On board: child of matching square
+            const squareId = PLAYER_PATH[playerIndex][piece.position];
+            if (squareId) {
+              const squareEl = document.querySelector('[data-square-id="' + squareId + '"]');
+              if (squareEl && el.parentElement !== squareEl) {
+                el.style.display = '';
+                squareEl.appendChild(el);
+              }
+            }
+          }
+        });
+      });
+    }
+
+    /**
+     * Show the win screen overlay.
+     * Displays a full-screen overlay with the winner announcement, decorative motif,
+     * and a "Play Again" button to reset the game.
+     * @param {number} playerIndex - 0 (Light) or 1 (Shadow)
+     */
+    function showWinScreen(playerIndex) {
+      const label = gameState.players[playerIndex].label;
+      const winMessage = document.getElementById('win-message');
+      const winOverlay = document.getElementById('win-overlay');
+
+      if (winMessage) {
+        winMessage.textContent = label + ' wins!';
+        // Apply player-specific color
+        const color = playerIndex === 0 ? 'var(--accent-light)' : 'var(--accent-shadow)';
+        winMessage.style.color = color;
+      }
+
+      if (winOverlay) {
+        winOverlay.classList.add('visible');
+      }
+
+      // Disable the Roll button while win screen is showing
+      const btn = document.getElementById('btn-roll');
+      if (btn) btn.disabled = true;
+    }
+
+    /**
+     * Private helper: advance to the next turn.
+     * If grantExtraRoll is true, the current player rolls again (rosette bonus).
+     * Otherwise the other player takes their turn.
+     * Re-enables the Roll button.
+     * @param {boolean} grantExtraRoll
+     */
+    function nextTurn(grantExtraRoll) {
+      if (!grantExtraRoll) {
+        gameState.currentPlayer = 1 - gameState.currentPlayer;
+      }
+      gameState.phase = 'roll';
+      const btn = document.getElementById('btn-roll');
+      if (btn) btn.disabled = false;
+      const msg = getStatusMessage('roll', gameState.currentPlayer, 0);
+      updateStatus(msg);
+    }
+
+    /**
+     * Pass the turn automatically when a player has no legal moves.
+     * Shows the reason message, then after 1 s hands over to the opponent.
+     * @param {string} reason
+     */
+    function autoPass(reason) {
+      updateStatus(reason);
+      setTimeout(function () {
+        nextTurn(false);
+      }, 1000);
+    }
+
+    /**
+     * Reset game state and re-render the board to the initial position.
+     * Called on first load and when "Play Again" is pressed.
+     */
+    function resetGame() {
+      gameState = createInitialState();
+      initPieces();
+      clearHighlights();
+      renderPieces();
+
+      // Reset borne-off counters
+      const borneLight = document.getElementById('borne-light');
+      const borneShadow = document.getElementById('borne-shadow');
+      if (borneLight) borneLight.textContent = '0';
+      if (borneShadow) borneShadow.textContent = '0';
+
+      // Hide win overlay if present
+      const winOverlay = document.getElementById('win-overlay');
+      if (winOverlay) winOverlay.classList.remove('visible');
+
+      // Enable Roll button and update status
+      const btn = document.getElementById('btn-roll');
+      if (btn) btn.disabled = false;
+      const msg = getStatusMessage('roll', gameState.currentPlayer, 0);
+      updateStatus(msg);
+    }
+
+    /**
+     * Bootstrap: binds events and starts the game.
+     * Called once on DOMContentLoaded after buildBoard() and buildDiceArea().
+     */
+    function initGame() {
+      // Bind Roll button click handler
+      const btn = document.getElementById('btn-roll');
+      if (btn) btn.addEventListener('click', rollDice);
+
+      // Bind Play Again button
+      const btnPlayAgain = document.getElementById('btn-play-again');
+      if (btnPlayAgain) {
+        btnPlayAgain.addEventListener('click', function () {
+          const overlay = document.getElementById('win-overlay');
+          if (overlay) overlay.classList.remove('visible');
+          resetGame();
+        });
+      }
+
+      // Board click delegation: clicking a .valid-move square executes a move
+      const boardEl = document.getElementById('board');
+      if (boardEl) {
+        boardEl.addEventListener('click', function (e) {
+          const squareEl = e.target.closest('[data-square-id]');
+          if (!squareEl || !squareEl.classList.contains('valid-move')) return;
+          const squareId = squareEl.getAttribute('data-square-id');
+          const pathPos = squareIdToPathPos(squareId, gameState.currentPlayer);
+          if (pathPos !== undefined) {
+            movePiece(pathPos);
+          }
+        });
+
+        boardEl.addEventListener('touchend', function (e) {
+          const squareEl = e.target.closest('[data-square-id]');
+          if (!squareEl || !squareEl.classList.contains('valid-move')) return;
+          e.preventDefault();
+          const squareId = squareEl.getAttribute('data-square-id');
+          const pathPos = squareIdToPathPos(squareId, gameState.currentPlayer);
+          if (pathPos !== undefined) {
+            movePiece(pathPos);
+          }
+        }, { passive: false });
+      }
+
+      // Piece click/touch delegation: clicking a .movable piece selects it;
+      // clicking the .selected piece again triggers bearing-off if that is the only valid move.
+      document.addEventListener('click', function (e) {
+        const pieceEl = e.target.closest('[data-piece-id]');
+        if (!pieceEl) return;
+        const pieceId = pieceEl.getAttribute('data-piece-id');
+
+        if (pieceEl.classList.contains('selected')) {
+          // If the only valid move for this piece is bearing off (toPos=15), execute it
+          const pieceMoves = gameState.validMoves.filter(function (m) { return m.pieceId === pieceId; });
+          const hasBoardMove = pieceMoves.some(function (m) { return m.toPos < 15; });
+          if (!hasBoardMove && pieceMoves.some(function (m) { return m.toPos === 15; })) {
+            movePiece(15);
+          }
+        } else if (pieceEl.classList.contains('movable')) {
+          selectPiece(pieceId);
+        }
+      });
+
+      document.addEventListener('touchend', function (e) {
+        const pieceEl = e.target.closest('[data-piece-id]');
+        if (!pieceEl) return;
+        const pieceId = pieceEl.getAttribute('data-piece-id');
+
+        if (pieceEl.classList.contains('selected')) {
+          const pieceMoves = gameState.validMoves.filter(function (m) { return m.pieceId === pieceId; });
+          const hasBoardMove = pieceMoves.some(function (m) { return m.toPos < 15; });
+          if (!hasBoardMove && pieceMoves.some(function (m) { return m.toPos === 15; })) {
+            e.preventDefault();
+            movePiece(15);
+          }
+        } else if (pieceEl.classList.contains('movable')) {
+          e.preventDefault();
+          selectPiece(pieceId);
+        }
+      }, { passive: false });
+
+      // Keyboard support for pieces: Enter or Space activates them
+      document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const pieceEl = e.target.closest('[data-piece-id]');
+        if (!pieceEl) return;
+        e.preventDefault();
+        const pieceId = pieceEl.getAttribute('data-piece-id');
+
+        if (pieceEl.classList.contains('selected')) {
+          // If the only valid move for this piece is bearing off (toPos=15), execute it
+          const pieceMoves = gameState.validMoves.filter(function (m) { return m.pieceId === pieceId; });
+          const hasBoardMove = pieceMoves.some(function (m) { return m.toPos < 15; });
+          if (!hasBoardMove && pieceMoves.some(function (m) { return m.toPos === 15; })) {
+            movePiece(15);
+          }
+        } else if (pieceEl.classList.contains('movable')) {
+          selectPiece(pieceId);
+        }
+      });
+
+      // Reset to initial state and render pieces in their trays
+      resetGame();
+      // Ensure pieces are initialised (resetGame also calls initPieces; safe to call again)
+      initPieces();
+    }
+
+    // ── Board constants ──────────────────────────────────────
+    const ROSETTE_IDS = new Set(['r0c0', 'r0c3', 'r1c3', 'r2c0', 'r2c3']);
+    const INACTIVE_IDS = new Set(['r0c4', 'r0c5', 'r2c4', 'r2c5']);
+
+    // Inline SVG rosette motif (6-petal flower)
+    const ROSETTE_SVG = `<svg class="rosette-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g fill="var(--rosette)" transform="translate(12 12)"><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(0)"/><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(60)"/><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(120)"/><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(180)"/><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(240)"/><ellipse ry="4.5" rx="2.2" cy="-5" transform="rotate(300)"/><circle r="3"/></g></svg>`;
+
+    /**
+     * Build the 24 board squares (3 rows × 8 cols) and inject them into #board.
+     * Inactive corners are invisible but occupy grid space.
+     * Rosette squares display a 6-petal flower SVG motif.
+     */
+    function buildBoard() {
+      const boardEl = document.getElementById('board');
+      for (let row = 0; row < 3; row++) {
+        for (let col = 0; col < 8; col++) {
+          const id = `r${row}c${col}`;
+          const div = document.createElement('div');
+          const classes = ['square'];
+
+          if (INACTIVE_IDS.has(id)) {
+            classes.push('inactive');
+          } else {
+            if (row === 1) classes.push('battle-lane');
+            if (ROSETTE_IDS.has(id)) classes.push('rosette');
+            div.setAttribute('data-square-id', id);
+          }
+
+          div.className = classes.join(' ');
+
+          if (ROSETTE_IDS.has(id) && !INACTIVE_IDS.has(id)) {
+            div.innerHTML = ROSETTE_SVG;
+          }
+
+          boardEl.appendChild(div);
+        }
+      }
+    }
+
+    /**
+     * Initialize all 14 piece elements and inject them into the DOM.
+     * Creates 7 pieces for each player (Light and Shadow).
+     * Each piece is a styled div with a unique data-piece-id.
+     */
+    function initPieces() {
+      // Light player pieces (L0–L6)
+      const trayLightPiecesContainer = document.getElementById('tray-light-pieces');
+      if (trayLightPiecesContainer) {
+        trayLightPiecesContainer.innerHTML = ''; // Clear any existing pieces
+        for (let i = 0; i < 7; i++) {
+          const piece = document.createElement('div');
+          piece.className = 'piece piece-light';
+          piece.dataset.pieceId = `L${i}`;
+          piece.setAttribute('role', 'button');
+          piece.setAttribute('tabindex', '0');
+          piece.setAttribute('aria-label', `Light piece ${i + 1}, waiting`);
+          trayLightPiecesContainer.appendChild(piece);
+        }
+      }
+
+      // Shadow player pieces (S0–S6)
+      const trayShadowPiecesContainer = document.getElementById('tray-shadow-pieces');
+      if (trayShadowPiecesContainer) {
+        trayShadowPiecesContainer.innerHTML = ''; // Clear any existing pieces
+        for (let i = 0; i < 7; i++) {
+          const piece = document.createElement('div');
+          piece.className = 'piece piece-shadow';
+          piece.dataset.pieceId = `S${i}`;
+          piece.setAttribute('role', 'button');
+          piece.setAttribute('tabindex', '0');
+          piece.setAttribute('aria-label', `Shadow piece ${i + 1}, waiting`);
+          trayShadowPiecesContainer.appendChild(piece);
+        }
+      }
+    }
+
+    /**
+     * Build the dice area: 4 die elements, a sum display, and a Roll button.
+     * Die state is driven by `data-value` attribute (0=dark, 1=light).
+     */
+    function buildDiceArea() {
+      const diceAreaEl = document.getElementById('dice-area');
+
+      // Row of 4 dice
+      const diceRow = document.createElement('div');
+      diceRow.className = 'dice-row';
+      for (let i = 0; i < 4; i++) {
+        const die = document.createElement('div');
+        die.className = 'die';
+        die.dataset.value = '0';
+        die.innerHTML =
+          '<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+          '<polygon class="die-face" points="20,2 38,20 20,38 2,20"/>' +
+          '</svg>';
+        diceRow.appendChild(die);
+      }
+      diceAreaEl.appendChild(diceRow);
+
+      // Sum display
+      const sumEl = document.createElement('div');
+      sumEl.id = 'dice-sum';
+      sumEl.textContent = '—';
+      diceAreaEl.appendChild(sumEl);
+
+      // Roll button — click listener is bound by initGame()
+      const btnEl = document.createElement('button');
+      btnEl.id = 'btn-roll';
+      btnEl.textContent = 'Roll';
+      btnEl.setAttribute('aria-label', 'Roll the dice');
+      diceAreaEl.appendChild(btnEl);
+    }
+
+    /**
+     * Roll all 4 dice: randomise values, animate, then compute valid moves.
+     * Phase-gated: does nothing if phase !== 'roll'.
+     * Button is disabled for the duration of the animation and during 'select' phase.
+     */
+    function rollDice() {
+      // Phase guard — only allowed during roll phase
+      if (gameState.phase !== 'roll') return;
+
+      const btn = document.getElementById('btn-roll');
+      if (!btn || btn.disabled) return;
+
+      // Generate 4 independent binary results
+      const values = [0, 1, 2, 3].map(function () {
+        return Math.random() < 0.5 ? 0 : 1;
+      });
+      gameState.diceValues = values;
+      gameState.diceResult = values.reduce(function (sum, v) {
+        return sum + v;
+      }, 0);
+
+      // Disable button and trigger animation
+      btn.disabled = true;
+      const dice = document.querySelectorAll('.die');
+      dice.forEach(function (die) {
+        die.classList.add('rolling');
+      });
+
+      // After animation completes: update visuals and transition phase
+      setTimeout(function () {
+        dice.forEach(function (die, i) {
+          die.classList.remove('rolling');
+          die.dataset.value = String(gameState.diceValues[i]);
+        });
+        const sumEl = document.getElementById('dice-sum');
+        if (sumEl) sumEl.textContent = 'Rolled: ' + gameState.diceResult;
+
+        // Compute valid moves for the current player
+        gameState.validMoves = getValidMoves(
+          gameState.currentPlayer,
+          gameState.diceResult,
+          gameState
+        );
+
+        if (gameState.validMoves.length === 0) {
+          // No legal moves — auto-pass to opponent
+          const msg = getStatusMessage('auto-pass', gameState.currentPlayer, gameState.diceResult);
+          autoPass(msg);
+        } else {
+          // Advance to selection phase
+          gameState.phase = 'select';
+          const msg = getStatusMessage('select', gameState.currentPlayer, gameState.diceResult);
+          updateStatus(msg);
+          highlightMoves();
+        }
+      }, 600);
+    }
+
+    // Bootstrap: build board and pieces on page load, then start game
+    document.addEventListener('DOMContentLoaded', function () {
+      buildBoard();
+      buildDiceArea();
+      initGame();
+    });
+  </script>
+</body>
+</html>
