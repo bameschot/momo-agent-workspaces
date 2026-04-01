@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JWT Parser</title>
+    <style>
+        /* CSS Custom Properties — Light Theme */
+        :root {
+            --bg-primary: #f5f5f5;
+            --bg-surface: #ffffff;
+            --text-primary: #1a1a1a;
+            --text-muted: #6b7280;
+            --accent-header: #e05252;
+            --accent-payload: #0e9f8e;
+            --accent-signature: #d97706;
+            --border-color: #e5e7eb;
+            --error-color: #dc2626;
+
+            /* Fonts */
+            --font-mono: ui-monospace, 'Cascadia Code', 'Fira Mono', 'Menlo', 'Consolas', monospace;
+            --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        /* CSS Custom Properties — Dark Theme */
+        [data-theme="dark"] {
+            --bg-primary: #0f0f0f;
+            --bg-surface: #1c1c1c;
+            --text-primary: #e5e5e5;
+            --text-muted: #9ca3af;
+            --accent-header: #f87171;
+            --accent-payload: #2dd4bf;
+            --accent-signature: #fbbf24;
+            --border-color: #2a2a2a;
+            --error-color: #f87171;
+        }
+
+        /* Global Styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            font-family: var(--font-sans);
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            transition: background-color 0.2s, color 0.2s;
+        }
+
+        body {
+            padding: 1.5rem;
+            min-height: 100vh;
+        }
+
+        /* Header and Controls */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .header-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .theme-toggle {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-family: var(--font-sans);
+            transition: background-color 0.2s, border-color 0.2s;
+        }
+
+        .theme-toggle:hover {
+            background-color: var(--bg-surface);
+        }
+
+        .theme-toggle:focus {
+            outline: 2px solid var(--accent-header);
+            outline-offset: 2px;
+        }
+
+        /* Privacy Notice */
+        .privacy-notice {
+            text-align: center;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+        }
+
+        /* Main Container */
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        /* Token Input Section */
+        .input-section {
+            margin-bottom: 2rem;
+        }
+
+        .input-label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+        }
+
+        .token-input-wrapper {
+            position: relative;
+            margin-bottom: 1rem;
+        }
+
+        .token-input {
+            display: block;
+            width: 100%;
+            height: 120px;
+            padding: 1rem;
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+            line-height: 1.5;
+            background-color: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: 0.375rem;
+            color: transparent;
+            caret-color: var(--text-primary);
+            resize: vertical;
+        }
+
+        .token-input:focus {
+            outline: 2px solid var(--accent-header);
+            outline-offset: -2px;
+        }
+
+        /* Mirror Display for Highlighting */
+        .token-mirror {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            padding: 1rem;
+            font-family: var(--font-mono);
+            font-size: 0.875rem;
+            line-height: 1.5;
+            background-color: transparent;
+            border: 1px solid transparent;
+            border-radius: 0.375rem;
+            color: transparent;
+            pointer-events: none;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow: hidden;
+        }
+
+        .part-header {
+            color: var(--accent-header);
+        }
+
+        .part-payload {
+            color: var(--accent-payload);
+        }
+
+        .part-signature {
+            color: var(--accent-signature);
+        }
+
+        .separator {
+            color: var(--text-muted);
+        }
+
+        /* Error Display */
+        [role="alert"] {
+            display: none;
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background-color: var(--error-color);
+            color: #ffffff;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            animation: fadeIn 0.2s ease-out;
+        }
+
+        [role="alert"].show {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        /* Action Bar */
+        .action-bar {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .btn {
+            padding: 0.625rem 1.25rem;
+            font-size: 0.875rem;
+            font-family: var(--font-sans);
+            font-weight: 500;
+            background-color: var(--accent-header);
+            color: #ffffff;
+            border: none;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        .btn:hover {
+            background-color: var(--accent-header);
+            filter: brightness(1.1);
+        }
+
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        .btn:focus {
+            outline: 2px solid var(--accent-header);
+            outline-offset: 2px;
+        }
+
+        /* Output Panels */
+        .panels-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .panel {
+            background-color: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: 0.375rem;
+            padding: 1.5rem;
+            position: relative;
+        }
+
+        .panel-label {
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .panel-label::before {
+            content: '';
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .panel-header .panel-label {
+            color: var(--accent-header);
+        }
+
+        .panel-header .panel-label::before {
+            background-color: var(--accent-header);
+        }
+
+        .panel-payload .panel-label {
+            color: var(--accent-payload);
+        }
+
+        .panel-payload .panel-label::before {
+            background-color: var(--accent-payload);
+        }
+
+        .panel-signature .panel-label {
+            color: var(--accent-signature);
+        }
+
+        .panel-signature .panel-label::before {
+            background-color: var(--accent-signature);
+        }
+
+        .panel-content {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            line-height: 1.5;
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.25rem;
+            padding: 1rem;
+            overflow-x: auto;
+            min-height: 200px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 1.5rem;
+            right: 1.5rem;
+            padding: 0.375rem 0.75rem;
+            font-size: 0.75rem;
+            font-family: var(--font-sans);
+            font-weight: 500;
+            background-color: var(--bg-primary);
+            color: var(--text-muted);
+            border: 1px solid var(--border-color);
+            border-radius: 0.25rem;
+            cursor: pointer;
+            transition: background-color 0.2s, color 0.2s;
+        }
+
+        .copy-btn:hover {
+            background-color: var(--border-color);
+            color: var(--text-primary);
+        }
+
+        .copy-btn:focus {
+            outline: 2px solid var(--accent-header);
+            outline-offset: 1px;
+        }
+
+        .copy-btn.copied {
+            background-color: var(--accent-payload);
+            color: #ffffff;
+            border-color: var(--accent-payload);
+        }
+
+        /* Responsive Design */
+        @media (max-width: 700px) {
+            body {
+                padding: 1rem;
+            }
+
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 1rem;
+                margin-bottom: 1.5rem;
+            }
+
+            .panels-container {
+                grid-template-columns: 1fr;
+            }
+
+            .token-input {
+                height: 100px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <h1 class="header-title">JWT Parser</h1>
+        <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">🌙 Dark</button>
+    </header>
+
+    <!-- Privacy Notice -->
+    <div class="privacy-notice">
+        🔒 Your token is decoded entirely in this browser. No data is ever sent anywhere.
+    </div>
+
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Token Input Section -->
+        <section class="input-section">
+            <label class="input-label">Paste your JWT:</label>
+            <div class="token-input-wrapper">
+                <textarea id="tokenInput" class="token-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." spellcheck="false"></textarea>
+                <div id="tokenMirror" class="token-mirror"></div>
+            </div>
+            <div id="errorDisplay" role="alert"></div>
+        </section>
+
+        <!-- Action Bar -->
+        <div class="action-bar">
+            <button id="clearBtn" class="btn">Clear</button>
+        </div>
+
+        <!-- Output Panels -->
+        <div class="panels-container">
+            <!-- Header Panel -->
+            <div class="panel panel-header">
+                <div class="panel-label">Header</div>
+                <pre id="headerContent" class="panel-content"></pre>
+                <button class="copy-btn" data-target="headerContent" aria-label="Copy header">Copy</button>
+            </div>
+
+            <!-- Payload Panel -->
+            <div class="panel panel-payload">
+                <div class="panel-label">Payload</div>
+                <pre id="payloadContent" class="panel-content"></pre>
+                <button class="copy-btn" data-target="payloadContent" aria-label="Copy payload">Copy</button>
+            </div>
+
+            <!-- Signature Panel -->
+            <div class="panel panel-signature">
+                <div class="panel-label">Signature</div>
+                <pre id="signatureContent" class="panel-content"></pre>
+                <button class="copy-btn" data-target="signatureContent" aria-label="Copy signature">Copy</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script>
+        // ===================================================================
+        // Application State
+        // ===================================================================
+        const appState = {
+            rawInput: '',
+            theme: 'light',
+            manualThemeOverride: false,
+            parsed: null
+        };
+
+        // ===================================================================
+        // DOM Elements
+        // ===================================================================
+        const tokenInput = document.getElementById('tokenInput');
+        const tokenMirror = document.getElementById('tokenMirror');
+        const errorDisplay = document.getElementById('errorDisplay');
+        const themeToggle = document.getElementById('themeToggle');
+        const clearBtn = document.getElementById('clearBtn');
+        const headerContent = document.getElementById('headerContent');
+        const payloadContent = document.getElementById('payloadContent');
+        const signatureContent = document.getElementById('signatureContent');
+        const copyBtns = document.querySelectorAll('.copy-btn');
+
+        // ===================================================================
+        // Initialization
+        // ===================================================================
+        function init() {
+            // Initialize theme
+            initializeTheme();
+
+            // Attach event listeners
+            tokenInput.addEventListener('input', onInput);
+            clearBtn.addEventListener('click', onClear);
+            themeToggle.addEventListener('click', toggleTheme);
+            copyBtns.forEach(btn => {
+                btn.addEventListener('click', onCopyClick);
+            });
+
+            // Listen for system theme changes
+            const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+            darkModeQuery.addEventListener('change', onSystemThemeChange);
+        }
+
+        // ===================================================================
+        // Theme Management
+        // ===================================================================
+        function initializeTheme() {
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            appState.theme = prefersDark ? 'dark' : 'light';
+            applyTheme(appState.theme);
+        }
+
+        function toggleTheme() {
+            appState.manualThemeOverride = true;
+            appState.theme = appState.theme === 'light' ? 'dark' : 'light';
+            applyTheme(appState.theme);
+        }
+
+        function applyTheme(theme) {
+            if (theme === 'dark') {
+                document.documentElement.setAttribute('data-theme', 'dark');
+                themeToggle.textContent = '☀️ Light';
+                themeToggle.setAttribute('aria-label', 'Switch to light mode');
+            } else {
+                document.documentElement.removeAttribute('data-theme');
+                themeToggle.textContent = '🌙 Dark';
+                themeToggle.setAttribute('aria-label', 'Switch to dark mode');
+            }
+        }
+
+        function onSystemThemeChange(event) {
+            if (!appState.manualThemeOverride) {
+                appState.theme = event.matches ? 'dark' : 'light';
+                applyTheme(appState.theme);
+            }
+        }
+
+        // ===================================================================
+        // JWT Parsing
+        // ===================================================================
+        function base64urlDecode(str) {
+            // Convert base64url to base64: replace - with +, _ with /
+            const base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+            // Add padding: pad with = until length is multiple of 4
+            const padded = base64 + '='.repeat((4 - base64.length % 4) % 4);
+            // Decode using native atob
+            return atob(padded);
+        }
+
+        function parseJwt(raw) {
+            const trimmed = raw.trim();
+            if (!trimmed) {
+                return null;
+            }
+
+            const parts = trimmed.split('.');
+            if (parts.length !== 3) {
+                throw new Error('Invalid token: must have exactly two dots (three parts).');
+            }
+
+            const [headerB64, payloadB64, signatureB64] = parts;
+
+            let headerJson, payloadJson;
+
+            try {
+                const headerStr = base64urlDecode(headerB64);
+                headerJson = JSON.parse(headerStr);
+            } catch (e) {
+                throw new Error('Invalid token: header is not valid base64url or JSON.');
+            }
+
+            try {
+                const payloadStr = base64urlDecode(payloadB64);
+                payloadJson = JSON.parse(payloadStr);
+            } catch (e) {
+                throw new Error('Invalid token: payload is not valid base64url or JSON.');
+            }
+
+            return {
+                header: headerB64,
+                payload: payloadB64,
+                signature: signatureB64,
+                headerJson,
+                payloadJson,
+                error: null
+            };
+        }
+
+        // ===================================================================
+        // Rendering
+        // ===================================================================
+        function highlight(raw) {
+            const trimmed = raw.trim();
+            if (!trimmed) {
+                return '';
+            }
+
+            const parts = trimmed.split('.');
+            if (parts.length !== 3) {
+                return escapeHtml(trimmed);
+            }
+
+            const [header, payload, signature] = parts;
+            return (
+                `<span class="part-header">${escapeHtml(header)}</span>` +
+                `<span class="separator">.</span>` +
+                `<span class="part-payload">${escapeHtml(payload)}</span>` +
+                `<span class="separator">.</span>` +
+                `<span class="part-signature">${escapeHtml(signature)}</span>`
+            );
+        }
+
+        function renderPanels(parsed) {
+            if (!parsed) {
+                headerContent.textContent = '';
+                payloadContent.textContent = '';
+                signatureContent.textContent = '';
+                return;
+            }
+
+            headerContent.textContent = JSON.stringify(parsed.headerJson, null, 2);
+            payloadContent.textContent = JSON.stringify(parsed.payloadJson, null, 2);
+            signatureContent.textContent = parsed.signature;
+        }
+
+        function showError(msg) {
+            errorDisplay.textContent = msg;
+            errorDisplay.classList.add('show');
+        }
+
+        function clearError() {
+            errorDisplay.textContent = '';
+            errorDisplay.classList.remove('show');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ===================================================================
+        // Clipboard
+        // ===================================================================
+        function copyToClipboard(text, btn) {
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.classList.remove('copied');
+                }, 1500);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                showError('Failed to copy to clipboard.');
+            });
+        }
+
+        // ===================================================================
+        // Event Handlers
+        // ===================================================================
+        function onInput() {
+            appState.rawInput = tokenInput.value;
+            tokenMirror.innerHTML = highlight(appState.rawInput);
+
+            try {
+                appState.parsed = parseJwt(appState.rawInput);
+                renderPanels(appState.parsed);
+                clearError();
+            } catch (e) {
+                renderPanels(null);
+                if (appState.rawInput.trim()) {
+                    showError(e.message);
+                } else {
+                    clearError();
+                }
+            }
+        }
+
+        function onClear() {
+            appState.rawInput = '';
+            tokenInput.value = '';
+            tokenMirror.innerHTML = '';
+            appState.parsed = null;
+            renderPanels(null);
+            clearError();
+            tokenInput.focus();
+        }
+
+        function onCopyClick(event) {
+            const btn = event.currentTarget;
+            const targetId = btn.getAttribute('data-target');
+            const targetElement = document.getElementById(targetId);
+            if (targetElement) {
+                copyToClipboard(targetElement.textContent, btn);
+            }
+        }
+
+        // ===================================================================
+        // Start Application
+        // ===================================================================
+        init();
+    </script>
+</body>
+</html>
