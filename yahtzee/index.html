@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yahtzee</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --p0: #4fc3f7;
+  --p1: #81c784;
+  --p2: #ffb74d;
+  --p3: #f06292;
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --surface2: #273549;
+  --surface3: #334155;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --border: #3f5068;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+/* ── SETUP ─────────────────────────────────────────────── */
+#setup {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.setup-card {
+  background: var(--surface);
+  border-radius: 24px;
+  padding: 44px 40px;
+  max-width: 460px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 30px 60px rgba(0,0,0,.55);
+}
+
+.logo {
+  font-size: 3.2rem;
+  font-weight: 900;
+  letter-spacing: 8px;
+  background: linear-gradient(135deg, #60a5fa 30%, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 6px;
+}
+
+.logo-sub {
+  color: var(--muted);
+  font-size: .85rem;
+  margin-bottom: 36px;
+  letter-spacing: 1px;
+}
+
+.section-label {
+  font-size: .75rem;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.pc-row {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 28px;
+}
+
+.pc-btn {
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+  border: 2px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 1.5rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .18s;
+}
+.pc-btn:hover { border-color: #60a5fa; color: #60a5fa; }
+.pc-btn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+
+.name-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pdot {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.name-row input {
+  flex: 1;
+  background: var(--surface2);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: var(--text);
+  font-size: .95rem;
+  outline: none;
+  transition: border-color .18s;
+}
+.name-row input:focus { border-color: #60a5fa; }
+
+.start-btn {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  color: #fff;
+  border: none;
+  padding: 15px 44px;
+  border-radius: 14px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: opacity .18s, transform .1s;
+  width: 100%;
+}
+.start-btn:hover { opacity: .9; transform: translateY(-1px); }
+.start-btn:active { transform: translateY(1px); }
+
+/* ── GAME ──────────────────────────────────────────────── */
+#game {
+  display: none;
+  padding: 16px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.g-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.g-logo {
+  font-size: 1.4rem;
+  font-weight: 900;
+  letter-spacing: 4px;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.g-round {
+  font-size: .85rem;
+  color: var(--muted);
+}
+
+.g-layout {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+/* ── SCORECARD ─────────────────────────────────────────── */
+.score-wrap {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.score-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .82rem;
+}
+
+.score-table th,
+.score-table td {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.score-table th.cat-col,
+.score-table td.cat-col {
+  text-align: left;
+  min-width: 148px;
+  color: var(--muted);
+  font-weight: 500;
+  padding-left: 12px;
+}
+
+.score-table th { background: var(--surface2); }
+
+.sec-header td {
+  background: var(--surface3);
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-color: var(--surface3);
+  padding: 4px 12px;
+  text-align: left;
+}
+
+.total-row td { background: var(--surface2); font-weight: 700; }
+
+.ph { font-weight: 700; font-size: .85rem; }
+.ph[data-p="0"] { color: var(--p0); border-bottom: 3px solid var(--p0) !important; }
+.ph[data-p="1"] { color: var(--p1); border-bottom: 3px solid var(--p1) !important; }
+.ph[data-p="2"] { color: var(--p2); border-bottom: 3px solid var(--p2) !important; }
+.ph[data-p="3"] { color: var(--p3); border-bottom: 3px solid var(--p3) !important; }
+
+.cur-col { background: rgba(255,255,255,.03); }
+
+.sc-filled { font-weight: 700; }
+.sc-zero { font-weight: 700; color: var(--muted); }
+.sc-avail {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: .78rem;
+  transition: all .12s;
+}
+.sc-avail:hover {
+  color: var(--text);
+  font-weight: 700;
+  font-size: .85rem;
+  background: rgba(255,255,255,.06);
+}
+.sc-avail.best { color: #fbbf24; }
+
+/* ── DICE PANEL ────────────────────────────────────────── */
+.dice-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 220px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 16px;
+}
+
+.turn-name {
+  font-size: .9rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.rolls-badge {
+  font-size: .75rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.dice-top {
+  display: flex;
+  gap: 7px;
+}
+
+.dice-bot {
+  display: flex;
+  gap: 7px;
+}
+
+.die {
+  width: 62px;
+  height: 62px;
+  cursor: pointer;
+  user-select: none;
+  transition: transform .15s;
+}
+.die:hover { transform: scale(1.07); }
+.die.held { filter: drop-shadow(0 0 6px var(--cur-color, #4fc3f7)); }
+
+@keyframes shake {
+  0%   { transform: rotate(0deg) scale(1); }
+  20%  { transform: rotate(-12deg) scale(.95); }
+  40%  { transform: rotate(12deg) scale(1.05); }
+  60%  { transform: rotate(-8deg) scale(.97); }
+  80%  { transform: rotate(8deg) scale(1.03); }
+  100% { transform: rotate(0deg) scale(1); }
+}
+.die.rolling { animation: shake .35s ease-in-out; }
+
+.roll-btn {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  color: #fff;
+  border: none;
+  padding: 12px 0;
+  border-radius: 12px;
+  font-size: .95rem;
+  font-weight: 700;
+  cursor: pointer;
+  width: 100%;
+  transition: opacity .18s;
+}
+.roll-btn:hover { opacity: .9; }
+.roll-btn:disabled { opacity: .35; cursor: default; }
+
+.hint {
+  font-size: .7rem;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.4;
+}
+
+/* ── WIN SCREEN ────────────────────────────────────────── */
+#win {
+  display: none;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.win-card {
+  background: var(--surface);
+  border-radius: 24px;
+  padding: 44px 40px;
+  max-width: 480px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 30px 60px rgba(0,0,0,.55);
+}
+
+.win-trophy { font-size: 3.5rem; margin-bottom: 12px; }
+
+.win-title {
+  font-size: 2rem;
+  font-weight: 900;
+  margin-bottom: 6px;
+}
+
+.win-sub { color: var(--muted); font-size: .85rem; margin-bottom: 24px; }
+
+.final-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 28px;
+}
+
+.final-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 18px;
+  background: var(--surface2);
+  border-radius: 10px;
+  font-weight: 600;
+  border: 2px solid transparent;
+}
+.final-row.winner { border-color: gold; background: rgba(255,215,0,.08); }
+
+.play-again {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  color: #fff;
+  border: none;
+  padding: 14px 44px;
+  border-radius: 14px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  cursor: pointer;
+  width: 100%;
+  transition: opacity .18s;
+}
+.play-again:hover { opacity: .9; }
+
+/* ── RESPONSIVE ────────────────────────────────────────── */
+@media (max-width: 680px) {
+  .g-layout { flex-direction: column-reverse; }
+  .dice-panel {
+    width: 100%;
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .dice-panel > * { flex-shrink: 0; }
+  .dice-container { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── SETUP ──────────────────────────────────────────────── -->
+<div id="setup">
+  <div class="setup-card">
+    <div class="logo">YAHTZEE</div>
+    <div class="logo-sub">Classic dice game &bull; 1&ndash;4 players</div>
+
+    <div class="section-label">Number of Players</div>
+    <div class="pc-row" id="pc-row">
+      <button class="pc-btn" onclick="setPC(1)">1</button>
+      <button class="pc-btn active" onclick="setPC(2)">2</button>
+      <button class="pc-btn" onclick="setPC(3)">3</button>
+      <button class="pc-btn" onclick="setPC(4)">4</button>
+    </div>
+
+    <div class="section-label">Player Names</div>
+    <div class="name-list" id="name-list"></div>
+
+    <button class="start-btn" onclick="startGame()">ROLL THE DICE</button>
+  </div>
+</div>
+
+<!-- ── GAME ───────────────────────────────────────────────── -->
+<div id="game">
+  <div class="g-header">
+    <div class="g-logo">YAHTZEE</div>
+    <div class="g-round" id="g-round">Round 1 of 13</div>
+  </div>
+  <div class="g-layout">
+    <div class="score-wrap">
+      <table class="score-table" id="score-table"></table>
+    </div>
+    <div class="dice-panel" id="dice-panel">
+      <div class="turn-name" id="turn-name">Player 1's Turn</div>
+      <div class="rolls-badge" id="rolls-badge">3 rolls left</div>
+      <div class="dice-container">
+        <div class="dice-top" id="dice-top"></div>
+        <div class="dice-bot" id="dice-bot"></div>
+      </div>
+      <button class="roll-btn" id="roll-btn" onclick="rollDice()">Roll Dice</button>
+      <div class="hint">Click dice to hold &bull; then choose a score</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── WIN ────────────────────────────────────────────────── -->
+<div id="win">
+  <div class="win-card">
+    <div class="win-trophy">&#127942;</div>
+    <div class="win-title" id="win-title">Player 1 Wins!</div>
+    <div class="win-sub">Final Scores</div>
+    <div class="final-list" id="final-list"></div>
+    <button class="play-again" onclick="showSetup()">Play Again</button>
+  </div>
+</div>
+
+<script>
+// ── CONSTANTS ─────────────────────────────────────────────────────────────────
+const COLORS = ['#4fc3f7','#81c784','#ffb74d','#f06292'];
+
+const UPPER = ['ones','twos','threes','fours','fives','sixes'];
+const LOWER = ['threeOfKind','fourOfKind','fullHouse','smallStraight','largeStraight','yahtzee','chance'];
+const ALL   = [...UPPER, ...LOWER];
+
+const LABELS = {
+  ones:'Ones', twos:'Twos', threes:'Threes', fours:'Fours', fives:'Fives', sixes:'Sixes',
+  threeOfKind:'Three of a Kind', fourOfKind:'Four of a Kind',
+  fullHouse:'Full House (25 pts)', smallStraight:'Sm. Straight (30 pts)',
+  largeStraight:'Lg. Straight (40 pts)', yahtzee:'YAHTZEE! (50 pts)', chance:'Chance'
+};
+
+// Pip positions [cx,cy] in 0–100 viewBox
+const PIPS = {
+  1:[[50,50]],
+  2:[[30,30],[70,70]],
+  3:[[30,30],[50,50],[70,70]],
+  4:[[30,30],[70,30],[30,70],[70,70]],
+  5:[[30,30],[70,30],[50,50],[30,70],[70,70]],
+  6:[[30,25],[70,25],[30,50],[70,50],[30,75],[70,75]]
+};
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+let numP = 2;
+let names = ['Player 1','Player 2','Player 3','Player 4'];
+let scores, yBonus, curP, dice, held, rollsLeft, round, hasRolled, isRolling;
+
+// ── SETUP UI ──────────────────────────────────────────────────────────────────
+function setPC(n) {
+  numP = n;
+  document.querySelectorAll('.pc-btn').forEach((b,i) => b.classList.toggle('active', i+1===n));
+  renderNameList();
+}
+
+function renderNameList() {
+  const el = document.getElementById('name-list');
+  el.innerHTML = '';
+  for (let i = 0; i < numP; i++) {
+    const row = document.createElement('div');
+    row.className = 'name-row';
+    row.innerHTML = `
+      <div class="pdot" style="background:${COLORS[i]}"></div>
+      <input type="text" maxlength="14" value="${names[i]}"
+             oninput="names[${i}]=this.value||'Player ${i+1}'">
+    `;
+    el.appendChild(row);
+  }
+}
+
+function showSetup() {
+  document.getElementById('win').style.display  = 'none';
+  document.getElementById('game').style.display = 'none';
+  document.getElementById('setup').style.display = 'flex';
+  renderNameList();
+}
+
+// ── GAME INIT ─────────────────────────────────────────────────────────────────
+function startGame() {
+  // Read current name inputs
+  document.querySelectorAll('.name-row input').forEach((inp,i) => {
+    names[i] = inp.value.trim() || 'Player '+(i+1);
+  });
+
+  scores     = Array.from({length:numP}, () => Object.fromEntries(ALL.map(c=>[c,null])));
+  yBonus     = Array(numP).fill(0);
+  curP       = 0;
+  round      = 1;
+  dice       = [1,1,1,1,1];
+  held       = [false,false,false,false,false];
+  rollsLeft  = 3;
+  hasRolled  = false;
+  isRolling  = false;
+
+  // Clear old dice elements so renderDice builds fresh ones
+  document.getElementById('dice-top').innerHTML = '';
+  document.getElementById('dice-bot').innerHTML = '';
+
+  document.getElementById('setup').style.display = 'none';
+  document.getElementById('win').style.display   = 'none';
+  document.getElementById('game').style.display  = 'block';
+
+  render();
+}
+
+// ── SCORING LOGIC ─────────────────────────────────────────────────────────────
+function calcScore(cat, d) {
+  const cnt = Array(7).fill(0);
+  d.forEach(v => cnt[v]++);
+  const sum = d.reduce((a,b)=>a+b, 0);
+  switch (cat) {
+    case 'ones':         return cnt[1];
+    case 'twos':         return cnt[2]*2;
+    case 'threes':       return cnt[3]*3;
+    case 'fours':        return cnt[4]*4;
+    case 'fives':        return cnt[5]*5;
+    case 'sixes':        return cnt[6]*6;
+    case 'threeOfKind':  return cnt.some(c=>c>=3) ? sum : 0;
+    case 'fourOfKind':   return cnt.some(c=>c>=4) ? sum : 0;
+    case 'fullHouse': {
+      const f = cnt.filter(c=>c>0);
+      return (f.includes(2) && f.includes(3)) ? 25 : 0;
+    }
+    case 'smallStraight': {
+      const u = new Set(d);
+      return [[1,2,3,4],[2,3,4,5],[3,4,5,6]].some(s=>s.every(v=>u.has(v))) ? 30 : 0;
+    }
+    case 'largeStraight': {
+      const u = new Set(d);
+      return u.size===5 && ([1,2,3,4,5].every(v=>u.has(v))||[2,3,4,5,6].every(v=>u.has(v))) ? 40 : 0;
+    }
+    case 'yahtzee':  return cnt.some(c=>c===5) ? 50 : 0;
+    case 'chance':   return sum;
+    default: return 0;
+  }
+}
+
+function isYahtzeeRoll(d) { return d.every(v=>v===d[0]); }
+
+function upperTotal(p) { return UPPER.reduce((s,c)=>s+(scores[p][c]||0),0); }
+function upperBonus(p) {
+  return UPPER.every(c=>scores[p][c]!==null) && upperTotal(p)>=63 ? 35 : 0;
+}
+function lowerTotal(p) { return LOWER.reduce((s,c)=>s+(scores[p][c]||0),0) + yBonus[p]*100; }
+function grandTotal(p) { return upperTotal(p)+upperBonus(p)+lowerTotal(p); }
+
+// ── ACTIONS ───────────────────────────────────────────────────────────────────
+function rollDice() {
+  if (rollsLeft<=0 || isRolling) return;
+  isRolling = true;
+  hasRolled = true;
+
+  // Trigger CSS animation on unheld dice
+  [0,1,2,3,4].forEach(i => {
+    if (!held[i]) {
+      const el = document.getElementById('die-'+i);
+      if (el) { el.classList.remove('rolling'); void el.offsetWidth; el.classList.add('rolling'); }
+    }
+  });
+
+  setTimeout(() => {
+    for (let i=0; i<5; i++) if (!held[i]) dice[i]=Math.floor(Math.random()*6)+1;
+    rollsLeft--;
+    isRolling = false;
+    render();
+  }, 360);
+}
+
+function toggleHold(i) {
+  if (!hasRolled || rollsLeft===0 || isRolling) return;
+  held[i] = !held[i];
+  renderDice();
+}
+
+function jokerValue(cat) {
+  // Joker rule: when rolling a Yahtzee with the Yahtzee box already at 50
+  if (cat==='fullHouse')     return 25;
+  if (cat==='smallStraight') return 30;
+  if (cat==='largeStraight') return 40;
+  return calcScore(cat, dice);
+}
+
+function pickScore(cat) {
+  if (!hasRolled || scores[curP][cat]!==null) return;
+
+  const isJoker = isYahtzeeRoll(dice) && scores[curP]['yahtzee']===50;
+
+  // Yahtzee bonus: roll is a Yahtzee, Yahtzee box already scored 50, scoring elsewhere
+  if (isJoker && cat!=='yahtzee') yBonus[curP]++;
+
+  scores[curP][cat] = isJoker ? jokerValue(cat) : calcScore(cat, dice);
+  nextTurn();
+}
+
+function nextTurn() {
+  curP = (curP+1) % numP;
+  if (curP===0) round++;
+
+  dice      = [1,1,1,1,1];
+  held      = [false,false,false,false,false];
+  rollsLeft = 3;
+  hasRolled = false;
+
+  if (round>13) { showWin(); return; }
+  render();
+}
+
+// ── RENDERING ─────────────────────────────────────────────────────────────────
+function render() {
+  // Round info
+  document.getElementById('g-round').textContent = `Round ${round} of 13`;
+
+  // Turn panel
+  const color = COLORS[curP];
+  document.getElementById('turn-name').innerHTML =
+    `<span style="color:${color}">${names[curP]}</span>'s Turn`;
+  document.getElementById('rolls-badge').textContent =
+    rollsLeft===0 ? 'Choose a score below!' :
+    `${rollsLeft} roll${rollsLeft!==1?'s':''} left`;
+  document.getElementById('dice-panel').style.setProperty('--cur-color', color);
+
+  document.getElementById('roll-btn').disabled = rollsLeft<=0 || isRolling;
+
+  renderDice();
+  renderTable();
+}
+
+function renderDice() {
+  for (let i=0; i<5; i++) {
+    const container = i<3
+      ? document.getElementById('dice-top')
+      : document.getElementById('dice-bot');
+
+    // Create element if it doesn't exist
+    let el = document.getElementById('die-'+i);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'die-'+i;
+      el.className = 'die';
+      el.onclick = () => toggleHold(i);
+      container.appendChild(el);
+    }
+
+    el.classList.toggle('held', held[i]);
+    el.innerHTML = dieSVG(dice[i], held[i]);
+  }
+}
+
+function dieSVG(val, isHeld) {
+  const color = COLORS[curP];
+  const bg    = isHeld ? color : '#f8fafc';
+  const pip   = isHeld ? '#0f172a' : '#1e293b';
+  const str   = isHeld ? color : '#cbd5e1';
+  const pips  = PIPS[val].map(([cx,cy])=>`<circle cx="${cx}" cy="${cy}" r="7" fill="${pip}"/>`).join('');
+  return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="width:62px;height:62px;display:block">
+    <rect x="4" y="4" width="92" height="92" rx="16" ry="16" fill="${bg}" stroke="${str}" stroke-width="3"/>
+    ${pips}
+  </svg>`;
+}
+
+function renderTable() {
+  const rows = [];
+
+  // Header
+  rows.push(`<thead><tr>
+    <th class="cat-col">Category</th>
+    ${names.slice(0,numP).map((n,p)=>`<th class="ph" data-p="${p}" style="min-width:68px">${n}</th>`).join('')}
+  </tr></thead>`);
+
+  rows.push('<tbody>');
+
+  // ─ Upper section ─
+  rows.push(`<tr class="sec-header"><td colspan="${numP+1}">Upper Section</td></tr>`);
+  UPPER.forEach(cat => rows.push(scoreRow(cat)));
+
+  // Bonus row
+  const bonusCells = Array.from({length:numP},(_,p)=>{
+    const done = UPPER.every(c=>scores[p][c]!==null);
+    const ut   = upperTotal(p);
+    const b    = upperBonus(p);
+    const pct  = Math.min(63, ut);
+    let txt;
+    if (done) txt = b>0 ? '<span style="color:#4ade80">+35</span>' : '<span style="color:var(--muted)">—</span>';
+    else       txt = `<span style="color:${ut>=63?'#4ade80':'var(--muted)'}">${ut}/63</span>`;
+    return `<td style="font-size:.78rem;${p===curP?'background:rgba(255,255,255,.03)':''}">${txt}</td>`;
+  }).join('');
+  rows.push(`<tr><td class="cat-col" style="font-size:.75rem;font-style:italic">Bonus (+35 if ≥ 63)</td>${bonusCells}</tr>`);
+
+  // Upper total
+  rows.push(`<tr class="total-row"><td class="cat-col">Upper Total</td>
+    ${Array.from({length:numP},(_,p)=>`<td style="color:${COLORS[p]}">${upperTotal(p)+upperBonus(p)}</td>`).join('')}
+  </tr>`);
+
+  // ─ Lower section ─
+  rows.push(`<tr class="sec-header"><td colspan="${numP+1}">Lower Section</td></tr>`);
+  LOWER.forEach(cat => rows.push(scoreRow(cat)));
+
+  // Yahtzee bonus row
+  const ybCells = Array.from({length:numP},(_,p)=>{
+    const b = yBonus[p];
+    return `<td style="color:${b>0?'#4ade80':'var(--muted)'};${p===curP?'background:rgba(255,255,255,.03)':''}">
+      ${b>0?`+${b*100}`:'—'}
+    </td>`;
+  }).join('');
+  rows.push(`<tr><td class="cat-col" style="font-size:.75rem;font-style:italic">Yahtzee Bonus (×100)</td>${ybCells}</tr>`);
+
+  // Grand total
+  rows.push(`<tr class="total-row"><td class="cat-col" style="font-weight:700;font-size:.88rem">Grand Total</td>
+    ${Array.from({length:numP},(_,p)=>`<td style="color:${COLORS[p]};font-size:.95rem;font-weight:800">${grandTotal(p)}</td>`).join('')}
+  </tr>`);
+
+  rows.push('</tbody>');
+  document.getElementById('score-table').innerHTML = rows.join('');
+}
+
+function scoreRow(cat) {
+  const cells = Array.from({length:numP},(_,p)=>{
+    const val  = scores[p][cat];
+    const isCur = p===curP;
+    const bg   = isCur ? 'background:rgba(255,255,255,.03);' : '';
+
+    if (val!==null) {
+      const cls = val===0 ? 'sc-zero' : 'sc-filled';
+      return `<td class="${cls}" style="${bg}">${val}</td>`;
+    }
+
+    if (isCur && hasRolled) {
+      const pot = calcScore(cat, dice);
+      // Joker rule: Yahtzee rolled, yahtzee box=50, scoring elsewhere → full value applies
+      const joker = isYahtzeeRoll(dice) && scores[p]['yahtzee']===50;
+      let display = pot;
+      if (joker && cat==='fullHouse')     display = 25;
+      if (joker && cat==='smallStraight') display = 30;
+      if (joker && cat==='largeStraight') display = 40;
+
+      const isBest = display === Math.max(...ALL
+        .filter(c=>scores[p][c]===null)
+        .map(c=>{ const s=calcScore(c,dice); return joker&&c==='fullHouse'?25:joker&&c==='smallStraight'?30:joker&&c==='largeStraight'?40:s; })
+      ) && display > 0;
+
+      return `<td class="sc-avail${isBest?' best':''}" style="${bg}"
+        onclick="pickScore('${cat}')"
+        title="Score ${display} for ${LABELS[cat]}">${display}</td>`;
+    }
+
+    return `<td style="${bg}color:var(--border)">—</td>`;
+  }).join('');
+
+  return `<tr><td class="cat-col">${LABELS[cat]}</td>${cells}</tr>`;
+}
+
+// ── WIN SCREEN ────────────────────────────────────────────────────────────────
+function showWin() {
+  document.getElementById('game').style.display = 'none';
+  document.getElementById('win').style.display  = 'flex';
+
+  const totals = Array.from({length:numP},(_,p)=>({name:names[p], score:grandTotal(p), color:COLORS[p]}))
+    .sort((a,b)=>b.score-a.score);
+  const top = totals[0].score;
+  const winners = totals.filter(t=>t.score===top);
+
+  document.getElementById('win-title').innerHTML =
+    winners.length===1
+      ? `<span style="color:${winners[0].color}">${winners[0].name}</span> Wins!`
+      : `It's a Tie!`;
+
+  document.getElementById('final-list').innerHTML = totals.map((t,i)=>`
+    <div class="final-row ${t.score===top?'winner':''}">
+      <span style="color:${t.color}">${t.score===top?'&#127942; ':''}${t.name}</span>
+      <span style="font-size:1.1rem;font-weight:800">${t.score}</span>
+    </div>
+  `).join('');
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  setPC(2);
+  document.getElementById('win').style.display  = 'none';
+  document.getElementById('game').style.display = 'none';
+  document.getElementById('setup').style.display = 'flex';
+});
+</script>
+</body>
+</html>
