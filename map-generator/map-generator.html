@@ -561,7 +561,7 @@ body {
     <div class="panel">
       <div class="panel-title">Tools</div>
       <div class="tool-grid">
-        <button class="tool-btn active" data-tool="brush" title="Terrain Brush">
+        <button class="tool-btn" data-tool="brush" title="Terrain Brush">
           <span class="icon">&#x1F58C;</span>Brush
         </button>
         <button class="tool-btn" data-tool="road" title="Draw Roads">
@@ -576,14 +576,14 @@ body {
         <button class="tool-btn" data-tool="label" title="Add Labels">
           <span class="icon">&#x1F4DD;</span>Labels
         </button>
-        <button class="tool-btn" data-tool="select" title="Select / Pan">
+        <button class="tool-btn active" data-tool="select" title="Select / Pan">
           <span class="icon">&#x2725;</span>Select
         </button>
       </div>
     </div>
 
     <!-- Terrain Panel -->
-    <div class="panel sub-panel active" id="panel-brush">
+    <div class="panel sub-panel" id="panel-brush">
       <div class="panel-title">Terrain</div>
       <div class="terrain-grid" id="terrain-grid"></div>
       <div class="range-row">
@@ -671,7 +671,7 @@ body {
     </div>
 
     <!-- Select Panel -->
-    <div class="panel sub-panel" id="panel-select">
+    <div class="panel sub-panel active" id="panel-select">
       <div class="panel-title">Select / Pan</div>
       <div style="font-size:10px;color:#5a3010;line-height:1.6;">
         &#x2022; Click to select items<br>
@@ -1314,7 +1314,7 @@ const state = {
   canvasW: 2000, canvasH: 1500,
 
   // current tool
-  tool: 'brush',
+  tool: 'select',
 
   // brush
   terrain: 'grass',
@@ -1629,47 +1629,76 @@ function renderLabels(ctx) {
 function drawRoadPath(ctx, road, asOffscreen) {
   if(road.points.length < 2) return;
   const rt = ROAD_TYPES.find(r=>r.id===road.type) || ROAD_TYPES[0];
-  ctx.save();
-  ctx.strokeStyle = rt.color;
-  ctx.lineWidth = road.width || rt.width;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+  const pts = road.points;
 
-  if(rt.id==='river') {
-    ctx.strokeStyle = '#2060c0';
-    ctx.lineWidth = (road.width || 4);
-    ctx.globalAlpha = 0.75;
-  } else if(rt.id==='dirt') {
-    ctx.setLineDash([4, 4]);
+  // Classify each segment as ferry (water crossing) or land
+  const segFerry = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const mx = (pts[i].x + pts[i+1].x) / 2;
+    const my = (pts[i].y + pts[i+1].y) / 2;
+    segFerry.push(rt.id !== 'river' && genParams !== null && probeH(mx, my) < genParams.seaLevel);
+  }
+  const anyFerry = segFerry.some(Boolean);
+
+  // Group consecutive same-type segments into runs
+  const runs = [];
+  if (pts.length >= 2) {
+    let i = 0;
+    while (i < segFerry.length) {
+      const ferry = segFerry[i];
+      const runPts = [pts[i]];
+      while (i < segFerry.length && segFerry[i] === ferry) { runPts.push(pts[i + 1]); i++; }
+      runs.push({ ferry, pts: runPts });
+    }
   }
 
-  // For river: add a slight blue glow
-  if(rt.id==='river') {
-    ctx.shadowColor = 'rgba(100,160,255,0.4)';
-    ctx.shadowBlur = 4;
-  }
-
-  ctx.beginPath();
-  ctx.moveTo(road.points[0].x, road.points[0].y);
-  // Smooth the path with bezier interpolation
-  for(let i=1; i<road.points.length-1; i++) {
-    const mx = (road.points[i].x + road.points[i+1].x) / 2;
-    const my = (road.points[i].y + road.points[i+1].y) / 2;
-    ctx.quadraticCurveTo(road.points[i].x, road.points[i].y, mx, my);
-  }
-  const last = road.points[road.points.length-1];
-  ctx.lineTo(last.x, last.y);
-  ctx.stroke();
-
-  // Highway: double line
-  if(rt.id==='highway') {
-    ctx.strokeStyle = 'rgba(255,250,220,0.5)';
-    ctx.lineWidth = Math.max(1, (road.width||5)-2);
-    ctx.setLineDash([]);
+  function strokeRun(runPts, ferry) {
+    ctx.beginPath();
+    ctx.moveTo(runPts[0].x, runPts[0].y);
+    for (let k = 1; k < runPts.length - 1; k++) {
+      const mx = (runPts[k].x + runPts[k+1].x) / 2;
+      const my = (runPts[k].y + runPts[k+1].y) / 2;
+      ctx.quadraticCurveTo(runPts[k].x, runPts[k].y, mx, my);
+    }
+    ctx.lineTo(runPts[runPts.length-1].x, runPts[runPts.length-1].y);
     ctx.stroke();
   }
 
-  ctx.restore();
+  for (const run of runs) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    if (run.ferry) {
+      ctx.strokeStyle = '#1aadcc';
+      ctx.lineWidth = road.width || rt.width;
+      ctx.setLineDash([10, 6]);
+      ctx.globalAlpha = 0.9;
+      ctx.shadowColor = 'rgba(26,173,204,0.5)';
+      ctx.shadowBlur = 5;
+    } else if (rt.id === 'river') {
+      ctx.strokeStyle = '#2060c0';
+      ctx.lineWidth = road.width || 4;
+      ctx.globalAlpha = 0.75;
+      ctx.shadowColor = 'rgba(100,160,255,0.4)';
+      ctx.shadowBlur = 4;
+    } else {
+      ctx.strokeStyle = rt.color;
+      ctx.lineWidth = road.width || rt.width;
+      if (rt.id === 'dirt') ctx.setLineDash([4, 4]);
+    }
+
+    strokeRun(run.pts, run.ferry);
+
+    if (!run.ferry && rt.id === 'highway') {
+      ctx.strokeStyle = 'rgba(255,250,220,0.5)';
+      ctx.lineWidth = Math.max(1, (road.width||5)-2);
+      ctx.setLineDash([]);
+      strokeRun(run.pts, false);
+    }
+
+    ctx.restore();
+  }
 }
 
 function redrawRoadsCanvas() {
@@ -2819,16 +2848,12 @@ function placeTownRoads(seed1, seed2, cityPositions) {
 
   for (let i = 0; i < cityPositions.length; i++) {
     const isVillage = cityPositions[i].rank === 'village';
-    const limit = isVillage ? 1 : 2;
+    const effMax = isVillage ? Math.min(W, H) * 0.20 : maxDist;
     const sorted = cityPositions
       .map((c, j) => ({j, d: Math.hypot(c.x - cityPositions[i].x, c.y - cityPositions[i].y)}))
-      .filter(({j, d}) => {
-        if (j === i || d <= 40 || d >= maxDist) return false;
-        if (isVillage && cityPositions[j].rank === 'village') return false;
-        return true;
-      })
+      .filter(({j, d}) => j !== i && d > 40 && d < effMax)
       .sort((a, b) => a.d - b.d)
-      .slice(0, limit);
+      .slice(0, 2);
 
     for (const {j, d} of sorted) {
       const key = `${Math.min(i,j)}-${Math.max(i,j)}`;
