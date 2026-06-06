@@ -3102,7 +3102,7 @@ function generateMap() {
     const moistBias = (wetDry - 0.5) * 0.36 + (0.5 - coldHot) * 0.08;
     // mountainThresh: fraction above sea level where mountains start
     const landRange = 1 - seaLevel;
-    const mtThresh  = seaLevel + landRange * (0.52 + (1 - mtns) * 0.38);
+    const mtThresh  = seaLevel + landRange * (0.52 + (1 - mtns) * 0.38) * 0.5;
     // snowThresh: polar→near mountains; tropical→far above max height (no snow)
     const snowFactor = 0.04 + coldHot * 0.82;  // 0.04 (polar) → 0.86 (tropical)
     const snowThresh = mtThresh + landRange * snowFactor;
