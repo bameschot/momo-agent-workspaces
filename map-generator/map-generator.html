@@ -311,6 +311,7 @@ body {
   position: relative;
   background: #1a0e05;
   cursor: crosshair;
+  touch-action: none;
 }
 
 #map-canvas {
@@ -3050,8 +3051,9 @@ document.getElementById('sidebar-backdrop').addEventListener('click', closeSideb
 // ═══════════════════════════════════════════════════════════
 (function() {
   let pinching = false, lastPinchDist = 0, lastMidX = 0, lastMidY = 0;
-  let touchActive = false;  // single-touch in progress
+  let touchActive = false;
   let lastTapTime = 0, lastTapX = 0, lastTapY = 0;
+  let touchStartX = 0, touchStartY = 0, touchMoved = false;
 
   function pinchDist(t) {
     return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
@@ -3065,7 +3067,7 @@ document.getElementById('sidebar-backdrop').addEventListener('click', closeSideb
     e.preventDefault();
     const touches = Array.from(e.touches);
 
-    if (touches.length === 2) {
+    if (touches.length >= 2) {
       // Cancel any ongoing single-touch action
       state.isPainting = false;
       if (state.isDrawingRoad) { state.currentRoad = null; state.isDrawingRoad = false; }
@@ -3080,7 +3082,7 @@ document.getElementById('sidebar-backdrop').addEventListener('click', closeSideb
     } else if (touches.length === 1 && !pinching) {
       const t = touches[0];
 
-      // Double-tap → zone close
+      // Double-tap → finish zone
       const now = Date.now();
       if (now - lastTapTime < 280 &&
           Math.hypot(t.clientX - lastTapX, t.clientY - lastTapY) < 32) {
@@ -3091,8 +3093,16 @@ document.getElementById('sidebar-backdrop').addEventListener('click', closeSideb
       lastTapTime = now; lastTapX = t.clientX; lastTapY = t.clientY;
 
       touchActive = true;
-      onMouseDown({ clientX: t.clientX, clientY: t.clientY,
-                    button: 0, preventDefault() {} });
+      touchStartX = t.clientX; touchStartY = t.clientY;
+      touchMoved = false;
+
+      if (state.tool === 'select') {
+        // In select mode single-finger always pans; selection happens on tap-end
+        startPan(t.clientX, t.clientY);
+      } else {
+        onMouseDown({ clientX: t.clientX, clientY: t.clientY,
+                      button: 0, preventDefault() {} });
+      }
     }
   }, { passive: false });
 
@@ -3101,15 +3111,14 @@ document.getElementById('sidebar-backdrop').addEventListener('click', closeSideb
     const touches = Array.from(e.touches);
 
     if (touches.length >= 2 && pinching) {
-      const d   = pinchDist(touches);
-      const m   = pinchMid(touches);
+      const d    = pinchDist(touches);
+      const m    = pinchMid(touches);
       const rect = container.getBoundingClientRect();
 
-      // Pan: translate by midpoint movement
+      // Pan by midpoint delta, then zoom around new midpoint
       state.offsetX += m.x - lastMidX;
       state.offsetY += m.y - lastMidY;
 
-      // Zoom: scale around current midpoint
       if (lastPinchDist > 0 && d > 0) {
         const factor = d / lastPinchDist;
         const cmx = m.x - rect.left, cmy = m.y - rect.top;
@@ -3124,6 +3133,10 @@ document.getElementById('sidebar-backdrop').addEventListener('click', closeSideb
 
     } else if (touches.length === 1 && !pinching && touchActive) {
       const t = touches[0];
+      if (!touchMoved &&
+          Math.hypot(t.clientX - touchStartX, t.clientY - touchStartY) > 6) {
+        touchMoved = true;
+      }
       state.lastMouseX = t.clientX; state.lastMouseY = t.clientY;
       onMouseMove({ clientX: t.clientX, clientY: t.clientY });
     }
@@ -3135,13 +3148,25 @@ document.getElementById('sidebar-backdrop').addEventListener('click', closeSideb
 
     if (pinching && remaining.length < 2) {
       pinching = false; lastPinchDist = 0;
-      // If one finger remains, don't fire mouseup — just reset
       if (remaining.length === 1) { touchActive = false; return; }
     }
 
     if (remaining.length === 0 && touchActive) {
       touchActive = false;
-      onMouseUp({ button: 0 });
+
+      if (state.tool === 'select') {
+        if (state.isPanning) stopPan();
+        if (!touchMoved) {
+          // Tap without drag → hit-test for selection
+          const cp = screenToCanvas(touchStartX, touchStartY);
+          const hit = hitTestAt(cp.x, cp.y);
+          if (hit) { state.selected = hit; } else { state.selected = null; }
+          updateSelectionPanel();
+          render();
+        }
+      } else {
+        onMouseUp({ button: 0 });
+      }
     }
   }, { passive: false });
 
@@ -3161,6 +3186,11 @@ function init() {
   initCanvases();
   buildUI();
   fitToView();
+
+  // Set initial tool UI state (default is select)
+  container.classList.add('select-mode');
+  document.getElementById('status-tool').textContent = 'Tool: Select';
+
   render();
 
   // Mouse move for cursor update
