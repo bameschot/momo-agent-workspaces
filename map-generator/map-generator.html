@@ -412,6 +412,77 @@ body {
   border-radius: 2px;
 }
 
+/* ── SIDEBAR TOGGLE BUTTONS (mobile only) ───────────────────── */
+.sidebar-toggle-btn {
+  display: none;
+  background: linear-gradient(180deg, #e8d4a0 0%, #c8a86c 100%);
+  border: 2px solid #7a5030; border-radius: 4px;
+  padding: 5px 11px; font-size: 16px; color: #3a1a05;
+  cursor: pointer; flex-shrink: 0; line-height: 1;
+  font-family: inherit;
+}
+.sidebar-close-row {
+  display: none;
+  justify-content: flex-end;
+  padding: 5px 8px 0;
+}
+.sidebar-close-row button {
+  background: none; border: none; font-size: 20px;
+  color: #5a3010; cursor: pointer; padding: 2px 6px;
+  font-family: inherit; font-weight: bold; line-height: 1;
+}
+
+/* ── MOBILE STYLES ───────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Topbar: scrollable strip */
+  #topbar {
+    overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; padding: 5px 6px; gap: 6px;
+  }
+  #topbar::-webkit-scrollbar { display: none; }
+  #topbar h1 { font-size: 14px; white-space: nowrap; }
+  .tb-btn    { padding: 6px 9px; font-size: 11px; white-space: nowrap; }
+  .tb-input  { width: 46px; }
+
+  /* Show sidebar toggle buttons */
+  .sidebar-toggle-btn { display: inline-flex; align-items: center; }
+
+  /* Sidebars: hidden off-screen, slide in as overlay */
+  #main { position: relative; overflow: hidden; }
+  #left-sidebar, #right-sidebar {
+    position: absolute; top: 0; bottom: 0;
+    z-index: 20; transition: transform 0.22s ease;
+  }
+  #left-sidebar  { transform: translateX(-100%); box-shadow: 4px 0 18px rgba(0,0,0,0.55); }
+  #right-sidebar { transform: translateX(100%);  box-shadow: -4px 0 18px rgba(0,0,0,0.55); }
+  #left-sidebar.sidebar-open  { transform: translateX(0); }
+  #right-sidebar.sidebar-open { transform: translateX(0); }
+
+  /* Show close buttons inside sidebars */
+  .sidebar-close-row { display: flex; }
+
+  /* Backdrop */
+  #sidebar-backdrop {
+    display: none; position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.45); z-index: 15;
+  }
+  #sidebar-backdrop.visible { display: block; }
+
+  /* Larger touch targets */
+  .tool-btn   { padding: 10px 2px; min-height: 52px; font-size: 9px; }
+  .tool-btn .icon { font-size: 18px; }
+  .terrain-btn { min-height: 38px; font-size: 10px; }
+  .radio-btn   { min-height: 38px; font-size: 11px; }
+  .stamp-btn   { min-height: 44px; }
+  .range-row input[type=range] { height: 22px; }
+  .layer-row   { padding: 7px 6px; }
+
+  /* Status bar: tighter */
+  #statusbar { font-size: 9px; gap: 10px; padding: 3px 8px; }
+}
+
 /* ── GENERATE MODAL ──────────────────────────────────────────── */
 #modal-overlay {
   position: fixed; top:0; left:0; right:0; bottom:0;
@@ -454,6 +525,8 @@ body {
 
 <!-- TOP BAR -->
 <div id="topbar">
+  <button class="sidebar-toggle-btn" id="btn-toggle-left"  title="Tools">&#x2630;</button>
+  <button class="sidebar-toggle-btn" id="btn-toggle-right" title="Layers">&#x25A6;</button>
   <h1>&#x2606; Fantasy Map</h1>
   <div class="tb-sep"></div>
   <span class="tb-label">Zoom:</span>
@@ -479,6 +552,7 @@ body {
 
   <!-- LEFT SIDEBAR -->
   <div id="left-sidebar" class="sidebar">
+    <div class="sidebar-close-row"><button id="btn-close-left">&#x2715;</button></div>
 
     <!-- Tools -->
     <div class="panel">
@@ -607,6 +681,9 @@ body {
 
   </div>
 
+  <!-- MOBILE BACKDROP -->
+  <div id="sidebar-backdrop"></div>
+
   <!-- CANVAS -->
   <div id="canvas-container">
     <canvas id="map-canvas"></canvas>
@@ -614,6 +691,7 @@ body {
 
   <!-- RIGHT SIDEBAR -->
   <div id="right-sidebar" class="sidebar">
+    <div class="sidebar-close-row"><button id="btn-close-right">&#x2715;</button></div>
 
     <!-- Layers -->
     <div class="panel">
@@ -2622,6 +2700,141 @@ document.getElementById('btn-gen-go').addEventListener('click', generateMap);
   const val = document.getElementById('gen-' + id + '-val');
   sl.addEventListener('input', () => { val.textContent = sl.value + '%'; });
 });
+
+// ═══════════════════════════════════════════════════════════
+//  SIDEBAR TOGGLE (MOBILE)
+// ═══════════════════════════════════════════════════════════
+function openSidebar(side) {
+  closeSidebars();
+  document.getElementById(side + '-sidebar').classList.add('sidebar-open');
+  document.getElementById('sidebar-backdrop').classList.add('visible');
+}
+function closeSidebars() {
+  document.getElementById('left-sidebar').classList.remove('sidebar-open');
+  document.getElementById('right-sidebar').classList.remove('sidebar-open');
+  document.getElementById('sidebar-backdrop').classList.remove('visible');
+}
+
+document.getElementById('btn-toggle-left').addEventListener('click', () => {
+  const open = document.getElementById('left-sidebar').classList.contains('sidebar-open');
+  open ? closeSidebars() : openSidebar('left');
+});
+document.getElementById('btn-toggle-right').addEventListener('click', () => {
+  const open = document.getElementById('right-sidebar').classList.contains('sidebar-open');
+  open ? closeSidebars() : openSidebar('right');
+});
+document.getElementById('btn-close-left').addEventListener('click',  closeSidebars);
+document.getElementById('btn-close-right').addEventListener('click', closeSidebars);
+document.getElementById('sidebar-backdrop').addEventListener('click', closeSidebars);
+
+// ═══════════════════════════════════════════════════════════
+//  TOUCH EVENTS (CANVAS)
+// ═══════════════════════════════════════════════════════════
+(function() {
+  let pinching = false, lastPinchDist = 0, lastMidX = 0, lastMidY = 0;
+  let touchActive = false;  // single-touch in progress
+  let lastTapTime = 0, lastTapX = 0, lastTapY = 0;
+
+  function pinchDist(t) {
+    return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  }
+  function pinchMid(t) {
+    return { x: (t[0].clientX + t[1].clientX) / 2,
+             y: (t[0].clientY + t[1].clientY) / 2 };
+  }
+
+  container.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const touches = Array.from(e.touches);
+
+    if (touches.length === 2) {
+      // Cancel any ongoing single-touch action
+      state.isPainting = false;
+      if (state.isDrawingRoad) { state.currentRoad = null; state.isDrawingRoad = false; }
+      if (state.isPanning) stopPan();
+      touchActive = false;
+
+      pinching = true;
+      lastPinchDist = pinchDist(touches);
+      const m = pinchMid(touches);
+      lastMidX = m.x; lastMidY = m.y;
+
+    } else if (touches.length === 1 && !pinching) {
+      const t = touches[0];
+
+      // Double-tap → zone close
+      const now = Date.now();
+      if (now - lastTapTime < 280 &&
+          Math.hypot(t.clientX - lastTapX, t.clientY - lastTapY) < 32) {
+        if (state.tool === 'zone' && state.isDrawingZone) finishZone();
+        lastTapTime = 0;
+        return;
+      }
+      lastTapTime = now; lastTapX = t.clientX; lastTapY = t.clientY;
+
+      touchActive = true;
+      onMouseDown({ clientX: t.clientX, clientY: t.clientY,
+                    button: 0, preventDefault() {} });
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const touches = Array.from(e.touches);
+
+    if (touches.length >= 2 && pinching) {
+      const d   = pinchDist(touches);
+      const m   = pinchMid(touches);
+      const rect = container.getBoundingClientRect();
+
+      // Pan: translate by midpoint movement
+      state.offsetX += m.x - lastMidX;
+      state.offsetY += m.y - lastMidY;
+
+      // Zoom: scale around current midpoint
+      if (lastPinchDist > 0 && d > 0) {
+        const factor = d / lastPinchDist;
+        const cmx = m.x - rect.left, cmy = m.y - rect.top;
+        const nz  = Math.max(0.1, Math.min(8, state.zoom * factor));
+        state.offsetX = cmx - (cmx - state.offsetX) * (nz / state.zoom);
+        state.offsetY = cmy - (cmy - state.offsetY) * (nz / state.zoom);
+        state.zoom = nz;
+      }
+
+      lastPinchDist = d; lastMidX = m.x; lastMidY = m.y;
+      render();
+
+    } else if (touches.length === 1 && !pinching && touchActive) {
+      const t = touches[0];
+      state.lastMouseX = t.clientX; state.lastMouseY = t.clientY;
+      onMouseMove({ clientX: t.clientX, clientY: t.clientY });
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchend', e => {
+    e.preventDefault();
+    const remaining = Array.from(e.touches);
+
+    if (pinching && remaining.length < 2) {
+      pinching = false; lastPinchDist = 0;
+      // If one finger remains, don't fire mouseup — just reset
+      if (remaining.length === 1) { touchActive = false; return; }
+    }
+
+    if (remaining.length === 0 && touchActive) {
+      touchActive = false;
+      onMouseUp({ button: 0 });
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchcancel', e => {
+    state.isPainting = false;
+    if (state.isDrawingRoad) { state.currentRoad = null; state.isDrawingRoad = false; }
+    if (state.isPanning) stopPan();
+    pinching = false; touchActive = false;
+    render();
+  }, { passive: false });
+})();
 
 // ═══════════════════════════════════════════════════════════
 //  INIT
