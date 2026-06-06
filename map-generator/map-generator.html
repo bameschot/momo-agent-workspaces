@@ -2902,18 +2902,36 @@ function placeZones(seed1, seed2, seaLevel) {
 
   const usedNames = new Set();
   centers.forEach((ctr, i) => {
-    const numV  = 10 + (valueNoise(i * 3.7, 1, seed1 + 6000) * 5 | 0);
-    const baseR = Math.min(W, H) * (0.16 + valueNoise(i * 3.7, 2, seed1 + 6000) * 0.12);
+    const numV  = 14 + (valueNoise(i * 3.7, 1, seed1 + 6000) * 6 | 0);
     const pts   = [];
+
     for (let v = 0; v < numV; v++) {
-      const ang = (v / numV) * Math.PI * 2;
-      const nv  = valueNoise(Math.cos(ang) * 2 + i * 10, Math.sin(ang) * 2 + i * 10, seed1 + i * 1337);
-      const r   = baseR * (0.45 + nv * 0.9);
+      const ang  = (v / numV) * Math.PI * 2;
+      const cosA = Math.cos(ang), sinA = Math.sin(ang);
+
+      // Voronoi boundary: minimum perpendicular-bisector distance in this direction
+      // rBisect for center j = |B-A|² / (2 * (B-A)·dir)  (positive when j is "in front")
+      let rMax = Math.min(W, H) * 0.30;
+      for (let j = 0; j < centers.length; j++) {
+        if (j === i) continue;
+        const dx  = centers[j].x - ctr.x;
+        const dy  = centers[j].y - ctr.y;
+        const dot = cosA * dx + sinA * dy;
+        if (dot <= 0) continue;          // center j is behind this ray
+        const rBisect = (dx*dx + dy*dy) / (2 * dot);
+        if (rBisect < rMax) rMax = rBisect;
+      }
+
+      // Organic variation within the cell — always ≤ Voronoi boundary, so no overlap
+      const nv = valueNoise(cosA * 2 + i * 10, sinA * 2 + i * 10, seed1 + i * 1337);
+      const r  = rMax * (0.55 + nv * 0.40);
+
       pts.push({
-        x: Math.max(0, Math.min(W, ctr.x + Math.cos(ang) * r)),
-        y: Math.max(0, Math.min(H, ctr.y + Math.sin(ang) * r))
+        x: Math.max(0, Math.min(W, ctr.x + cosA * r)),
+        y: Math.max(0, Math.min(H, ctr.y + sinA * r))
       });
     }
+
     let ni = i % COUNTRY_NAMES.length;
     while (usedNames.has(COUNTRY_NAMES[ni])) ni = (ni + 1) % COUNTRY_NAMES.length;
     usedNames.add(COUNTRY_NAMES[ni]);
