@@ -1,5 +1,9 @@
 # Project Instructions
 
+## Clarifying Requirements Before Building
+
+If the functionality or requirements of something to be built are unclear, ask clarifying questions **before** writing any code. Keep asking until the user explicitly requests to build the app. Do not start building until that explicit signal is given.
+
 ## Output Format
 
 Whenever something needs to be created or built, deliver it as a **self-contained single-page HTML app**:
