@@ -519,6 +519,9 @@ body {
 .gen-row input[type=range] { width:100%; accent-color:#7a4020; }
 .gen-actions { display:flex; gap:8px; margin-top:16px; }
 .gen-actions .tb-btn { flex:1; text-align:center; font-size:13px; padding:7px; }
+.gen-checks { display:flex; flex-direction:column; gap:4px; margin:8px 0 6px; padding-top:8px; border-top:1px solid #a07840; }
+.gen-check { font-size:11px; color:#3a1a05; display:flex; align-items:center; gap:6px; cursor:pointer; padding:1px 0; }
+.gen-check input[type=checkbox] { accent-color:#7a4020; width:13px; height:13px; flex-shrink:0; }
 </style>
 </head>
 <body>
@@ -697,7 +700,12 @@ body {
         <input type="range" id="gen-mountains" min="0" max="100" value="50">
         <div class="gen-desc"><span>Flat Plains</span><span>High Peaks</span></div>
       </div>
-      <button class="tb-btn" id="btn-gen-go" style="width:100%;margin-top:4px;background:linear-gradient(180deg,#507820,#385810);color:#f0e8c0;border-color:#2a3a10;font-size:12px;">&#x2726; Generate</button>
+      <div class="gen-checks">
+        <label class="gen-check"><input type="checkbox" id="gen-do-stamps" checked> Towns &amp; cities</label>
+        <label class="gen-check"><input type="checkbox" id="gen-do-zones">  Country zones</label>
+        <label class="gen-check"><input type="checkbox" id="gen-do-roads">  Roads &amp; rivers</label>
+      </div>
+      <button class="tb-btn" id="btn-gen-go" style="width:100%;margin-top:2px;background:linear-gradient(180deg,#507820,#385810);color:#f0e8c0;border-color:#2a3a10;font-size:12px;">&#x2726; Generate</button>
     </div>
 
   </div>
@@ -2591,8 +2599,270 @@ function fbm(x, y, seed, octaves) {
   return val / total;
 }
 
+// ═══════════════════════════════════════════════════════════
+//  PROCEDURAL CONTENT GENERATION
+// ═══════════════════════════════════════════════════════════
+
+// Last terrain generation parameters — used by content generators
+let genParams = null;
+
+function probeH(px, py) {
+  return fbm(px * genParams.scale, py * genParams.scale, genParams.seed1, 6);
+}
+function probeM(px, py) {
+  return Math.max(0, Math.min(1,
+    fbm(px * genParams.scale * 0.65, py * genParams.scale * 0.65, genParams.seed2, 5)));
+}
+
+const COUNTRY_NAMES = [
+  'Arendria','Valdorn','Mythoria','Seraphil','Duskmore',
+  'Ironfall','Ashenveil','Stormhaven','Greyveil','Thornmere',
+  'Silvergate','Dawnreach','Embervast','Coldmoor','Brightholm'
+];
+const CITY_NAMES = [
+  'Aldmere','Brynholt','Caerwyn','Duskport','Estmere',
+  'Frostholm','Graymere','Harken','Ironhold','Jadespire',
+  'Kelden','Lorsvale','Mistpeak','Northfen','Overmere',
+  'Pineholt','Quarrow','Rimdale','Stonewick','Treval',
+  'Undercroft','Valewood','Whitmore','Yewdale','Zephyrton'
+];
+const ZONE_COLORS = [
+  '#c0392b','#2980b9','#27ae60','#d68910','#8e44ad',
+  '#16a085','#ca6f1e','#1a5276','#145a32','#6e2f1a'
+];
+
+function generateContent() {
+  if (!genParams) { render(); return; }
+  const { seed1, seed2, seaLevel, mtThresh, snowThresh } = genParams;
+  const doStamps = document.getElementById('gen-do-stamps').checked;
+  const doZones  = document.getElementById('gen-do-zones').checked;
+  const doRoads  = document.getElementById('gen-do-roads').checked;
+
+  const cityPositions = [];
+
+  if (doStamps) placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityPositions);
+  if (doZones)  placeZones(seed1, seed2, seaLevel);
+  if (doRoads)  placeRoads(seed1, seed2, seaLevel, mtThresh, cityPositions);
+
+  if (doRoads) redrawRoadsCanvas();
+  updateZoneFilters();
+  render();
+}
+
+// ── Stamps ────────────────────────────────────────────────────────────────────
+function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
+  const W = state.canvasW, H = state.canvasH;
+  const spacing = Math.min(W, H) * 0.095;
+  const cols = Math.ceil(W / spacing), rows = Math.ceil(H / spacing);
+
+  const usedNames = new Set();
+  function pickName(idx) {
+    let i = idx % CITY_NAMES.length;
+    while (usedNames.has(CITY_NAMES[i])) i = (i + 1) % CITY_NAMES.length;
+    usedNames.add(CITY_NAMES[i]);
+    return CITY_NAMES[i];
+  }
+
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const jx = (valueNoise(col * 5.7, row * 3.1, seed1 + 4444) - 0.5) * spacing * 0.7;
+      const jy = (valueNoise(col * 5.7, row * 3.1, seed2 + 4444) - 0.5) * spacing * 0.7;
+      const px = Math.max(10, Math.min(W - 10, col * spacing + spacing / 2 + jx));
+      const py = Math.max(10, Math.min(H - 10, row * spacing + spacing / 2 + jy));
+
+      const hv = probeH(px, py);
+      const mv = probeM(px, py);
+      if (hv < seaLevel + 0.025) continue;
+
+      const rng  = valueNoise(col * 13.7, row * 11.3, seed1 + col * 17 + row * 23);
+      const rng2 = valueNoise(col * 9.1,  row * 8.3,  seed2 + 1111);
+
+      if (hv > snowThresh) {
+        if (rng < 0.22) state.stamps.push({type:'mountain_peak', x:px, y:py, size:26});
+      } else if (hv > mtThresh) {
+        if      (rng < 0.30) state.stamps.push({type:'mountain_peak', x:px, y:py, size:24});
+        else if (rng < 0.38) state.stamps.push({type:'hill',          x:px, y:py, size:20});
+        else if (rng < 0.43) state.stamps.push({type:'cave',          x:px, y:py, size:20});
+        else if (rng < 0.46) state.stamps.push({type:'mine',          x:px, y:py, size:20});
+      } else if (mv > 0.62) {
+        if      (rng < 0.28) state.stamps.push({type:'forest_tree',   x:px, y:py, size:22});
+        else if (rng < 0.32) state.stamps.push({type:'ruins',         x:px, y:py, size:20});
+      } else if (mv > 0.33) {
+        // Grassland — settlements
+        if (rng < 0.04) {
+          const name = pickName(col * 31 + row);
+          state.stamps.push({type:'city', x:px, y:py, size:30});
+          state.labels.push({text:name, x:px+15, y:py-10, size:11, color:'#3a1a05'});
+          cityOut.push({x:px, y:py, rank:'city'});
+        } else if (rng < 0.11) {
+          const name = pickName(col * 31 + row + 50);
+          state.stamps.push({type:'town', x:px, y:py, size:24});
+          state.labels.push({text:name, x:px+12, y:py-8, size:10, color:'#3a1a05'});
+          cityOut.push({x:px, y:py, rank:'town'});
+        } else if (rng < 0.20) {
+          state.stamps.push({type:'village',  x:px, y:py, size:20});
+        } else if (rng < 0.23) {
+          state.stamps.push({type:'castle',   x:px, y:py, size:24});
+        } else if (rng < 0.25) {
+          state.stamps.push({type:'tower',    x:px, y:py, size:20});
+        } else if (rng < 0.27) {
+          state.stamps.push({type:'farm',     x:px, y:py, size:20});
+        }
+      } else {
+        // Desert/dry
+        if      (rng < 0.05) state.stamps.push({type:'ruins',   x:px, y:py, size:20});
+        else if (rng < 0.08) state.stamps.push({type:'outpost', x:px, y:py, size:20});
+      }
+
+      // Coastal specials
+      if (hv > seaLevel + 0.025 && hv < seaLevel + 0.065) {
+        if      (rng2 < 0.06) state.stamps.push({type:'port',        x:px, y:py, size:22});
+        else if (rng2 < 0.09) state.stamps.push({type:'lighthouse',  x:px, y:py, size:20});
+      }
+    }
+  }
+
+  // Capital — largest settlement, placed near map centre on land
+  const cx = W / 2, cy = H / 2;
+  for (let a = 0; a < 40; a++) {
+    const tx = cx + (valueNoise(a, 0, seed1 + 9000) - 0.5) * W * 0.45;
+    const ty = cy + (valueNoise(a, 1, seed1 + 9000) - 0.5) * H * 0.45;
+    const th = probeH(tx, ty), tm = probeM(tx, ty);
+    if (th > seaLevel + 0.04 && th < mtThresh && tm > 0.30) {
+      const name = pickName(999);
+      state.stamps.push({type:'capital', x:tx, y:ty, size:36});
+      state.labels.push({text:name, x:tx+18, y:ty-12, size:13, color:'#2c0a00'});
+      cityOut.unshift({x:tx, y:ty, rank:'capital'});
+      break;
+    }
+  }
+}
+
+// ── Zones (countries) ─────────────────────────────────────────────────────────
+function placeZones(seed1, seed2, seaLevel) {
+  const W = state.canvasW, H = state.canvasH;
+  const numC = 4 + (valueNoise(1, 1, seed1 + 5000) * 3 | 0);
+  const centers = [];
+  const minSep  = Math.min(W, H) * 0.26;
+
+  for (let a = 0; a < 600 && centers.length < numC; a++) {
+    const px = valueNoise(a * 7.3, 1, seed1 + a) * W;
+    const py = valueNoise(a * 7.3, 2, seed1 + a) * H;
+    if (probeH(px, py) < seaLevel + 0.08) continue;
+    if (centers.some(c => Math.hypot(px - c.x, py - c.y) < minSep)) continue;
+    centers.push({x:px, y:py});
+  }
+
+  const usedNames = new Set();
+  centers.forEach((ctr, i) => {
+    const numV  = 10 + (valueNoise(i * 3.7, 1, seed1 + 6000) * 5 | 0);
+    const baseR = Math.min(W, H) * (0.16 + valueNoise(i * 3.7, 2, seed1 + 6000) * 0.12);
+    const pts   = [];
+    for (let v = 0; v < numV; v++) {
+      const ang = (v / numV) * Math.PI * 2;
+      const nv  = valueNoise(Math.cos(ang) * 2 + i * 10, Math.sin(ang) * 2 + i * 10, seed1 + i * 1337);
+      const r   = baseR * (0.45 + nv * 0.9);
+      pts.push({
+        x: Math.max(0, Math.min(W, ctr.x + Math.cos(ang) * r)),
+        y: Math.max(0, Math.min(H, ctr.y + Math.sin(ang) * r))
+      });
+    }
+    let ni = i % COUNTRY_NAMES.length;
+    while (usedNames.has(COUNTRY_NAMES[ni])) ni = (ni + 1) % COUNTRY_NAMES.length;
+    usedNames.add(COUNTRY_NAMES[ni]);
+    state.zones.push({
+      name: COUNTRY_NAMES[ni], type: 'Country',
+      color: ZONE_COLORS[i % ZONE_COLORS.length],
+      opacity: 0.18, points: pts
+    });
+  });
+}
+
+// ── Roads & rivers ────────────────────────────────────────────────────────────
+function placeRoads(seed1, seed2, seaLevel, mtThresh, cityPositions) {
+  const W = state.canvasW, H = state.canvasH;
+  const step = 28;
+
+  // Rivers: walk downhill from mountain start points
+  const numRivers = 2 + (valueNoise(1, 1, seed1 + 11111) * 4 | 0);
+  for (let r = 0; r < numRivers; r++) {
+    let sx = null, sy = null;
+    for (let a = 0; a < 120; a++) {
+      const tx = valueNoise(r * 17 + a, 1, seed1 + r * 500) * W;
+      const ty = valueNoise(r * 17 + a, 2, seed1 + r * 500) * H;
+      if (probeH(tx, ty) > mtThresh - 0.04) { sx = tx; sy = ty; break; }
+    }
+    if (sx === null) continue;
+
+    const pts = [{x:sx, y:sy}];
+    let cx = sx, cy = sy, curH = probeH(cx, cy);
+
+    for (let s = 0; s < 140; s++) {
+      let bestH = curH, bx = cx, by = cy;
+      for (let d = 0; d < 8; d++) {
+        const ang = (d / 8) * Math.PI * 2
+          + (valueNoise(s * 0.15 + d, r * 3, seed1 + r * 200) - 0.5) * 0.7;
+        const nx = cx + Math.cos(ang) * step;
+        const ny = cy + Math.sin(ang) * step;
+        if (nx < 5 || nx >= W - 5 || ny < 5 || ny >= H - 5) continue;
+        const nh = probeH(nx, ny) + valueNoise(nx * 0.025, ny * 0.025, seed2 + r * 77) * 0.015;
+        if (nh < bestH) { bestH = nh; bx = nx; by = ny; }
+      }
+      if (bx === cx && by === cy) break;
+      cx = bx; cy = by; curH = bestH;
+      const lp = pts[pts.length - 1];
+      if (Math.hypot(cx - lp.x, cy - lp.y) > 10) pts.push({x:cx, y:cy});
+      if (bestH < seaLevel - 0.02) break;
+    }
+    if (pts.length >= 5) {
+      state.roads.push({type:'river', width: 1.5 + valueNoise(r, 1, seed2 + 222) * 2, points:pts});
+    }
+  }
+
+  // Roads: connect cities via a simple MST-like network
+  if (cityPositions.length >= 2) {
+    const connected = new Set();
+    const maxDist   = Math.min(W, H) * 0.55;
+
+    for (let i = 0; i < cityPositions.length; i++) {
+      const sorted = cityPositions
+        .map((c, j) => ({j, d: Math.hypot(c.x - cityPositions[i].x, c.y - cityPositions[i].y)}))
+        .filter(({j, d}) => j !== i && d > 40 && d < maxDist)
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 2);
+
+      for (const {j, d} of sorted) {
+        const key = `${Math.min(i,j)}-${Math.max(i,j)}`;
+        if (connected.has(key)) continue;
+        connected.add(key);
+
+        const from = cityPositions[i], to = cityPositions[j];
+        const segs = Math.max(4, d / 80 | 0);
+        const pts  = [];
+        for (let k = 0; k <= segs; k++) {
+          const t   = k / segs;
+          const env = Math.sin(t * Math.PI); // fade jitter at endpoints
+          const jx  = (valueNoise(i * 7.3 + k * 1.7, j * 5.1,     seed1 + i * 300 + j * 100) - 0.5) * Math.min(d * 0.18, 55) * env;
+          const jy  = (valueNoise(i * 7.3 + k * 1.7, j * 5.1 + 1, seed1 + i * 300 + j * 100) - 0.5) * Math.min(d * 0.18, 55) * env;
+          pts.push({x: from.x + (to.x - from.x) * t + jx, y: from.y + (to.y - from.y) * t + jy});
+        }
+        const rtype = (from.rank === 'capital' || to.rank === 'capital') ? 'highway'
+                    : (from.rank === 'city'    || to.rank === 'city')    ? 'road'
+                    : 'dirt';
+        const rw    = rtype === 'highway' ? 4 : rtype === 'road' ? 2.5 : 1.5;
+        state.roads.push({type:rtype, width:rw, points:pts});
+      }
+    }
+  }
+}
+
 function generateMap() {
   document.getElementById('status-tool').textContent = 'Generating…';
+  // Clear all content for a fresh map
+  state.roads = []; state.stamps = []; state.zones = []; state.labels = [];
+  state.selected = null;
+  roadsCtx.clearRect(0, 0, state.canvasW, state.canvasH);
+  updateZoneFilters(); updateSelectionPanel();
 
   // Defer heavy work so the browser can repaint the status first
   setTimeout(() => {
@@ -2667,9 +2937,10 @@ function generateMap() {
     tmpC.getContext('2d').putImageData(imgData, 0, 0);
     terrainCtx.drawImage(tmpC, 0, 0);
 
+    genParams = { seed1, seed2, scale, seaLevel, mtThresh, snowThresh };
     document.getElementById('status-tool').textContent = 'Tool: ' +
       document.querySelector('.tool-btn.active').textContent.trim();
-    render();
+    generateContent();
   }, 30);
 }
 
