@@ -2626,6 +2626,13 @@ const CITY_NAMES = [
   'Pineholt','Quarrow','Rimdale','Stonewick','Treval',
   'Undercroft','Valewood','Whitmore','Yewdale','Zephyrton'
 ];
+const VILLAGE_NAMES = [
+  'Millhaven','Creekside','Thornwick','Dustfall','Ashford',
+  'Redpine','Coldwell','Blackmere','Irongate','Mudbrook',
+  'Ferndale','Willowfen','Copperhill','Saltmere','Greyvale',
+  'Oakmere','Stonegate','Foxden','Riverton','Ambervale',
+  'Bramblewick','Crestwood','Dunglen','Eastwick','Farrow'
+];
 const ZONE_COLORS = [
   '#c0392b','#2980b9','#27ae60','#d68910','#8e44ad',
   '#16a085','#ca6f1e','#1a5276','#145a32','#6e2f1a'
@@ -2642,9 +2649,10 @@ function generateContent() {
 
   if (doStamps) placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityPositions);
   if (doZones)  placeZones(seed1, seed2, seaLevel);
-  if (doRoads)  placeRoads(seed1, seed2, seaLevel, mtThresh, cityPositions);
+  if (doStamps && cityPositions.length >= 2) placeTownRoads(seed1, seed2, cityPositions);
+  if (doRoads)  placeRivers(seed1, seed2, seaLevel, mtThresh);
 
-  if (doRoads) redrawRoadsCanvas();
+  if (doStamps || doRoads) redrawRoadsCanvas();
   updateZoneFilters();
   render();
 }
@@ -2661,6 +2669,13 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
     while (usedNames.has(CITY_NAMES[i])) i = (i + 1) % CITY_NAMES.length;
     usedNames.add(CITY_NAMES[i]);
     return CITY_NAMES[i];
+  }
+  const usedVillageNames = new Set();
+  function pickVillageName(idx) {
+    let i = idx % VILLAGE_NAMES.length;
+    while (usedVillageNames.has(VILLAGE_NAMES[i])) i = (i + 1) % VILLAGE_NAMES.length;
+    usedVillageNames.add(VILLAGE_NAMES[i]);
+    return VILLAGE_NAMES[i];
   }
 
   for (let row = 0; row < rows; row++) {
@@ -2700,9 +2715,15 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
           state.labels.push({text:name, x:px+12, y:py-8, size:10, color:'#3a1a05'});
           cityOut.push({x:px, y:py, rank:'town'});
         } else if (rng < 0.20) {
+          const name = pickVillageName(col * 31 + row + 100);
           state.stamps.push({type:'village',  x:px, y:py, size:20});
+          state.labels.push({text:name, x:px+10, y:py-6, size:9, color:'#3a1a05'});
+          cityOut.push({x:px, y:py, rank:'village'});
         } else if (rng < 0.23) {
+          const name = pickVillageName(col * 31 + row + 200);
           state.stamps.push({type:'castle',   x:px, y:py, size:24});
+          state.labels.push({text:name, x:px+12, y:py-8, size:9, color:'#3a1a05'});
+          cityOut.push({x:px, y:py, rank:'village'});
         } else if (rng < 0.25) {
           state.stamps.push({type:'tower',    x:px, y:py, size:20});
         } else if (rng < 0.27) {
@@ -2710,14 +2731,26 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
         }
       } else {
         // Desert/dry
-        if      (rng < 0.05) state.stamps.push({type:'ruins',   x:px, y:py, size:20});
-        else if (rng < 0.08) state.stamps.push({type:'outpost', x:px, y:py, size:20});
+        if (rng < 0.05) {
+          state.stamps.push({type:'ruins',   x:px, y:py, size:20});
+        } else if (rng < 0.08) {
+          const name = pickVillageName(col * 31 + row + 400);
+          state.stamps.push({type:'outpost', x:px, y:py, size:20});
+          state.labels.push({text:name, x:px+10, y:py-6, size:9, color:'#3a1a05'});
+          cityOut.push({x:px, y:py, rank:'village'});
+        }
       }
 
       // Coastal specials
       if (hv > seaLevel + 0.025 && hv < seaLevel + 0.065) {
-        if      (rng2 < 0.06) state.stamps.push({type:'port',        x:px, y:py, size:22});
-        else if (rng2 < 0.09) state.stamps.push({type:'lighthouse',  x:px, y:py, size:20});
+        if (rng2 < 0.06) {
+          const name = pickVillageName(col * 31 + row + 300);
+          state.stamps.push({type:'port',       x:px, y:py, size:22});
+          state.labels.push({text:name, x:px+11, y:py-8, size:9, color:'#3a1a05'});
+          cityOut.push({x:px, y:py, rank:'village'});
+        } else if (rng2 < 0.09) {
+          state.stamps.push({type:'lighthouse', x:px, y:py, size:20});
+        }
       }
     }
   }
@@ -2778,12 +2811,55 @@ function placeZones(seed1, seed2, seaLevel) {
   });
 }
 
-// ── Roads & rivers ────────────────────────────────────────────────────────────
-function placeRoads(seed1, seed2, seaLevel, mtThresh, cityPositions) {
+// ── Town road network ─────────────────────────────────────────────────────────
+function placeTownRoads(seed1, seed2, cityPositions) {
+  const W = state.canvasW, H = state.canvasH;
+  const connected = new Set();
+  const maxDist   = Math.min(W, H) * 0.55;
+
+  for (let i = 0; i < cityPositions.length; i++) {
+    const isVillage = cityPositions[i].rank === 'village';
+    const limit = isVillage ? 1 : 2;
+    const sorted = cityPositions
+      .map((c, j) => ({j, d: Math.hypot(c.x - cityPositions[i].x, c.y - cityPositions[i].y)}))
+      .filter(({j, d}) => {
+        if (j === i || d <= 40 || d >= maxDist) return false;
+        if (isVillage && cityPositions[j].rank === 'village') return false;
+        return true;
+      })
+      .sort((a, b) => a.d - b.d)
+      .slice(0, limit);
+
+    for (const {j, d} of sorted) {
+      const key = `${Math.min(i,j)}-${Math.max(i,j)}`;
+      if (connected.has(key)) continue;
+      connected.add(key);
+
+      const from = cityPositions[i], to = cityPositions[j];
+      const segs = Math.max(4, d / 80 | 0);
+      const pts  = [];
+      for (let k = 0; k <= segs; k++) {
+        const t   = k / segs;
+        const env = Math.sin(t * Math.PI);
+        const jx  = (valueNoise(i * 7.3 + k * 1.7, j * 5.1,     seed1 + i * 300 + j * 100) - 0.5) * Math.min(d * 0.18, 55) * env;
+        const jy  = (valueNoise(i * 7.3 + k * 1.7, j * 5.1 + 1, seed1 + i * 300 + j * 100) - 0.5) * Math.min(d * 0.18, 55) * env;
+        pts.push({x: from.x + (to.x - from.x) * t + jx, y: from.y + (to.y - from.y) * t + jy});
+      }
+      const rtype = (from.rank === 'capital' || to.rank === 'capital') ? 'highway'
+                  : (from.rank === 'city'    || to.rank === 'city')    ? 'road'
+                  : (from.rank === 'town'    || to.rank === 'town')    ? 'dirt'
+                  : 'dirt';
+      const rw    = rtype === 'highway' ? 4 : rtype === 'road' ? 2.5 : 1.5;
+      state.roads.push({type:rtype, width:rw, points:pts});
+    }
+  }
+}
+
+// ── Rivers ────────────────────────────────────────────────────────────────────
+function placeRivers(seed1, seed2, seaLevel, mtThresh) {
   const W = state.canvasW, H = state.canvasH;
   const step = 28;
 
-  // Rivers: walk downhill from mountain start points
   const numRivers = 2 + (valueNoise(1, 1, seed1 + 11111) * 4 | 0);
   for (let r = 0; r < numRivers; r++) {
     let sx = null, sy = null;
@@ -2816,42 +2892,6 @@ function placeRoads(seed1, seed2, seaLevel, mtThresh, cityPositions) {
     }
     if (pts.length >= 5) {
       state.roads.push({type:'river', width: 1.5 + valueNoise(r, 1, seed2 + 222) * 2, points:pts});
-    }
-  }
-
-  // Roads: connect cities via a simple MST-like network
-  if (cityPositions.length >= 2) {
-    const connected = new Set();
-    const maxDist   = Math.min(W, H) * 0.55;
-
-    for (let i = 0; i < cityPositions.length; i++) {
-      const sorted = cityPositions
-        .map((c, j) => ({j, d: Math.hypot(c.x - cityPositions[i].x, c.y - cityPositions[i].y)}))
-        .filter(({j, d}) => j !== i && d > 40 && d < maxDist)
-        .sort((a, b) => a.d - b.d)
-        .slice(0, 2);
-
-      for (const {j, d} of sorted) {
-        const key = `${Math.min(i,j)}-${Math.max(i,j)}`;
-        if (connected.has(key)) continue;
-        connected.add(key);
-
-        const from = cityPositions[i], to = cityPositions[j];
-        const segs = Math.max(4, d / 80 | 0);
-        const pts  = [];
-        for (let k = 0; k <= segs; k++) {
-          const t   = k / segs;
-          const env = Math.sin(t * Math.PI); // fade jitter at endpoints
-          const jx  = (valueNoise(i * 7.3 + k * 1.7, j * 5.1,     seed1 + i * 300 + j * 100) - 0.5) * Math.min(d * 0.18, 55) * env;
-          const jy  = (valueNoise(i * 7.3 + k * 1.7, j * 5.1 + 1, seed1 + i * 300 + j * 100) - 0.5) * Math.min(d * 0.18, 55) * env;
-          pts.push({x: from.x + (to.x - from.x) * t + jx, y: from.y + (to.y - from.y) * t + jy});
-        }
-        const rtype = (from.rank === 'capital' || to.rank === 'capital') ? 'highway'
-                    : (from.rank === 'city'    || to.rank === 'city')    ? 'road'
-                    : 'dirt';
-        const rw    = rtype === 'highway' ? 4 : rtype === 'road' ? 2.5 : 1.5;
-        state.roads.push({type:rtype, width:rw, points:pts});
-      }
     }
   }
 }
