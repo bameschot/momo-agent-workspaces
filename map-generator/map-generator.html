@@ -2806,7 +2806,7 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
 
       const hv = probeH(px, py);
       const mv = probeM(px, py);
-      if (hv < seaLevel + 0.025) continue;
+      if (hv < seaLevel + 0.012) continue;
 
       const rng  = valueNoise(col * 13.7, row * 11.3, seed1 + col * 17 + row * 23);
       const rng2 = valueNoise(col * 9.1,  row * 8.3,  seed2 + 1111);
@@ -2861,7 +2861,7 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
       }
 
       // Coastal specials
-      if (hv > seaLevel + 0.025 && hv < seaLevel + 0.065) {
+      if (hv > seaLevel + 0.012 && hv < seaLevel + 0.040) {
         if (rng2 < 0.06) {
           const name = pickVillageName(col * 31 + row + 300);
           state.stamps.push({type:'port',       x:px, y:py, size:22});
@@ -3134,9 +3134,9 @@ function generateMap() {
 
         let col;
         if      (hv < seaLevel - 0.14) col = C.deepwater;
-        else if (hv < seaLevel - 0.04) col = C.water;
+        else if (hv < seaLevel - 0.02) col = C.water;
         else if (hv < seaLevel)        col = C.shallow;
-        else if (hv < seaLevel + 0.025) col = C.sand;
+        else if (hv < seaLevel + 0.012) col = C.sand;
         else if (hv > snowThresh)      col = C.snow;
         else if (hv > mtThresh)        col = C.mountain;
         else if (mv > 0.63)            col = (hv < seaLevel + 0.07) ? C.swamp  : C.forest;
