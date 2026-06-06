@@ -448,25 +448,25 @@ body {
   /* Show sidebar toggle buttons */
   .sidebar-toggle-btn { display: inline-flex; align-items: center; }
 
-  /* Sidebars: hidden off-screen, slide in as overlay */
-  #main { position: relative; overflow: hidden; }
+  /* Sidebars: fixed overlays — position:fixed escapes #main's overflow:hidden */
   #left-sidebar, #right-sidebar {
-    position: absolute; top: 0; bottom: 0;
-    z-index: 20; transition: transform 0.22s ease;
+    position: fixed; top: 0; bottom: 0;
+    z-index: 200; transition: transform 0.22s ease;
+    overflow-y: auto;
   }
-  #left-sidebar  { transform: translateX(-100%); box-shadow: 4px 0 18px rgba(0,0,0,0.55); }
-  #right-sidebar { transform: translateX(100%);  box-shadow: -4px 0 18px rgba(0,0,0,0.55); }
+  #left-sidebar  { left: 0;  transform: translateX(-100%); box-shadow:  4px 0 18px rgba(0,0,0,0.6); }
+  #right-sidebar { right: 0; transform: translateX(100%);  box-shadow: -4px 0 18px rgba(0,0,0,0.6); }
   #left-sidebar.sidebar-open  { transform: translateX(0); }
   #right-sidebar.sidebar-open { transform: translateX(0); }
 
   /* Show close buttons inside sidebars */
   .sidebar-close-row { display: flex; }
 
-  /* Backdrop */
+  /* Backdrop: fixed, covers full viewport */
   #sidebar-backdrop {
-    display: none; position: absolute;
+    display: none; position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.45); z-index: 15;
+    background: rgba(0,0,0,0.45); z-index: 199;
   }
   #sidebar-backdrop.visible { display: block; }
 
@@ -679,6 +679,27 @@ body {
       </div>
     </div>
 
+    <!-- Generate Panel (always visible) -->
+    <div class="panel" id="panel-generate">
+      <div class="panel-title">&#x2726; Generate Map</div>
+      <div class="gen-row">
+        <div class="gen-label"><span>Land / Sea</span><span id="gen-landsea-val">50%</span></div>
+        <input type="range" id="gen-landsea" min="0" max="100" value="50">
+        <div class="gen-desc"><span>More Ocean</span><span>More Land</span></div>
+      </div>
+      <div class="gen-row">
+        <div class="gen-label"><span>Wet / Dry</span><span id="gen-wetdry-val">50%</span></div>
+        <input type="range" id="gen-wetdry" min="0" max="100" value="50">
+        <div class="gen-desc"><span>Arid Desert</span><span>Lush Jungle</span></div>
+      </div>
+      <div class="gen-row">
+        <div class="gen-label"><span>Mountains / Plains</span><span id="gen-mountains-val">50%</span></div>
+        <input type="range" id="gen-mountains" min="0" max="100" value="50">
+        <div class="gen-desc"><span>Flat Plains</span><span>High Peaks</span></div>
+      </div>
+      <button class="tb-btn" id="btn-gen-go" style="width:100%;margin-top:4px;background:linear-gradient(180deg,#507820,#385810);color:#f0e8c0;border-color:#2a3a10;font-size:12px;">&#x2726; Generate</button>
+    </div>
+
   </div>
 
   <!-- MOBILE BACKDROP -->
@@ -719,33 +740,6 @@ body {
       <button class="radio-btn" id="btn-delete-selected" style="width:100%;text-align:center;margin-top:6px;color:#8b0000;">&#x1F5D1; Delete Selected</button>
     </div>
 
-  </div>
-</div>
-
-<!-- MODAL OVERLAY -->
-<div id="modal-overlay"></div>
-
-<!-- GENERATE MODAL -->
-<div id="generate-modal">
-  <h2>&#x2726; Generate Map</h2>
-  <div class="gen-row">
-    <div class="gen-label"><span>Land / Sea</span><span id="gen-landsea-val">50%</span></div>
-    <input type="range" id="gen-landsea" min="0" max="100" value="50">
-    <div class="gen-desc"><span>&#x25C0; More Ocean</span><span>More Land &#x25B6;</span></div>
-  </div>
-  <div class="gen-row">
-    <div class="gen-label"><span>Wet / Dry</span><span id="gen-wetdry-val">50%</span></div>
-    <input type="range" id="gen-wetdry" min="0" max="100" value="50">
-    <div class="gen-desc"><span>&#x25C0; Arid Desert</span><span>Lush Jungle &#x25B6;</span></div>
-  </div>
-  <div class="gen-row">
-    <div class="gen-label"><span>Mountains / Plains</span><span id="gen-mountains-val">50%</span></div>
-    <input type="range" id="gen-mountains" min="0" max="100" value="50">
-    <div class="gen-desc"><span>&#x25C0; Flat Plains</span><span>High Peaks &#x25B6;</span></div>
-  </div>
-  <div class="gen-actions">
-    <button class="tb-btn" id="btn-gen-go" style="background:linear-gradient(180deg,#507820,#385810);color:#f0e8c0;border-color:#2a3a10;">&#x2726; Generate</button>
-    <button class="tb-btn" id="btn-gen-cancel">Cancel</button>
   </div>
 </div>
 
@@ -2597,17 +2591,7 @@ function fbm(x, y, seed, octaves) {
   return val / total;
 }
 
-function openGenerateModal() {
-  document.getElementById('generate-modal').style.display = 'block';
-  document.getElementById('modal-overlay').style.display  = 'block';
-}
-function closeGenerateModal() {
-  document.getElementById('generate-modal').style.display = 'none';
-  document.getElementById('modal-overlay').style.display  = 'none';
-}
-
 function generateMap() {
-  closeGenerateModal();
   document.getElementById('status-tool').textContent = 'Generating…';
 
   // Defer heavy work so the browser can repaint the status first
@@ -2689,10 +2673,8 @@ function generateMap() {
   }, 30);
 }
 
-// Wire up generate modal controls
-document.getElementById('btn-generate').addEventListener('click', openGenerateModal);
-document.getElementById('btn-gen-cancel').addEventListener('click', closeGenerateModal);
-document.getElementById('modal-overlay').addEventListener('click', closeGenerateModal);
+// Wire up generate controls
+document.getElementById('btn-generate').addEventListener('click', generateMap);
 document.getElementById('btn-gen-go').addEventListener('click', generateMap);
 
 ['landsea','wetdry','mountains'].forEach(id => {
@@ -2848,6 +2830,9 @@ function init() {
   // Mouse move for cursor update
   container.addEventListener('mousemove', ()=>render());
   container.addEventListener('mouseleave', ()=>render());
+
+  // Generate a starter map on load
+  generateMap();
 }
 
 init();
