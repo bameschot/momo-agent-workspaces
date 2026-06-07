@@ -712,8 +712,8 @@ body {
         <label class="gen-check"><input type="checkbox" id="gen-do-roads"  checked> Roads &amp; rivers</label>
       </div>
       <div class="gen-row">
-        <div class="gen-label"><span>Settlement Density</span><span id="gen-density-val">11</span></div>
-        <input type="range" id="gen-stamp-density" min="1" max="14" value="11">
+        <div class="gen-label"><span>Settlement Density</span><span id="gen-density-val">30</span></div>
+        <input type="range" id="gen-stamp-density" min="1" max="40" value="30">
         <div class="gen-desc"><span>Sparse</span><span>Dense</span></div>
       </div>
       <button class="tb-btn" id="btn-gen-go" style="width:100%;margin-top:2px;background:linear-gradient(180deg,#507820,#385810);color:#f0e8c0;border-color:#2a3a10;font-size:12px;">&#x2726; Generate</button>
@@ -2777,8 +2777,8 @@ function generateContent() {
 // ── Stamps ────────────────────────────────────────────────────────────────────
 function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
   const W = state.canvasW, H = state.canvasH;
-  const densityVal = parseInt((document.getElementById('gen-stamp-density') || {value:'11'}).value) || 11;
-  const densityFactor = Math.max(0.45, 1.5 - densityVal * 0.075);
+  const densityVal = parseInt((document.getElementById('gen-stamp-density') || {value:'30'}).value) || 30;
+  const densityFactor = Math.max(0.28, 1.43 - densityVal * 0.029);
   const spacing = Math.min(W, H) * 0.095 * densityFactor;
   const cols = Math.ceil(W / spacing), rows = Math.ceil(H / spacing);
 
