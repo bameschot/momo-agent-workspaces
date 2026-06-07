@@ -3084,7 +3084,7 @@ function placeRivers(seed1, seed2, seaLevel, mtThresh) {
     for (let a = 0; a < 120; a++) {
       const tx = valueNoise(r * 17 + a, 1, seed1 + r * 500) * W;
       const ty = valueNoise(r * 17 + a, 2, seed1 + r * 500) * H;
-      if (probeH(tx, ty) > mtThresh - 0.04) { sx = tx; sy = ty; break; }
+      if (probeH(tx, ty) > mtThresh + 0.015) { sx = tx; sy = ty; break; }
     }
     if (sx === null) continue;
 
@@ -3103,10 +3103,17 @@ function placeRivers(seed1, seed2, seaLevel, mtThresh) {
         if (nh < bestH) { bestH = nh; bx = nx; by = ny; }
       }
       if (bx === cx && by === cy) break;
+
+      if (bestH < seaLevel) {
+        // Interpolate the exact crossing point so the river ends right at the coastline
+        const t = (curH - seaLevel) / ((curH - bestH) || 1e-6);
+        pts.push({x: cx + (bx - cx) * t, y: cy + (by - cy) * t});
+        break;
+      }
+
       cx = bx; cy = by; curH = bestH;
       const lp = pts[pts.length - 1];
       if (Math.hypot(cx - lp.x, cy - lp.y) > 10) pts.push({x:cx, y:cy});
-      if (bestH < seaLevel - 0.02) break;
     }
     if (pts.length >= 5) {
       state.roads.push({type:'river', width: 1.5 + valueNoise(r, 1, seed2 + 222) * 2, points:pts});
@@ -3137,13 +3144,13 @@ function generateMap() {
 
     // seaLevel: 0→0.62 (mostly ocean), 1→0.30 (mostly land)
     const seaLevel  = 0.62 - landSea * 0.32;
-    // moistureBias: -0.18 (dry) → +0.18 (wet); cold shifts slightly wetter, hot slightly drier
-    const moistBias = (wetDry - 0.5) * 0.36 + (0.5 - coldHot) * 0.08;
+    // moistureBias: -0.30 (dry) → +0.30 (wet); cold shifts noticeably wetter, hot noticeably drier
+    const moistBias = (wetDry - 0.5) * 0.60 + (0.5 - coldHot) * 0.14;
     // mountainThresh: fraction above sea level where mountains start
     const landRange = 1 - seaLevel;
     const mtThresh  = seaLevel + landRange * (0.52 + (1 - mtns) * 0.38) * 0.5;
-    // snowThresh: polar→near mountains; tropical→far above max height (no snow)
-    const snowFactor = 0.04 + coldHot * 0.82;  // 0.04 (polar) → 0.86 (tropical)
+    // snowThresh: polar→snow blankets most highland; tropical→far above max height (no snow)
+    const snowFactor = 0.02 + coldHot * 1.08;  // 0.02 (polar) → 1.10 (tropical)
     const snowThresh = mtThresh + landRange * snowFactor;
 
     // Terrain RGB colours
