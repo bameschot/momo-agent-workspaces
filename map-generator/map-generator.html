@@ -3002,10 +3002,26 @@ function findLandPath(fromX, fromY, toX, toY, seaLevel, mtThresh, seed1, roadIdx
 }
 
 // ── Town road network ─────────────────────────────────────────────────────────
+function nearestOnPolyline(px, py, poly) {
+  let best = null;
+  for (let s = 0; s < poly.length - 1; s++) {
+    const a = poly[s], b = poly[s+1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx*dx + dy*dy || 1;
+    let t = ((px - a.x) * dx + (py - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const x = a.x + dx * t, y = a.y + dy * t;
+    const dist = Math.hypot(px - x, py - y);
+    if (!best || dist < best.dist) best = {x, y, dist};
+  }
+  return best;
+}
+
 function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
   const W = state.canvasW, H = state.canvasH;
   const connected = new Set();
   const maxDist   = Math.min(W, H) * 0.55;
+  const FORK_DIST = 30;
 
   for (let i = 0; i < cityPositions.length; i++) {
     const isVillage = cityPositions[i].rank === 'village';
@@ -3024,12 +3040,35 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
       const from = cityPositions[i], to = cityPositions[j];
       const pts = findLandPath(from.x, from.y, to.x, to.y, seaLevel, mtThresh, seed1, i * 100 + j);
       if (!pts || pts.length < 2) continue;
+
+      // If an existing road already leaves "from", let this new road fork off
+      // of it partway along rather than running its own separate path from town i.
+      let finalPts = pts;
+      for (const r of state.roads) {
+        const p0 = r.points[0], pN = r.points[r.points.length - 1];
+        const sharesOrigin = Math.hypot(p0.x - from.x, p0.y - from.y) < 25
+                          || Math.hypot(pN.x - from.x, pN.y - from.y) < 25;
+        if (!sharesOrigin) continue;
+
+        let forkIdx = 0;
+        for (let k = 1; k < pts.length; k++) {
+          const np = nearestOnPolyline(pts[k].x, pts[k].y, r.points);
+          if (np.dist < FORK_DIST) forkIdx = k; else break;
+        }
+        if (forkIdx >= 2 && forkIdx < pts.length - 2) {
+          const fork = nearestOnPolyline(pts[forkIdx].x, pts[forkIdx].y, r.points);
+          finalPts = [{x: fork.x, y: fork.y}, ...pts.slice(forkIdx + 1)];
+        }
+        break;
+      }
+      if (finalPts.length < 2) continue;
+
       const rtype = (from.rank === 'capital' || to.rank === 'capital') ? 'highway'
                   : (from.rank === 'city'    || to.rank === 'city')    ? 'road'
                   : (from.rank === 'town'    || to.rank === 'town')    ? 'dirt'
                   : 'dirt';
       const rw    = rtype === 'highway' ? 4 : rtype === 'road' ? 2.5 : 1.5;
-      state.roads.push({type:rtype, width:rw, points:pts});
+      state.roads.push({type:rtype, width:rw, points:finalPts});
     }
   }
 }
