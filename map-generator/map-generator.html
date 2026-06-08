@@ -2740,20 +2740,77 @@ const VILLAGE_NAMES = [
   'Oakmere','Stonegate','Foxden','Riverton','Ambervale',
   'Bramblewick','Crestwood','Dunglen','Eastwick','Farrow'
 ];
+const PEAK_NAMES = [
+  'Mount Drakenor','The Stormcrown','Skyreach Spire','Mount Veythorn','The Sunderpeak',
+  'Ironcrest Summit','Mount Kalduran','The Greyfang','Stormwatch Heights','Mount Solveth',
+  'The Frostcrown','Ravenspire Peak','Mount Aldenhorn','The Cloudpiercer','Thornpeak Summit',
+  'Mount Brackvane','The Shattered Tor','Skyhammer Crest','Mount Eldris','The Watchers Crown'
+];
+const RIVER_NAMES = [
+  'The Silverrun','Greywater','Amberflow','The Mistwash','Stonebrook River',
+  'The Ashreed','Coldcurrent','The Whisperflow','Duskwater River','The Glassrun',
+  'Foxmere Run','The Brightcourse','Thornwash','The Driftwater','Mournbrook River'
+];
+const RUINS_NAMES = [
+  'The Sunken Court','Ashbarrow Ruins','The Crumbled Watch','Old Karrow','The Forgotten Hold',
+  'The Hollow Spire','Greymantle Ruins','The Shattered Hall','Duskfall Ruins','The Lost Cairn',
+  'The Broken Throne','Emberfall Ruins','The Fallen Keep','Wraithstone Ruins','The Silent Court',
+  'The Crumbling Vault','Old Thornhall','The Drowned Hall','Blackmantle Ruins','The Forsaken Spire'
+];
+const LANDMARK_NAMES = [
+  'Greymantle','Stonewatch','Ember Hollow','Foxhollow','Millstone',
+  'Ravensbarrow','Coldwatch','Thornholt','Briarstone','Hollowmark',
+  'Shadewell','Ashendale','Wickhollow','Greyford','Stillwater Holt',
+  'Cinderwatch','Oakenmark','Duskbarrow','Stonefurrow','Mournhollow',
+  'Brackenhall','Wraithmark','Hollowstone','Ferrowatch','Greymoor Holt'
+];
 const BIOME_NAMES = {
-  forest:   ['The Greenwood','Whisperwood','Shadowwood','Deepwood','Fernwood','Thornwood'],
-  jungle:   ['The Verdant Maze','Emerald Canopy','Vinewild','The Lush Expanse','Junglemere','Greatleaf'],
-  mountain: ['Iron Peaks','Stormcrest Range','The Grey Heights','Stoneback Ridge','Thornspire','Greywall'],
-  snow:     ['Glaciermark','The Frost Waste','Iceveil','Snowmere','Coldreach','Whitefield'],
-  tundra:   ['The Frosthold Plain','Permafrost Reach','Rimewaste','The Cold Flats','Frostmere','Bleakmoor'],
-  desert:   ['The Barren','Dustfields','Sandmere','The Wastes','Ashplain','Drythorne'],
-  swamp:    ['Bogfen','The Mire','Murkmoor','Greymere','Bogmire','Marshend'],
-  plains:   ['The Open Plains','Windmere Vale','Greenfields','Meadowreach','Rollingfen','Clearfield'],
+  forest:   ['The Greenwood','Whisperwood','Shadowwood','Deepwood','Fernwood','Thornwood',
+             'Hollowleaf','Mosswick Hollow','The Tangle','Silverbough','Ravenwood','Oakenmere',
+             'The Wildwood','Brackenfell','Duskgrove','Elderwood','The Quietwood','Foxglove Hollow','Wyldermoss'],
+  jungle:   ['The Verdant Maze','Emerald Canopy','Vinewild','The Lush Expanse','Junglemere','Greatleaf',
+             'The Sweltering Reach','Thornvine Depths','Mistcanopy','The Coiling Wilds','Sunleaf Basin','Viridian Hollow',
+             'The Steaming Tangle','Serpentvale','Bloomrot Marrow','The Emerald Maw','Sapsong Reach','Driptangle','The Fevered Green'],
+  mountain: ['Iron Peaks','Stormcrest Range','The Grey Heights','Stoneback Ridge','Thornspire','Greywall',
+             'The Shattered Crown','Frosthorn Range','The Dragonspine','Cloudreach Summit','Granite Watch','The Sundered Tors',
+             'Skyfang Ridge','The Hammerpeaks','Ashen Crags','The Old Stoneteeth','Windhowl Range','Blackridge','The Towering Vault'],
+  snow:     ['Glaciermark','The Frost Waste','Iceveil','Snowmere','Coldreach','Whitefield',
+             'The Rime Expanse','Frostfen Hollow','Glassfrost Reach','The Pale Drift','Hoarwind Plain','Shiverpeak Hollow',
+             'The Frozen Hush','Snowveil Span','Glimmerfrost','The Long Thaw','Wintermark Reach','Crystalmere','The Hushed Tundra'],
+  tundra:   ['The Frosthold Plain','Permafrost Reach','Rimewaste','The Cold Flats','Frostmere','Bleakmoor',
+             'The Greying Steppe','Hollowfrost Reach','Stillfrost Span','The Numb Expanse','Greatfrost Flats','Windscour Plain',
+             'The Barrens of Kel','Ashfrost Moor','Driftgrey Reach','The Silent Steppe','Frostfallow','Coldmarch','The Withered Flats'],
+  desert:   ['The Barren','Dustfields','Sandmere','The Wastes','Ashplain','Drythorne',
+             'The Glasswaste','Cracked Hollow','Sunscar Reach','The Bonelands','Duneshroud','The Withering Sands',
+             'Emberdust Flats','The Long Drought','Scorchmere','The Salt Expanse','Driftsand Reach','The Cinder Wastes','Hollowsand'],
+  swamp:    ['Bogfen','The Mire','Murkmoor','Greymere','Bogmire','Marshend',
+             'The Drownwood','Mosshollow Fen','The Sodden Reach','Quagmire Hollow','The Weeping Marsh','Sumpwater Fen',
+             'The Rot Hollow','Brackfen','The Stillmuck','Foulmere','The Sinking Wilds','Mudcrawl Fen','The Drear Bog'],
+  plains:   ['The Open Plains','Windmere Vale','Greenfields','Meadowreach','Rollingfen','Clearfield',
+             'The Long Grasses','Sunfurrow Vale','Goldgrass Reach','The Wide Sweep','Hollowmead','Larkfield Vale',
+             'The Drifting Plain','Brightmeadow','Windrow Fields','The Open Reach','Sweetgrass Vale','Farrowfield','The Untilled Span'],
 };
 const ZONE_COLORS = [
   '#c0392b','#2980b9','#27ae60','#d68910','#8e44ad',
   '#16a085','#ca6f1e','#1a5276','#145a32','#6e2f1a'
 ];
+
+// Bounded name picker: starts at a derived index and scans forward for the first
+// unused entry, returning null once every name in `list` (or the optional shared
+// `used` set) has been handed out — avoids the infinite-loop risk of a naive
+// "skip used, wrap around" search when a list is fully exhausted.
+function makeNamePicker(list, sharedUsed) {
+  const used = sharedUsed || new Set();
+  return function pick(idx) {
+    if (used.size >= list.length) return null;
+    const start = ((idx % list.length) + list.length) % list.length;
+    for (let k = 0; k < list.length; k++) {
+      const name = list[(start + k) % list.length];
+      if (!used.has(name)) { used.add(name); return name; }
+    }
+    return null;
+  };
+}
 
 function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot) {
   const W = state.canvasW, H = state.canvasH;
@@ -2761,22 +2818,10 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot)
   const cols = Math.floor(W / cellW), rows = Math.floor(H / cellH);
   const placed = [];
   const minSep = 300;
-  const usedBiomeNames = {};
-
+  const biomeNamePickers = {};
   function pickBiomeName(biome) {
-    if (!usedBiomeNames[biome]) usedBiomeNames[biome] = 0;
-    const names = BIOME_NAMES[biome] || [];
-    if (usedBiomeNames[biome] >= names.length) return null;
-    const start = (seed1 + seed2) % names.length;
-    for (let k = 0; k < names.length; k++) {
-      const idx = (start + k + usedBiomeNames[biome]) % names.length;
-      const name = names[idx];
-      if (!Object.values(usedBiomeNames).includes(name)) {
-        usedBiomeNames[biome]++;
-        return name;
-      }
-    }
-    return null;
+    if (!biomeNamePickers[biome]) biomeNamePickers[biome] = makeNamePicker(BIOME_NAMES[biome] || []);
+    return biomeNamePickers[biome](seed1 + seed2);
   }
 
   const biomeSeen = {};
@@ -2853,19 +2898,22 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
   const spacing = Math.min(W, H) * 0.095 * densityFactor;
   const cols = Math.ceil(W / spacing), rows = Math.ceil(H / spacing);
 
-  const usedNames = new Set();
-  function pickName(idx) {
-    let i = idx % CITY_NAMES.length;
-    while (usedNames.has(CITY_NAMES[i])) i = (i + 1) % CITY_NAMES.length;
-    usedNames.add(CITY_NAMES[i]);
-    return CITY_NAMES[i];
-  }
-  const usedVillageNames = new Set();
-  function pickVillageName(idx) {
-    let i = idx % VILLAGE_NAMES.length;
-    while (usedVillageNames.has(VILLAGE_NAMES[i])) i = (i + 1) % VILLAGE_NAMES.length;
-    usedVillageNames.add(VILLAGE_NAMES[i]);
-    return VILLAGE_NAMES[i];
+  const pickName         = makeNamePicker(CITY_NAMES);
+  const pickVillageName  = makeNamePicker(VILLAGE_NAMES);
+  const pickPeakName     = makeNamePicker(PEAK_NAMES);
+  const pickRuinsName    = makeNamePicker(RUINS_NAMES);
+  const pickLandmarkName = makeNamePicker(LANDMARK_NAMES);
+
+  // Names only some instances of a feature (like real fantasy maps, where most
+  // hills/caves/towers go unnamed) — `roll` is a noise sample decorrelated from
+  // the type-selection roll so naming doesn't always land on the same instances.
+  function maybeLabel(roll, threshold, picker, idx, px, py, dx, dy, size, color, style) {
+    if (roll >= threshold) return;
+    const name = picker(idx);
+    if (!name) return;
+    const lbl = {text:name, x:px+dx, y:py+dy, size, color};
+    if (style) lbl.style = style;
+    state.labels.push(lbl);
   }
 
   for (let row = 0; row < rows; row++) {
@@ -2881,17 +2929,34 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
 
       const rng  = valueNoise(col * 13.7, row * 11.3, seed1 + col * 17 + row * 23);
       const rng2 = valueNoise(col * 9.1,  row * 8.3,  seed2 + 1111);
+      // Decorrelated roll that decides whether a feature gets a name label at all
+      const nameRoll = valueNoise(col * 6.3, row * 17.9, seed1 + 55555);
 
       if (hv > snowThresh) {
-        if (rng < 0.22) state.stamps.push({type:'mountain_peak', x:px, y:py, size:26});
+        if (rng < 0.22) {
+          state.stamps.push({type:'mountain_peak', x:px, y:py, size:26});
+          maybeLabel(nameRoll, 0.40, pickPeakName, col*31+row+600, px, py, 14, -12, 10, '#3a2010');
+        }
       } else if (hv > mtThresh) {
-        if      (rng < 0.30) state.stamps.push({type:'mountain_peak', x:px, y:py, size:24});
-        else if (rng < 0.38) state.stamps.push({type:'hill',          x:px, y:py, size:20});
-        else if (rng < 0.43) state.stamps.push({type:'cave',          x:px, y:py, size:20});
-        else if (rng < 0.46) state.stamps.push({type:'mine',          x:px, y:py, size:20});
+        if (rng < 0.30) {
+          state.stamps.push({type:'mountain_peak', x:px, y:py, size:24});
+          maybeLabel(nameRoll, 0.40, pickPeakName, col*31+row+600, px, py, 14, -12, 10, '#3a2010');
+        }
+        else if (rng < 0.38) state.stamps.push({type:'hill', x:px, y:py, size:20});
+        else if (rng < 0.43) {
+          state.stamps.push({type:'cave', x:px, y:py, size:20});
+          maybeLabel(nameRoll, 0.35, pickLandmarkName, col*31+row+700, px, py, 10, -6, 9, '#3a1a05');
+        }
+        else if (rng < 0.46) {
+          state.stamps.push({type:'mine', x:px, y:py, size:20});
+          maybeLabel(nameRoll, 0.35, pickLandmarkName, col*31+row+800, px, py, 10, -6, 9, '#3a1a05');
+        }
       } else if (mv > 0.62) {
-        if      (rng < 0.28) state.stamps.push({type:'forest_tree',   x:px, y:py, size:22});
-        else if (rng < 0.32) state.stamps.push({type:'ruins',         x:px, y:py, size:20});
+        if (rng < 0.28) state.stamps.push({type:'forest_tree', x:px, y:py, size:22});
+        else if (rng < 0.32) {
+          state.stamps.push({type:'ruins', x:px, y:py, size:20});
+          maybeLabel(nameRoll, 0.45, pickRuinsName, col*31+row+900, px, py, 10, -6, 9, '#5a1a1a', 'italic');
+        }
       } else if (mv > 0.33) {
         // Grassland — settlements
         if (rng < 0.04) {
@@ -2915,14 +2980,17 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
           state.labels.push({text:name, x:px+12, y:py-8, size:9, color:'#3a1a05'});
           cityOut.push({x:px, y:py, rank:'village'});
         } else if (rng < 0.25) {
-          state.stamps.push({type:'tower',    x:px, y:py, size:20});
+          state.stamps.push({type:'tower', x:px, y:py, size:20});
+          maybeLabel(nameRoll, 0.40, pickLandmarkName, col*31+row+1000, px, py, 10, -6, 9, '#3a1a05');
         } else if (rng < 0.27) {
-          state.stamps.push({type:'farm',     x:px, y:py, size:20});
+          state.stamps.push({type:'farm', x:px, y:py, size:20});
+          maybeLabel(nameRoll, 0.35, pickLandmarkName, col*31+row+1100, px, py, 10, -6, 9, '#3a1a05');
         }
       } else {
         // Desert/dry
         if (rng < 0.05) {
-          state.stamps.push({type:'ruins',   x:px, y:py, size:20});
+          state.stamps.push({type:'ruins', x:px, y:py, size:20});
+          maybeLabel(nameRoll, 0.45, pickRuinsName, col*31+row+1200, px, py, 10, -6, 9, '#5a1a1a', 'italic');
         } else if (rng < 0.08) {
           const name = pickVillageName(col * 31 + row + 400);
           state.stamps.push({type:'outpost', x:px, y:py, size:20});
@@ -2940,6 +3008,7 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
           cityOut.push({x:px, y:py, rank:'village'});
         } else if (rng2 < 0.09) {
           state.stamps.push({type:'lighthouse', x:px, y:py, size:20});
+          maybeLabel(nameRoll, 0.40, pickLandmarkName, col*31+row+1300, px, py, 12, -8, 9, '#3a1a05');
         }
       }
     }
@@ -3167,6 +3236,7 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
 function placeRivers(seed1, seed2, seaLevel, mtThresh) {
   const W = state.canvasW, H = state.canvasH;
   const step = 28;
+  const pickRiverName = makeNamePicker(RIVER_NAMES);
 
   const numRivers = 2 + (valueNoise(1, 1, seed1 + 11111) * 4 | 0);
   for (let r = 0; r < numRivers; r++) {
@@ -3207,6 +3277,11 @@ function placeRivers(seed1, seed2, seaLevel, mtThresh) {
     }
     if (pts.length >= 5) {
       state.roads.push({type:'river', width: 1.5 + valueNoise(r, 1, seed2 + 222) * 2, points:pts});
+      const name = pickRiverName(r * 7 + (seed1 + seed2));
+      if (name) {
+        const mid = pts[Math.floor(pts.length / 2)];
+        state.labels.push({text:name, x:mid.x, y:mid.y - 8, size:9, color:'#1a3a5a', style:'italic'});
+      }
     }
   }
 }
