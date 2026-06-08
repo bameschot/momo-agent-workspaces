@@ -1517,11 +1517,17 @@ function drawParchmentBackground(ctx, w, h) {
 function render() {
   const container = document.getElementById('canvas-container');
   const cw = container.clientWidth, ch = container.clientHeight;
-  displayCanvas.width = cw;
-  displayCanvas.height = ch;
+  // Size the backing store in physical pixels (CSS size × devicePixelRatio) so the
+  // canvas renders crisply on high-DPI/retina displays instead of being upscaled
+  // and blurred by the browser; the dpr scale below maps drawing back to CSS-pixel
+  // coordinates so all existing pan/zoom/draw code is unaffected.
+  const dpr = window.devicePixelRatio || 1;
+  displayCanvas.width = cw * dpr;
+  displayCanvas.height = ch * dpr;
   displayCanvas.style.width = cw+'px';
   displayCanvas.style.height = ch+'px';
 
+  dctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   dctx.clearRect(0,0,cw,ch);
   dctx.save();
 
