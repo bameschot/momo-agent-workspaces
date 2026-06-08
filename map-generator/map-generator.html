@@ -2704,11 +2704,12 @@ function fitToView() {
 document.getElementById('btn-resize').addEventListener('click',()=>{
   const nw = parseInt(document.getElementById('inp-width').value)||2000;
   const nh = parseInt(document.getElementById('inp-height').value)||1500;
-  if(!confirm(`Resize canvas to ${nw}×${nh}? Terrain will be reset.`)) return;
+  if(!confirm(`Resize canvas to ${nw}×${nh}? A new map will be generated at the new size.`)) return;
   state.canvasW = nw; state.canvasH = nh;
   initCanvases();
   fitToView();
   render();
+  generateMap();
 });
 
 document.getElementById('btn-clear').addEventListener('click',()=>{
