@@ -718,9 +718,9 @@ body {
       <div class="panel-title">&#x2726; Generate Map</div>
       <div class="gen-row">
         <div class="gen-label"><span>Seed</span></div>
-        <input class="tb-input" id="gen-seed" type="text" inputmode="numeric" maxlength="10" placeholder="Random" style="width:100%;box-sizing:border-box;">
+        <input class="tb-input" id="gen-seed" type="text" inputmode="numeric" maxlength="16" placeholder="Random" style="width:100%;box-sizing:border-box;">
         <button class="tb-btn" id="btn-gen-seed-reroll" type="button" style="width:100%;margin-top:6px;font-size:11px;padding:5px;" title="Clear seed (use random on next generate)">&#x21bb; Random Seed</button>
-        <div class="gen-desc"><span>Same seed + settings = same map</span><span></span></div>
+        <div class="gen-desc"><span>Seed encodes all settings below — same seed = same map &amp; sliders</span><span></span></div>
       </div>
       <div class="gen-row">
         <div class="gen-label"><span>Land / Sea</span><span id="gen-landsea-val">50%</span></div>
@@ -4435,6 +4435,95 @@ function placeWaterLabels(seed1, seed2, seaLevel) {
   });
 }
 
+// ── Seed ⇄ parameter encoding ─────────────────────────────────────────────────
+// The seed is a single integer that losslessly packs an RNG entropy value plus
+// every generation slider's value into one mixed-radix number (Horner's method),
+// so a seed is a complete reproducible "recipe": typing one sets every slider to
+// an exact position, and moving a slider regenerates the seed to match it.
+//   composite = (((((rng*101+landSea)*101+wetDry)*101+mountains)*101+temp)*100+(density-1))*11+(countries-2)
+// MAX_COMPOSITE = 65536 * 101*101*101*101*100*11 - 1 = 7,501,672,683,929,599
+// (16 digits — comfortably under Number.MAX_SAFE_INTEGER).
+const SEED_RNG_RADIX = 65536;
+const SEED_MAX_COMPOSITE = SEED_RNG_RADIX * 101 * 101 * 101 * 101 * 100 * 11 - 1;
+
+function encodeSeed(rng, landSea, wetDry, mountains, temp, density, countries) {
+  let c = rng;
+  c = c * 101 + landSea;
+  c = c * 101 + wetDry;
+  c = c * 101 + mountains;
+  c = c * 101 + temp;
+  c = c * 100 + (density - 1);
+  c = c * 11  + (countries - 2);
+  return c;
+}
+
+function decodeSeed(composite) {
+  let v = composite;
+  const countries = (v % 11) + 2;   v = Math.floor(v / 11);
+  const density   = (v % 100) + 1;  v = Math.floor(v / 100);
+  const temp      = v % 101;        v = Math.floor(v / 101);
+  const mountains = v % 101;        v = Math.floor(v / 101);
+  const wetDry    = v % 101;        v = Math.floor(v / 101);
+  const landSea   = v % 101;        v = Math.floor(v / 101);
+  const rng       = v; // unbounded most-significant remainder — makes this a true bijection
+  return { rng, landSea, wetDry, mountains, temp, density, countries };
+}
+
+// Returns the clamped composite seed typed into the field, or null if the field
+// is blank/non-numeric (meaning "roll a fresh one").
+function getEffectiveSeed() {
+  const seedField = document.getElementById('gen-seed');
+  const raw = seedField ? seedField.value.trim() : '';
+  if (!/^\d+$/.test(raw)) return null;
+  return Math.min(parseInt(raw, 10), SEED_MAX_COMPOSITE);
+}
+
+function readSliderParams() {
+  return {
+    landSea:   parseInt(document.getElementById('gen-landsea').value, 10),
+    wetDry:    parseInt(document.getElementById('gen-wetdry').value, 10),
+    mountains: parseInt(document.getElementById('gen-mountains').value, 10),
+    temp:      parseInt(document.getElementById('gen-temp').value, 10),
+    density:   parseInt(document.getElementById('gen-stamp-density').value, 10),
+    countries: parseInt(document.getElementById('gen-num-countries').value, 10)
+  };
+}
+
+// Sets each slider's value AND its visible "-val" label — setting .value via JS
+// does not fire `input` events, so the label has to be updated by hand here.
+function applySliderParams(p) {
+  const set = (id, valId, value, label) => {
+    const sl = document.getElementById(id);
+    sl.value = value;
+    document.getElementById(valId).textContent = label !== undefined ? label : value;
+  };
+  set('gen-landsea',        'gen-landsea-val',        p.landSea,   p.landSea + '%');
+  set('gen-wetdry',         'gen-wetdry-val',         p.wetDry,    p.wetDry + '%');
+  set('gen-mountains',      'gen-mountains-val',      p.mountains, p.mountains + '%');
+  set('gen-temp',           'gen-temp-val',           p.temp,      p.temp + '%');
+  set('gen-stamp-density',  'gen-density-val',        p.density);
+  set('gen-num-countries',  'gen-num-countries-val',  p.countries);
+}
+
+// Seed field changed (typed/pasted): decode it and snap every slider to match.
+function syncParamsFromSeed() {
+  const composite = getEffectiveSeed();
+  if (composite === null) return;
+  applySliderParams(decodeSeed(composite));
+}
+
+// A slider moved: re-encode the seed using its RNG component (kept from whatever
+// seed is currently shown, or freshly rolled if the field is blank/invalid) plus
+// the sliders' new values, so the seed always reflects the exact current recipe.
+function syncSeedFromParams() {
+  const seedField = document.getElementById('gen-seed');
+  if (!seedField) return;
+  const composite = getEffectiveSeed();
+  const rng = composite !== null ? decodeSeed(composite).rng : ((Math.random() * SEED_RNG_RADIX) >>> 0);
+  const p = readSliderParams();
+  seedField.value = String(encodeSeed(rng, p.landSea, p.wetDry, p.mountains, p.temp, p.density, p.countries));
+}
+
 // ── Top-level map generation ──────────────────────────────────────────────────
 // Entry point for "Generate": clears all existing content, paints a fresh
 // terrain heightmap/colormap from two freshly-rolled random seeds and the
@@ -4469,21 +4558,25 @@ function generateMap() {
   setTimeout(() => {
    try {
     const W = state.canvasW, H = state.canvasH;
-    // Single master seed drives every random choice the generator makes — terrain
-    // noise, stamps, zones, roads, rivers, labels all derive from `seed1`/`seed2`
-    // (plus per-feature offsets), and both of those are themselves deterministic
-    // functions of `masterSeed`. Re-entering the same seed (with the same sliders)
-    // therefore reproduces the exact same map. A blank/invalid field means "pick a
-    // fresh random seed"; either way the resulting value is written back into the
-    // field so the user can see and copy whatever seed actually produced this map.
+    // The seed is a single integer that losslessly encodes BOTH the RNG starting
+    // point and every generation slider's value (see encodeSeed/decodeSeed) — a
+    // complete, shareable "recipe". Re-entering the same seed reproduces the exact
+    // same map AND snaps every slider back to the exact position that produced it.
+    // A blank/invalid field means "roll a fresh RNG, keep the current sliders";
+    // either way the resulting composite is written back so the user can see and
+    // copy whatever seed actually produced this map.
     const seedField = document.getElementById('gen-seed');
-    const seedRaw = seedField ? seedField.value.trim() : '';
-    const masterSeed = /^\d+$/.test(seedRaw)
-      ? (parseInt(seedRaw, 10) >>> 0)
-      : ((Math.random() * 0x100000000) >>> 0);
-    const seed1 = (masterSeed % 0xFFFFF) + 1;
-    const seed2 = ((Math.imul(masterSeed, 2654435761) >>> 0) % 0xFFFFF) + 0x80000;
-    if (seedField) seedField.value = String(masterSeed);
+    let composite = getEffectiveSeed();
+    if (composite === null) {
+      const freshRng = (Math.random() * 65536) >>> 0;
+      const cur = readSliderParams();
+      composite = encodeSeed(freshRng, cur.landSea, cur.wetDry, cur.mountains, cur.temp, cur.density, cur.countries);
+    }
+    const decoded = decodeSeed(composite);
+    applySliderParams(decoded);
+    const seed1 = decoded.rng + 1;
+    const seed2 = ((Math.imul(decoded.rng, 2654435761) >>> 0) % 0xFFFFF) + 0x80000;
+    if (seedField) seedField.value = String(composite);
     // Scale: ~4 "noise units" across the shorter dimension
     const scale = 4.0 / Math.min(W, H);
 
@@ -4547,29 +4640,37 @@ function generateMap() {
 document.getElementById('btn-generate').addEventListener('click', generateMap);
 document.getElementById('btn-gen-go').addEventListener('click', generateMap);
 
-// Seed field: digits only (it's parsed as an unsigned integer), and the reroll
-// button rolls and displays a brand-new random seed immediately (rather than
-// waiting for the next Generate click to pick one implicitly).
+// Seed field: digits only (it's parsed as an unsigned integer), and typing/pasting
+// a seed immediately decodes it and snaps every slider to match (full encoding —
+// the seed IS the recipe). The reroll button keeps the current sliders and rolls
+// just a fresh RNG component, giving a new terrain variation of the same recipe.
+// (Setting `.value` via JS never fires `input`, so these two directions can't
+// trigger each other and cause a feedback loop.)
 const seedField = document.getElementById('gen-seed');
 seedField.addEventListener('input', () => {
   const digits = seedField.value.replace(/\D/g, '');
   if (digits !== seedField.value) seedField.value = digits;
+  syncParamsFromSeed();
 });
 document.getElementById('btn-gen-seed-reroll').addEventListener('click', () => {
-  seedField.value = String((Math.random() * 0x100000000) >>> 0);
+  const freshRng = (Math.random() * SEED_RNG_RADIX) >>> 0;
+  const p = readSliderParams();
+  seedField.value = String(encodeSeed(freshRng, p.landSea, p.wetDry, p.mountains, p.temp, p.density, p.countries));
   seedField.focus();
 });
 
 ['landsea','wetdry','mountains','temp'].forEach(id => {
   const sl  = document.getElementById('gen-' + id);
   const val = document.getElementById('gen-' + id + '-val');
-  sl.addEventListener('input', () => { val.textContent = sl.value + '%'; });
+  sl.addEventListener('input', () => { val.textContent = sl.value + '%'; syncSeedFromParams(); });
 });
 document.getElementById('gen-stamp-density').addEventListener('input', function() {
   document.getElementById('gen-density-val').textContent = this.value;
+  syncSeedFromParams();
 });
 document.getElementById('gen-num-countries').addEventListener('input', function() {
   document.getElementById('gen-num-countries-val').textContent = this.value;
+  syncSeedFromParams();
 });
 
 // ═══════════════════════════════════════════════════════════
