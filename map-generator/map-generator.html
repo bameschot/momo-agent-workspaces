@@ -3980,15 +3980,55 @@ function nearestOnPolyline(px, py, poly) {
   return best;
 }
 
+// Closest point on any already-placed road that is wider (i.e. a higher tier)
+// than `ownWidth` — lets a settlement's branch join a nearby intermediate-tier
+// road (capillaries → veins → arteries) instead of always cutting straight to
+// the trunk highway.
+function nearestPointOnWiderRoad(x, y, ownWidth) {
+  let best = null;
+  for (const r of state.roads) {
+    if (r.width <= ownWidth) continue;
+    const np = nearestOnPolyline(x, y, r.points);
+    if (np && (!best || np.dist < best.dist)) best = np;
+  }
+  return best;
+}
+
+// If a freshly-routed path comes within MERGE_DIST of an already-placed road of
+// the *same* type, truncate it there and snap its tail onto that road's nearest
+// point — so two same-rank roads passing close together bend into a shared
+// junction instead of running on as parallel near-duplicates. Starts the scan a
+// couple of points in so a road doesn't immediately "merge" with one leaving
+// its own origin settlement.
+const MERGE_DIST = 35;
+function mergeIntoSameType(pts, type) {
+  for (let k = 2; k < pts.length; k++) {
+    for (const r of state.roads) {
+      if (r.type !== type) continue;
+      const np = nearestOnPolyline(pts[k].x, pts[k].y, r.points);
+      if (np.dist < MERGE_DIST) return [...pts.slice(0, k), {x: np.x, y: np.y}];
+    }
+  }
+  return pts;
+}
+
+
 // Builds a "trunk + branches" network rather than a city-to-city mesh: a
 // handful of long-distance highways are routed between random pairs of major
 // settlements (town/city/capital), with their endpoint-to-endpoint distance
 // capped to a believable 10–25% of the map diagonal so they read as regional
 // routes rather than corner-to-corner megaroads. Every other settlement —
-// including villages — then finds the nearest point on whichever highway is
-// closest and pathfinds its own branch road there (never directly to another
-// settlement). Highway-pair selection is bounded (fixed attempt cap) so it
-// always terminates even on sparse maps where few valid pairs exist.
+// including villages — then pathfinds its own branch road to the nearest point
+// on the nearest *wider* road (an intermediate-tier road if one is close, else
+// the highway itself), processed in descending tier order so that wider tiers
+// already exist in state.roads when narrower tiers go looking for one to join —
+// turning the network into capillaries → veins → arteries rather than every
+// branch terminating on the same trunk. Every freshly-routed path (highways,
+// branches, and the direct nearby-town links below) is also passed through
+// mergeIntoSameType so same-rank roads that pass close together bend into a
+// shared junction instead of running on as parallel near-duplicates. Highway
+// selection and the nearby-town pass are both bounded (fixed attempt cap /
+// O(towns²) with a tight distance gate) so they always terminate.
 function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
   const W = state.canvasW, H = state.canvasH;
   const diag = Math.hypot(W, H);
@@ -4002,7 +4042,7 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
   const numHighways = Math.max(1, Math.min(4, Math.round(majors.length / 5)));
   const usedPairs = new Set();
   const usedEndpoints = new Set();
-  const highways = [];
+  let highwayCount = 0;
 
   for (let h = 0; h < numHighways; h++) {
     let chosen = null;
@@ -4022,35 +4062,67 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
     if (!chosen) continue;
 
     const { a, b } = chosen;
-    const pts = findLandPath(a.x, a.y, b.x, b.y, seaLevel, mtThresh, seed1, 9000 + h);
+    let pts = findLandPath(a.x, a.y, b.x, b.y, seaLevel, mtThresh, seed1, 9000 + h);
     if (!pts || pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+    pts = mergeIntoSameType(pts, 'highway');
+    if (pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
 
     state.roads.push({type:'highway', width:4, points:pts});
-    highways.push(pts);
+    highwayCount++;
     usedEndpoints.add(a.idx);
     usedEndpoints.add(b.idx);
   }
-  if (highways.length === 0) return;
+  if (highwayCount === 0) return;
 
+  // Descending tier order: capital/city ('road', width 2.5) before town/village
+  // ('dirt', width 1.5) so narrower tiers can find and join wider tiers' roads.
+  const tiers = [
+    { ranks: ['capital', 'city'], type: 'road', width: 2.5 },
+    { ranks: ['town', 'village'], type: 'dirt', width: 1.5 },
+  ];
   const maxBranch = Math.min(W, H) * 0.55;
-  for (let i = 0; i < cityPositions.length; i++) {
-    if (usedEndpoints.has(i)) continue;
-    const c = cityPositions[i];
-    const effMax = c.rank === 'village' ? Math.min(W, H) * 0.20 : maxBranch;
 
-    let best = null;
-    for (const hwPts of highways) {
-      const np = nearestOnPolyline(c.x, c.y, hwPts);
-      if (np && (!best || np.dist < best.dist)) best = np;
+  for (const tier of tiers) {
+    for (let i = 0; i < cityPositions.length; i++) {
+      if (usedEndpoints.has(i)) continue;
+      const c = cityPositions[i];
+      if (!tier.ranks.includes(c.rank)) continue;
+      const effMax = c.rank === 'village' ? Math.min(W, H) * 0.20 : maxBranch;
+
+      const target = nearestPointOnWiderRoad(c.x, c.y, tier.width);
+      if (!target || target.dist < 5 || target.dist > effMax) continue;
+
+      let pts = findLandPath(c.x, c.y, target.x, target.y, seaLevel, mtThresh, seed1, 1000 + i);
+      if (!pts || pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+      pts = mergeIntoSameType(pts, tier.type);
+      if (pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+
+      state.roads.push({type:tier.type, width:tier.width, points:pts});
     }
-    if (!best || best.dist < 5 || best.dist > effMax) continue;
+  }
 
-    const pts = findLandPath(c.x, c.y, best.x, best.y, seaLevel, mtThresh, seed1, 1000 + i);
-    if (!pts || pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+  // Nearby towns additionally get a direct road between them — independent of
+  // (and on top of) their own hierarchical branch — echoing how settlements
+  // used to mesh together, but scoped to genuinely close town pairs only.
+  const CLOSE_TOWN_DIST = diag * 0.08;
+  const towns = cityPositions.map((c, idx) => ({x:c.x, y:c.y, rank:c.rank, idx})).filter(c => c.rank === 'town');
+  const linkedTowns = new Set();
+  for (let i = 0; i < towns.length; i++) {
+    for (let j = i + 1; j < towns.length; j++) {
+      const a = towns[i], b = towns[j];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (d < 40 || d > CLOSE_TOWN_DIST) continue;
+      const key = `${Math.min(a.idx,b.idx)}-${Math.max(a.idx,b.idx)}`;
+      if (linkedTowns.has(key)) continue;
+      linkedTowns.add(key);
 
-    const rtype = (c.rank === 'capital' || c.rank === 'city') ? 'road' : 'dirt';
-    const rw    = rtype === 'road' ? 2.5 : 1.5;
-    state.roads.push({type:rtype, width:rw, points:pts});
+      let pts = findLandPath(a.x, a.y, b.x, b.y, seaLevel, mtThresh, seed1, 5000 + a.idx*100 + b.idx);
+      if (!pts || pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+      pts = mergeIntoSameType(pts, 'dirt');
+      if (pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+
+      state.roads.push({type:'dirt', width:1.5, points:pts});
+    }
   }
 }
 
