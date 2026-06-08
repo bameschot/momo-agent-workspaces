@@ -3432,10 +3432,10 @@ function makeNamePicker(list, sharedUsed) {
 // common forest region (separation is tracked per biome type, not globally).
 function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot) {
   const W = state.canvasW, H = state.canvasH;
-  const cellW = 150, cellH = 130; // sampling-grid cell size — smaller = more candidate label spots
+  const cellW = 120, cellH = 100; // sampling-grid cell size — smaller = more candidate label spots
   const cols = Math.floor(W / cellW), rows = Math.floor(H / cellH);
   const placedByBiome = {};        // biome -> [{x,y}, ...] already-placed label positions, for the per-biome separation check
-  const minSep = 300;              // minimum px distance between two labels of the SAME biome
+  const minSep = 220;              // minimum px distance between two labels of the SAME biome
   const biomeNamePickers = {};
   function pickBiomeName(biome) {
     if (!biomeNamePickers[biome]) biomeNamePickers[biome] = makeNamePicker(BIOME_NAMES[biome] || []);
@@ -3451,11 +3451,11 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot)
       const jy = (valueNoise(col * 7.1, row * 3.3, seed2 + 8888) - 0.5) * cellH * 0.38;
       const px = (col + 0.5) * cellW + jx;
       const py = (row + 0.5) * cellH + jy;
-      if (px < 30 || px > W - 30 || py < 30 || py > H - 30) continue; // keep labels off the canvas edge
+      if (px < 18 || px > W - 18 || py < 18 || py > H - 18) continue; // keep labels off the canvas edge
 
       const hv = probeH(px, py);
       const mv = probeM(px, py);
-      if (hv < seaLevel + 0.04) continue; // don't label water/coastline
+      if (hv < seaLevel + 0.025) continue; // don't label water/coastline
 
       // NOTE: this elevation/moisture -> biome classification intentionally
       // mirrors classifyTerrainColor() (~line 1840, used for terrain painting).
@@ -4053,12 +4053,12 @@ function findWaterBodies(seaLevel) {
   }
 
   const visited = new Uint8Array(n);
-  const minCells = 6;
+  const minCells = 4;
   // A small edge-touching fragment (a corner inlet/bay clipped by the canvas
   // boundary) technically "touches the edge" like a true open sea, but doesn't
   // read as one — so seas need to clear a notably higher cell count than the
   // general lake/puddle floor before they're worth naming as their own sea.
-  const minSeaCells = 30;
+  const minSeaCells = 20;
   const bodies = []; // {type, cells, x, y}
 
   for (let start = 0; start < n; start++) {
