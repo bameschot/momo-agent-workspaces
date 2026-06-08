@@ -716,6 +716,11 @@ body {
         <input type="range" id="gen-stamp-density" min="1" max="40" value="30">
         <div class="gen-desc"><span>Sparse</span><span>Dense</span></div>
       </div>
+      <div class="gen-row">
+        <div class="gen-label"><span>Number of Countries</span><span id="gen-num-countries-val">5</span></div>
+        <input type="range" id="gen-num-countries" min="2" max="12" value="5">
+        <div class="gen-desc"><span>Few</span><span>Many</span></div>
+      </div>
       <button class="tb-btn" id="btn-gen-go" style="width:100%;margin-top:2px;background:linear-gradient(180deg,#507820,#385810);color:#f0e8c0;border-color:#2a3a10;font-size:12px;">&#x2726; Generate</button>
     </div>
 
@@ -2657,14 +2662,22 @@ function probeM(px, py) {
 const COUNTRY_NAMES = [
   'Arendria','Valdorn','Mythoria','Seraphil','Duskmore',
   'Ironfall','Ashenveil','Stormhaven','Greyveil','Thornmere',
-  'Silvergate','Dawnreach','Embervast','Coldmoor','Brightholm'
+  'Silvergate','Dawnreach','Embervast','Coldmoor','Brightholm',
+  'Wyndale','Hallowmere','Frosthold','Sablewood','Glimmerfen',
+  'Highmoor','Ravenscar','Sunderhall','Mournwall','Larkspire',
+  'Goldmere','Nightreach','Vesperhold','Crownwatch','Thalvane'
 ];
 const CITY_NAMES = [
   'Aldmere','Brynholt','Caerwyn','Duskport','Estmere',
   'Frostholm','Graymere','Harken','Ironhold','Jadespire',
   'Kelden','Lorsvale','Mistpeak','Northfen','Overmere',
   'Pineholt','Quarrow','Rimdale','Stonewick','Treval',
-  'Undercroft','Valewood','Whitmore','Yewdale','Zephyrton'
+  'Undercroft','Valewood','Whitmore','Yewdale','Zephyrton',
+  'Ashbourne','Briarcliff','Cinderfall','Dornwick','Emberstone',
+  'Falconreach','Gravenhall','Hollowmere','Ivygate','Junewood',
+  'Karsmoor','Larkhaven','Moorvale','Norwick','Oxmere',
+  'Penrose','Quillshire','Ravensbrook','Stagwater','Thistledown',
+  'Umberfield','Vexmoor','Westgate','Xandros','Yorrick'
 ];
 const VILLAGE_NAMES = [
   'Millhaven','Creekside','Thornwick','Dustfall','Ashford',
@@ -2893,9 +2906,9 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
 // ── Zones (countries) ─────────────────────────────────────────────────────────
 function placeZones(seed1, seed2, seaLevel) {
   const W = state.canvasW, H = state.canvasH;
-  const numC = 4 + (valueNoise(1, 1, seed1 + 5000) * 3 | 0);
+  const numC = parseInt((document.getElementById('gen-num-countries') || {value:'5'}).value) || 5;
   const centers = [];
-  const minSep  = Math.min(W, H) * 0.26;
+  const minSep  = Math.min(W, H) * Math.max(0.12, 0.34 - numC * 0.018);
 
   for (let a = 0; a < 600 && centers.length < numC; a++) {
     const px = valueNoise(a * 7.3, 1, seed1 + a) * W;
@@ -3223,6 +3236,9 @@ document.getElementById('btn-gen-go').addEventListener('click', generateMap);
 });
 document.getElementById('gen-stamp-density').addEventListener('input', function() {
   document.getElementById('gen-density-val').textContent = this.value;
+});
+document.getElementById('gen-num-countries').addEventListener('input', function() {
+  document.getElementById('gen-num-countries-val').textContent = this.value;
 });
 
 // ═══════════════════════════════════════════════════════════
