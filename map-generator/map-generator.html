@@ -1647,12 +1647,23 @@ function drawRoadPath(ctx, road, asOffscreen) {
   const rt = ROAD_TYPES.find(r=>r.id===road.type) || ROAD_TYPES[0];
   const pts = road.points;
 
-  // Classify each segment as ferry (water crossing) or land
+  // Classify each segment as ferry (water crossing) or land — sample along the
+  // whole segment (not just its midpoint) so narrow water crossings aren't missed
   const segFerry = [];
   for (let i = 0; i < pts.length - 1; i++) {
-    const mx = (pts[i].x + pts[i+1].x) / 2;
-    const my = (pts[i].y + pts[i+1].y) / 2;
-    segFerry.push(rt.id !== 'river' && genParams !== null && probeH(mx, my) < genParams.seaLevel);
+    const a = pts[i], b = pts[i+1];
+    let wet = false;
+    if (rt.id !== 'river' && genParams !== null) {
+      const segLen  = Math.hypot(b.x - a.x, b.y - a.y);
+      const samples = Math.max(2, Math.ceil(segLen / 16));
+      for (let s = 0; s <= samples; s++) {
+        const t  = s / samples;
+        const sx = a.x + (b.x - a.x) * t;
+        const sy = a.y + (b.y - a.y) * t;
+        if (probeH(sx, sy) < genParams.seaLevel) { wet = true; break; }
+      }
+    }
+    segFerry.push(wet);
   }
   const anyFerry = segFerry.some(Boolean);
 
