@@ -3078,6 +3078,63 @@ const RIVER_NAMES = [
   'The Frost Brook','The FrostRace','FrostStream River','The Frost Rill','The FrostCurrent',
   'FrostRun River','The Frost Course','The FrostFlow','FrostWater River','The Frost Wend'
 ];
+
+// Names for water-body labels placed by placeWaterLabels — sea/ocean bodies
+// (large, connected to the map's edge) draw from SEA_NAMES; small enclosed
+// inland bodies draw from LAKE_NAMES. Both flat arrays, consumed the same
+// exhaustion-safe way (via makeNamePicker) as RIVER_NAMES above.
+const SEA_NAMES = [
+  'Sea of Whisper','The Crystal Sea','The Azuremark','The Wind-swept Sea','The Whispering Deep',
+  'The Moonlit Sea','Sea of Ember','The Iron Expanse','The Wraith Sea','The Misty Sea',
+  'Embertide Ocean','The Moontide','The Frost Expanse','The Salt Expanse','The Wraith Ocean',
+  'Tidewake Deep','Driftmere Ocean','Frostmere Deep','Tidewake Sea','The Wind-swept Expanse',
+  'The Foamreach','Shadowmere Ocean','Driftmere Deep','The Wind-swept Ocean','Saltspan Sea',
+  'Sea of Stormwake','The Saltspan','Galewatch Deep','The Stormy Ocean','Shadowmere Tide',
+  'The Azure Ocean','The Sapphire Ocean','The Dusk Deep','Silverswell Ocean','Moontide Sea',
+  'Foamreach Ocean','Foamreach Sea','The Coral Expanse','Pearlspan Ocean','Crystalwake Deep',
+  'Glasswake Sea','Embertide Tide','Sea of Sun','The Foam Deep','Wraithdeep Deep',
+  'The Ashen Deep','Sea of Azure','The Drifting Sea','The Wraithdeep','The Iron Ocean',
+  'The Shadow Deep','Driftmere Reach','The Silverswell','Brinemere Ocean','The Silver Sea',
+  'Galewatch Reach','The Dawn Expanse','Mournwake Deep','The Glass Ocean','The Coral Deep',
+  'Shadowmere Reach','The Bottomless Expanse','Mournwake Ocean','Sea of Salt','Foamreach Deep',
+  'Sea of Silver','Frostmere Tide','The Foam Expanse','The Pearlspan','The Restless Sea',
+  'The Frost Sea','Sunreach Tide','The Stormy Deep','The Tidal Ocean','The Amber Sea',
+  'The Iron Sea','The Embertide','Stormwake Tide','Azuremark Deep','Crystalwake Ocean',
+  'Frostmere Ocean','The Azure Sea','Duskreach Tide','Moontide Ocean','Sea of Frost',
+  'Azuremark Ocean','Sea of Glass','Silverswell Sea','Pearlspan Tide','Crystalwake Tide',
+  'Stormwake Deep','Sunreach Reach','The Wraith Deep','Sunreach Ocean','The Dawn Sea',
+  'The Driftmere','The Sun-bright Ocean','The Glass Expanse','The Shadowmere','The Misty Expanse',
+  'Silverswell Deep','The Restless Expanse','The Silver Deep','The Shadow Sea','Mournwake Reach',
+  'Duskreach Ocean','The Tidal Expanse','Embertide Sea','Tidewake Tide','Saltspan Deep',
+  'Foamreach Tide','The Roaring Deep','The Silver Expanse','The Glass Sea','The Moonlit Ocean',
+  'Duskreach Deep','Sunreach Sea','The Bottomless Sea','Glasswake Ocean','Wraithdeep Tide'
+];
+const LAKE_NAMES = [
+  'Lake Hidden','Cedar Mere','The Emerald Pond','The Misty Mere','Stone Mere',
+  'The Stony Pool','The Sunlit Mere','Silver Lake','The Hollow Mere','Reed Pool',
+  'The Glass Mere','Stone Tarn','The Whispering Tarn','The Glass Pond','The Shadowed Pond',
+  'Mirrormere','Hollow Mere','Dawn Lake','The Forgotten Mere','Brightwater',
+  'Stone Pool','The Blue Tarn','Lake Stony','Mirror Pool','Lake Cedar',
+  'Willow Pool','Calm Lake','Calm Pool','The Emerald Pool','Pearl Tarn',
+  'Mosshollow','Lake Blue','The Hollow Reach','The Silver Tarn','The Frosted Tarn',
+  'Lake Calm','Lake Still','Hidden Pool','Deep Lake','The Glass Pool',
+  'The Starlit Tarn','Willow Lake','The Calm Pool','The Pearl Tarn','Cedar Pool',
+  'The Twin Tarn','The Hidden Pool','The Blue Pool','Moss Pool','Silverpool',
+  'Pearl Pool','Hidden Tarn','The Silver Pool','Lake Crystal','The Twin Pool',
+  'The Golden Mere','The Hidden Mere','Lake Mirror','Lake Clear','Mirror Mere',
+  'The Starlit Mere','The Deep Tarn','Lake Misty','Willowmere','The Misty Tarn',
+  'Bright Mere','Grey Mere','Lake Frosted','The Quiet Mere','Still Tarn',
+  'The Reedy Tarn','Stillmere','The Stillwater','The Sunlit Pool','The Cloud Pond',
+  'Grey Tarn','The Mossy Mere','Quiet Tarn','Cedar Lake','Glass Mere',
+  'Greymere','The Mossy Tarn','The Reedy Pool','Deep Tarn','The Quiet Pond',
+  'Willow Tarn','Lake Hollow','Silver Pool','Lake Whispering','The Amber Tarn',
+  'Lake Deep','The Pearl Mere','The Pearlmere','The Crystal Mere','The Starlit Pool',
+  'The Silver Mere','Calm Tarn','The Starlit Pond','Reedmere','The Glassmere',
+  'The Clear Mere','Lake Twin','Glass Tarn','Lake Cloud','The Glass Tarn',
+  'Mirror Tarn','Dusk Tarn','Hidden Mere','The Willow Pool','The Reedy Pond',
+  'Deepmere','The Hollow Tarn','The Clear Tarn','The Blue Pond','The Calm Pond',
+  'The Misty Pond','Pearlmere','The Hidden Pond','Lake Willow','Dusk Mere'
+];
 const RUINS_NAMES = [
   'The Sunken Court','Ashbarrow Ruins','The Crumbled Watch','Old Karrow','The Forgotten Hold',
   'The Hollow Spire','Greymantle Ruins','The Shattered Hall','Duskfall Ruins','The Lost Cairn',
@@ -3444,11 +3501,13 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot)
 }
 
 // Runs the content-placement pipeline (stamps → zones → town roads → rivers →
-// biome labels) against the current `genParams`, honoring the "what to
-// generate" checkboxes so users can re-roll just one layer at a time. Order
-// matters: town roads need stamps' `cityPositions` to connect, and biome
-// labels run last (and unconditionally) so they always reflect the current
-// terrain regardless of which optional layers were (re)generated.
+// water-body labels → biome labels) against the current `genParams`, honoring
+// the "what to generate" checkboxes so users can re-roll just one layer at a
+// time. Order matters: town roads need stamps' `cityPositions` to connect, and
+// the two label-only stages (water bodies, biomes) run last and unconditionally
+// — like the terrain itself, seas/lakes/biome regions aren't an optional
+// generated "layer" the user toggles, so they always reflect the current
+// terrain regardless of which optional content layers were (re)generated.
 function generateContent() {
   if (!genParams) { render(); return; }
   const { seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot } = genParams;
@@ -3462,6 +3521,9 @@ function generateContent() {
   if (doZones)  placeZones(seed1, seed2, seaLevel);
   if (doStamps && cityPositions.length >= 2) placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh);
   if (doRoads)  placeRivers(seed1, seed2, seaLevel, mtThresh);
+  // Sea/lake labels describe the terrain itself (like biome labels) rather than
+  // an optional generated layer, so — unlike rivers — they're placed unconditionally
+  placeWaterLabels(seed1, seed2, seaLevel);
   placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot);
 
   if (doStamps || doRoads) redrawRoadsCanvas();
@@ -3938,6 +4000,111 @@ function placeRivers(seed1, seed2, seaLevel, mtThresh) {
       }
     }
   }
+}
+
+// ── Water bodies (sea/ocean vs lake) ──────────────────────────────────────────
+// Unlike land biomes, a water tile can't be classified as "sea" or "lake" from
+// a single probeH/probeM sample — that distinction is about CONNECTIVITY and
+// EXTENT (is this puddle part of the one big ocean, or a small body fully
+// enclosed by land?), which per-point noise sampling has no way to answer. So
+// this builds a coarse step-px grid (the same approach findLandPath uses to
+// turn the canvas into a searchable graph), marks each cell water/land via
+// probeH, and flood-fills (BFS) to find connected water components. A
+// component that touches the grid's outer edge is treated as part of the open
+// sea/ocean (oceans realistically always reach the map boundary somewhere);
+// anything else fully enclosed by land is a lake. Components smaller than
+// `minCells` are skipped — they're coastal nooks/puddles too small to be worth
+// naming. Returns up to a handful of the largest bodies of each kind, each as
+// a labeling point snapped to the component cell nearest its centroid (so the
+// label always lands on actual water, not on the averaged-out centroid which
+// could fall on an intervening peninsula for an irregularly-shaped body).
+function findWaterBodies(seaLevel) {
+  const W = state.canvasW, H = state.canvasH;
+  const step = 40;
+  const cols = Math.ceil(W / step) + 1;
+  const rows = Math.ceil(H / step) + 1;
+  const n = cols * rows;
+
+  const isWater = new Uint8Array(n);
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      isWater[j * cols + i] = probeH(i * step, j * step) < seaLevel ? 1 : 0;
+    }
+  }
+
+  const visited = new Uint8Array(n);
+  const minCells = 6;
+  const bodies = []; // {type, cells, sumX, sumY, touchesEdge}
+
+  for (let start = 0; start < n; start++) {
+    if (!isWater[start] || visited[start]) continue;
+
+    let cells = 0, sumX = 0, sumY = 0, touchesEdge = false;
+    const members = [];
+    const queue = [start];
+    visited[start] = 1;
+    while (queue.length) {
+      const cur = queue.pop();
+      const ci = cur % cols, cj = (cur / cols) | 0;
+      cells++; sumX += ci; sumY += cj;
+      members.push(cur);
+      if (ci === 0 || cj === 0 || ci === cols - 1 || cj === rows - 1) touchesEdge = true;
+
+      // 4-directional neighbours via explicit row/col deltas — avoids the
+      // false-adjacency bug of using linear-index ±1 across a row boundary
+      // (the last cell of row j and the first cell of row j+1 aren't adjacent)
+      for (const [di, dj] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+        const ni = ci + di, nj = cj + dj;
+        if (ni < 0 || ni >= cols || nj < 0 || nj >= rows) continue;
+        const nb = nj * cols + ni;
+        if (!isWater[nb] || visited[nb]) continue;
+        visited[nb] = 1;
+        queue.push(nb);
+      }
+    }
+    if (cells < minCells) continue;
+
+    // Snap the label point to the member cell closest to the component's centroid
+    const cx = sumX / cells, cy = sumY / cells;
+    let best = members[0], bestD = Infinity;
+    for (const m of members) {
+      const mi = m % cols, mj = (m / cols) | 0;
+      const d = (mi - cx) * (mi - cx) + (mj - cy) * (mj - cy);
+      if (d < bestD) { bestD = d; best = m; }
+    }
+    const bi = best % cols, bj = (best / cols) | 0;
+    bodies.push({
+      type: touchesEdge ? 'sea' : 'lake',
+      cells, x: bi * step, y: bj * step
+    });
+  }
+
+  bodies.sort((a, b) => b.cells - a.cells);
+  const seas  = bodies.filter(b => b.type === 'sea').slice(0, 2);
+  const lakes = bodies.filter(b => b.type === 'lake').slice(0, 4);
+  return seas.concat(lakes);
+}
+
+// Names the water bodies findWaterBodies discovers — large/edge-connected seas
+// get a prominent label (sized between a capital and a regular settlement, in
+// a deep ocean-blue), small enclosed lakes get a subtler one closer to a
+// river's. Mirrors placeRivers' label-shape ({text,x,y,size,color,style}) and
+// makeNamePicker usage so a generation never repeats a sea or lake name.
+function placeWaterLabels(seed1, seed2, seaLevel) {
+  const pickSeaName  = makeNamePicker(SEA_NAMES);
+  const pickLakeName = makeNamePicker(LAKE_NAMES);
+
+  findWaterBodies(seaLevel).forEach((body, i) => {
+    const isSea = body.type === 'sea';
+    const name  = isSea ? pickSeaName(i * 11 + seed1) : pickLakeName(i * 11 + seed2);
+    if (!name) return;
+    state.labels.push({
+      text: name, x: body.x, y: body.y,
+      size: isSea ? 13 : 10,
+      color: isSea ? '#0d3a5c' : '#1a3a5a',
+      style: 'italic'
+    });
+  });
 }
 
 // ── Top-level map generation ──────────────────────────────────────────────────
