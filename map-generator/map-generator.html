@@ -3601,27 +3601,37 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
       // Terrain classification mirrors classifyTerrainColor/placeBiomeLabels:
       // snow > mountain > wet (forest/ruins) > grassland (settlements) > desert,
       // each branch then rolls sub-thresholds to pick a specific feature type.
+      // Independent roll (decorrelated from rng/rng2/nameRoll) that gates
+      // "Nature" stamps (mountain_peak/hill/cave/forest_tree) only — letting
+      // roughly 1 in 3 through cuts their frequency ~3x without touching the
+      // rng thresholds that decide every other stamp type's odds.
+      const natureRoll = valueNoise(col * 21.3, row * 4.7, seed1 + 77777);
+      const natureOk = natureRoll < 0.39;
       if (hv > snowThresh) {
-        if (rng < 0.22) {
+        if (rng < 0.22 && natureOk) {
           state.stamps.push({type:'mountain_peak', x:px, y:py, size:26});
           maybeLabel(nameRoll, 0.40, pickPeakName, col*31+row+600, px, py, 14, -12, 10, '#3a2010');
         }
       } else if (hv > mtThresh) {
         if (rng < 0.30) {
-          state.stamps.push({type:'mountain_peak', x:px, y:py, size:24});
-          maybeLabel(nameRoll, 0.40, pickPeakName, col*31+row+600, px, py, 14, -12, 10, '#3a2010');
+          if (natureOk) {
+            state.stamps.push({type:'mountain_peak', x:px, y:py, size:24});
+            maybeLabel(nameRoll, 0.40, pickPeakName, col*31+row+600, px, py, 14, -12, 10, '#3a2010');
+          }
         }
-        else if (rng < 0.38) state.stamps.push({type:'hill', x:px, y:py, size:20});
+        else if (rng < 0.38) { if (natureOk) state.stamps.push({type:'hill', x:px, y:py, size:20}); }
         else if (rng < 0.43) {
-          state.stamps.push({type:'cave', x:px, y:py, size:20});
-          maybeLabel(nameRoll, 0.35, pickLandmarkName, col*31+row+700, px, py, 10, -6, 9, '#3a1a05');
+          if (natureOk) {
+            state.stamps.push({type:'cave', x:px, y:py, size:20});
+            maybeLabel(nameRoll, 0.35, pickLandmarkName, col*31+row+700, px, py, 10, -6, 9, '#3a1a05');
+          }
         }
         else if (rng < 0.46) {
           state.stamps.push({type:'mine', x:px, y:py, size:20});
           maybeLabel(nameRoll, 0.35, pickLandmarkName, col*31+row+800, px, py, 10, -6, 9, '#3a1a05');
         }
       } else if (mv > 0.62) {
-        if (rng < 0.28) state.stamps.push({type:'forest_tree', x:px, y:py, size:22});
+        if (rng < 0.28) { if (natureOk) state.stamps.push({type:'forest_tree', x:px, y:py, size:22}); }
         else if (rng < 0.32) {
           state.stamps.push({type:'ruins', x:px, y:py, size:20});
           maybeLabel(nameRoll, 0.45, pickRuinsName, col*31+row+900, px, py, 10, -6, 9, '#5a1a1a', 'italic');
