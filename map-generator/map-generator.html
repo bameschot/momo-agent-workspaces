@@ -320,6 +320,35 @@ body {
   image-rendering: pixelated;
 }
 
+/* Generation loading overlay */
+#gen-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  background: rgba(20,12,5,0.55);
+  z-index: 50;
+}
+#gen-overlay.active { display: flex; }
+.gen-spinner {
+  width: 46px; height: 46px;
+  border: 5px solid rgba(240,224,180,0.25);
+  border-top-color: #d8b86a;
+  border-radius: 50%;
+  animation: gen-spin 0.9s linear infinite;
+}
+.gen-overlay-label {
+  color: #f0e0c0;
+  font-family: Palatino, Georgia, serif;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+}
+@keyframes gen-spin { to { transform: rotate(360deg); } }
+
 /* Cursor modes */
 #canvas-container.pan-mode { cursor: grab; }
 #canvas-container.pan-mode.panning { cursor: grabbing; }
@@ -733,6 +762,10 @@ body {
   <!-- CANVAS -->
   <div id="canvas-container">
     <canvas id="map-canvas"></canvas>
+    <div id="gen-overlay">
+      <div class="gen-spinner"></div>
+      <div class="gen-overlay-label">Generating map…</div>
+    </div>
   </div>
 
   <!-- RIGHT SIDEBAR -->
@@ -1345,6 +1378,9 @@ const state = {
   offsetX: 0, offsetY: 0,
   zoom: 1,
   canvasW: 2000, canvasH: 1500,
+
+  // true while a map generation is in progress (guards against re-entrant/overlapping runs)
+  isGenerating: false,
 
   // current tool
   tool: 'select',
@@ -3287,6 +3323,16 @@ function placeRivers(seed1, seed2, seaLevel, mtThresh) {
 }
 
 function generateMap() {
+  // Guard against overlapping runs — e.g. a double-click or a click landing while
+  // the deferred work below is still running would otherwise generate content
+  // twice into the same (already-cleared) arrays, leaving duplicate stamps/labels.
+  if (state.isGenerating) return;
+  state.isGenerating = true;
+  const genBtns = [document.getElementById('btn-generate'), document.getElementById('btn-gen-go')];
+  genBtns.forEach(b => { if (b) b.disabled = true; });
+  const overlay = document.getElementById('gen-overlay');
+  if (overlay) overlay.classList.add('active');
+
   document.getElementById('status-tool').textContent = 'Generating…';
   // Clear all content for a fresh map
   state.roads = []; state.stamps = []; state.zones = []; state.labels = [];
@@ -3294,8 +3340,9 @@ function generateMap() {
   roadsCtx.clearRect(0, 0, state.canvasW, state.canvasH);
   updateZoneFilters(); updateSelectionPanel();
 
-  // Defer heavy work so the browser can repaint the status first
+  // Defer heavy work so the browser can repaint the status (and overlay) first
   setTimeout(() => {
+   try {
     const W = state.canvasW, H = state.canvasH;
     const seed1 = (Math.random() * 0xFFFFF | 0) + 1;
     const seed2 = (Math.random() * 0xFFFFF | 0) + 0x80000;
@@ -3350,6 +3397,11 @@ function generateMap() {
     document.getElementById('status-tool').textContent = 'Tool: ' +
       document.querySelector('.tool-btn.active').textContent.trim();
     generateContent();
+   } finally {
+    state.isGenerating = false;
+    genBtns.forEach(b => { if (b) b.disabled = false; });
+    if (overlay) overlay.classList.remove('active');
+   }
   }, 30);
 }
 
