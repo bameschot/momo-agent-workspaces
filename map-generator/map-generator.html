@@ -4105,8 +4105,8 @@ function findWaterBodies(seaLevel) {
   }
 
   bodies.sort((a, b) => b.cells - a.cells);
-  const seas  = bodies.filter(b => b.type === 'sea').slice(0, 4);
-  const lakes = bodies.filter(b => b.type === 'lake').slice(0, 5);
+  const seas  = bodies.filter(b => b.type === 'sea').slice(0, 12);
+  const lakes = bodies.filter(b => b.type === 'lake').slice(0, 15);
   return seas.concat(lakes);
 }
 
