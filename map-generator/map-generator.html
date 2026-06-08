@@ -1318,8 +1318,10 @@ const BIOME_PRESETS = [
   { id:'beach',    label:'Beach',     bg:'rgba(215,170,82,0.75)',  text:'#4a2a00' },
   { id:'grass',    label:'Plains',    bg:'rgba(118,152,58,0.75)',  text:'#1a2a00' },
   { id:'forest',   label:'Forest',    bg:'rgba(38,92,44,0.75)',    text:'#f0f0e0' },
+  { id:'jungle',   label:'Jungle',    bg:'rgba(22,86,40,0.78)',    text:'#eafff0' },
   { id:'swamp',    label:'Swamp',     bg:'rgba(82,108,58,0.75)',   text:'#f0f0d0' },
   { id:'desert',   label:'Desert',    bg:'rgba(185,132,48,0.75)',  text:'#3a2200' },
+  { id:'tundra',   label:'Tundra',    bg:'rgba(151,163,145,0.78)', text:'#1a2420' },
   { id:'mountain', label:'Mountains', bg:'rgba(135,125,108,0.75)', text:'#2a2018' },
   { id:'snow',     label:'Snowcap',   bg:'rgba(222,234,242,0.85)', text:'#2a3a4a' }
 ];
@@ -1787,21 +1789,29 @@ const TERRAIN_PALETTE = {
   sand:      [215,170,  82],
   grass:     [118,152,  58],
   forest:    [ 38, 92,  44],
+  jungle:    [ 22, 86,  40],
   swamp:     [ 82,108,  58],
   mountain:  [135,125, 108],
   snow:      [222,234, 242],
+  tundra:    [151,163, 145],
   desert:    [185,132,  48]
 };
-function classifyTerrainColor(hv, mv, seaLevel, mtThresh, snowThresh) {
+// coldHot: 0=polar, 1=tropical (defaults to temperate if omitted, e.g. legacy callers)
+function classifyTerrainColor(hv, mv, seaLevel, mtThresh, snowThresh, coldHot) {
   const C = TERRAIN_PALETTE;
+  const temp = (coldHot === undefined) ? 0.5 : coldHot;
   if      (hv < seaLevel - 0.14)  return C.deepwater;
   else if (hv < seaLevel - 0.02)  return C.water;
   else if (hv < seaLevel)         return C.shallow;
   else if (hv < seaLevel + 0.012) return C.sand;
   else if (hv > snowThresh)       return C.snow;
   else if (hv > mtThresh)         return C.mountain;
-  else if (mv > 0.63)             return (hv < seaLevel + 0.07) ? C.swamp  : C.forest;
-  else if (mv > 0.35)             return C.grass;
+  else if (mv > 0.63) {
+    if (hv < seaLevel + 0.07) return C.swamp;
+    return (temp > 0.6) ? C.jungle : C.forest; // hot + wet → jungle
+  }
+  else if (mv > 0.35)             return (temp < 0.4) ? C.tundra : C.grass; // cold + medium moisture → tundra
+  else if (temp < 0.4)            return C.tundra; // cold + dry → tundra
   else                            return (hv < seaLevel + 0.05) ? C.sand   : C.desert;
 }
 
@@ -1817,8 +1827,10 @@ function sampleBiomeHV(presetId, n1, n2, gp) {
     case 'ocean':    hv = (seaLevel - 0.03) - n1 * 0.22;            mv = 0.30 + n2 * 0.40; break;
     case 'beach':    hv = (seaLevel - 0.006) + n1 * 0.018;          mv = 0.30 + n2 * 0.40; break;
     case 'forest':   hv = seaLevel + 0.05 + n1 * landRange * 0.55;  mv = 0.66 + n2 * 0.30; break;
+    case 'jungle':   hv = seaLevel + 0.05 + n1 * landRange * 0.50;  mv = 0.72 + n2 * 0.26; break;
     case 'swamp':    hv = seaLevel + 0.01 + n1 * 0.05;              mv = 0.66 + n2 * 0.30; break;
     case 'desert':   hv = seaLevel + 0.05 + n1 * landRange * 0.55;  mv = 0.04 + n2 * 0.26; break;
+    case 'tundra':   hv = seaLevel + 0.04 + n1 * landRange * 0.55;  mv = 0.16 + n2 * 0.34; break;
     case 'mountain': hv = mtThresh + 0.006 + n1 * peakRange * 0.85; mv = 0.30 + n2 * 0.40; break;
     case 'snow':     hv = snowThresh + 0.01 + n1 * 0.10;            mv = 0.30 + n2 * 0.40; break;
     case 'grass':
@@ -1843,6 +1855,13 @@ function paintBiomeAt(cx, cy) {
   const d    = imgData.data;
   const seed = state.biomeSeed;
 
+  // Jungle/tundra classification depends on climate (coldHot) as well as moisture, but a
+  // painted patch should always read as the chosen biome regardless of the map's overall
+  // climate — so override the temperature used for classification to match the preset.
+  let paintTemp = gp.coldHot;
+  if      (state.biomeType === 'jungle') paintTemp = 0.85;
+  else if (state.biomeType === 'tundra') paintTemp = 0.15;
+
   for (let yy = 0; yy < bh; yy++) {
     for (let xx = 0; xx < bw; xx++) {
       const px = x0 + xx, py = y0 + yy;
@@ -1865,7 +1884,7 @@ function paintBiomeAt(cx, cy) {
       const n2 = fbm(px * gp.scale * 0.85, py * gp.scale * 0.85, seed + 7777, 4);
       const { hv, mv } = sampleBiomeHV(state.biomeType, n1, n2, gp);
       const tv  = valueNoise(px * 0.09, py * 0.09, seed + 888);
-      const col = classifyTerrainColor(hv, mv, gp.seaLevel, gp.mtThresh, gp.snowThresh);
+      const col = classifyTerrainColor(hv, mv, gp.seaLevel, gp.mtThresh, gp.snowThresh, paintTemp);
       const noise = (tv - 0.5) * 24;
       const tr = Math.max(0, Math.min(255, col[0] + noise));
       const tg = Math.max(0, Math.min(255, col[1] + noise * 0.85));
@@ -2723,8 +2742,10 @@ const VILLAGE_NAMES = [
 ];
 const BIOME_NAMES = {
   forest:   ['The Greenwood','Whisperwood','Shadowwood','Deepwood','Fernwood','Thornwood'],
+  jungle:   ['The Verdant Maze','Emerald Canopy','Vinewild','The Lush Expanse','Junglemere','Greatleaf'],
   mountain: ['Iron Peaks','Stormcrest Range','The Grey Heights','Stoneback Ridge','Thornspire','Greywall'],
   snow:     ['Glaciermark','The Frost Waste','Iceveil','Snowmere','Coldreach','Whitefield'],
+  tundra:   ['The Frosthold Plain','Permafrost Reach','Rimewaste','The Cold Flats','Frostmere','Bleakmoor'],
   desert:   ['The Barren','Dustfields','Sandmere','The Wastes','Ashplain','Drythorne'],
   swamp:    ['Bogfen','The Mire','Murkmoor','Greymere','Bogmire','Marshend'],
   plains:   ['The Open Plains','Windmere Vale','Greenfields','Meadowreach','Rollingfen','Clearfield'],
@@ -2734,7 +2755,7 @@ const ZONE_COLORS = [
   '#16a085','#ca6f1e','#1a5276','#145a32','#6e2f1a'
 ];
 
-function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh) {
+function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot) {
   const W = state.canvasW, H = state.canvasH;
   const cellW = 190, cellH = 170;
   const cols = Math.floor(W / cellW), rows = Math.floor(H / cellH);
@@ -2774,9 +2795,9 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh) {
       let biome;
       if (hv > snowThresh)        biome = 'snow';
       else if (hv > mtThresh)     biome = 'mountain';
-      else if (mv > 0.62)         biome = hv < seaLevel + 0.08 ? 'swamp' : 'forest';
-      else if (mv < 0.33)         biome = 'desert';
-      else                         biome = 'plains';
+      else if (mv > 0.62)         biome = hv < seaLevel + 0.08 ? 'swamp' : (coldHot > 0.6 ? 'jungle' : 'forest');
+      else if (mv < 0.33)         biome = (coldHot < 0.4) ? 'tundra' : 'desert';
+      else                         biome = (coldHot < 0.4) ? 'tundra' : 'plains';
 
       const key = `${biome}-${Math.floor(px/minSep)}-${Math.floor(py/minSep)}`;
       if (biomeSeen[key]) continue;
@@ -2787,8 +2808,10 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh) {
 
       const styleMap = {
         forest:   { color: 'rgba(20,60,20,0.38)',    size: 15 },
+        jungle:   { color: 'rgba(12,70,28,0.40)',    size: 16 },
         mountain: { color: 'rgba(70,55,40,0.40)',    size: 16 },
         snow:     { color: 'rgba(100,120,150,0.45)', size: 15 },
+        tundra:   { color: 'rgba(120,132,120,0.38)', size: 14 },
         desert:   { color: 'rgba(130,80,20,0.40)',   size: 15 },
         swamp:    { color: 'rgba(30,60,30,0.38)',    size: 14 },
         plains:   { color: 'rgba(40,70,20,0.35)',    size: 15 },
@@ -2804,7 +2827,7 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh) {
 
 function generateContent() {
   if (!genParams) { render(); return; }
-  const { seed1, seed2, seaLevel, mtThresh, snowThresh } = genParams;
+  const { seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot } = genParams;
   const doStamps = document.getElementById('gen-do-stamps').checked;
   const doZones  = document.getElementById('gen-do-zones').checked;
   const doRoads  = document.getElementById('gen-do-roads').checked;
@@ -2815,7 +2838,7 @@ function generateContent() {
   if (doZones)  placeZones(seed1, seed2, seaLevel);
   if (doStamps && cityPositions.length >= 2) placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh);
   if (doRoads)  placeRivers(seed1, seed2, seaLevel, mtThresh);
-  placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh);
+  placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot);
 
   if (doStamps || doRoads) redrawRoadsCanvas();
   updateZoneFilters();
@@ -3231,7 +3254,7 @@ function generateMap() {
         // fine pixel-level texture variation
         const tv = valueNoise(px*0.09, py*0.09, seed1 + 888);
 
-        const col = classifyTerrainColor(hv, mv, seaLevel, mtThresh, snowThresh);
+        const col = classifyTerrainColor(hv, mv, seaLevel, mtThresh, snowThresh, coldHot);
         const noise = (tv - 0.5) * 24;
         const idx = (py*W + px) * 4;
         d[idx]   = Math.max(0, Math.min(255, col[0] + noise));
@@ -3248,7 +3271,7 @@ function generateMap() {
     tmpC.getContext('2d').putImageData(imgData, 0, 0);
     terrainCtx.drawImage(tmpC, 0, 0);
 
-    genParams = { seed1, seed2, scale, seaLevel, mtThresh, snowThresh };
+    genParams = { seed1, seed2, scale, seaLevel, mtThresh, snowThresh, coldHot };
     document.getElementById('status-tool').textContent = 'Tool: ' +
       document.querySelector('.tool-btn.active').textContent.trim();
     generateContent();
