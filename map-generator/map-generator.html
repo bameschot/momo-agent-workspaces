@@ -718,9 +718,9 @@ body {
       <div class="panel-title">&#x2726; Generate Map</div>
       <div class="gen-row">
         <div class="gen-label"><span>Seed</span></div>
-        <input class="tb-input" id="gen-seed" type="text" inputmode="numeric" maxlength="16" placeholder="Random" style="width:100%;box-sizing:border-box;">
-        <button class="tb-btn" id="btn-gen-seed-reroll" type="button" style="width:100%;margin-top:6px;font-size:11px;padding:5px;" title="Clear seed (use random on next generate)">&#x21bb; Random Seed</button>
-        <div class="gen-desc"><span>Seed encodes all settings below — same seed = same map &amp; sliders</span><span></span></div>
+        <input class="tb-input" id="gen-seed" type="text" inputmode="text" spellcheck="false" autocomplete="off" maxlength="18" placeholder="Random (hex)" style="width:100%;box-sizing:border-box;text-transform:uppercase;">
+        <button class="tb-btn" id="btn-gen-seed-reroll" type="button" style="width:100%;margin-top:6px;font-size:11px;padding:5px;" title="Roll a brand-new random seed and recipe">&#x21bb; Random Seed</button>
+        <div class="gen-desc"><span>Hex code encodes all settings below — same seed = same map &amp; sliders</span><span></span></div>
       </div>
       <div class="gen-row">
         <div class="gen-label"><span>Land / Sea</span><span id="gen-landsea-val">50%</span></div>
@@ -4441,41 +4441,51 @@ function placeWaterLabels(seed1, seed2, seaLevel) {
 // so a seed is a complete reproducible "recipe": typing one sets every slider to
 // an exact position, and moving a slider regenerates the seed to match it.
 //   composite = (((((rng*101+landSea)*101+wetDry)*101+mountains)*101+temp)*100+(density-1))*11+(countries-2)
-// MAX_COMPOSITE = 65536 * 101*101*101*101*100*11 - 1 = 7,501,672,683,929,599
-// (16 digits — comfortably under Number.MAX_SAFE_INTEGER).
-const SEED_RNG_RADIX = 65536;
-const SEED_MAX_COMPOSITE = SEED_RNG_RADIX * 101 * 101 * 101 * 101 * 100 * 11 - 1;
+// The RNG component spans 6,553,600,000 values (~9.8 decimal digits — five more
+// than the prior 65,536-value range), which pushes MAX_COMPOSITE to roughly
+// 7.5 × 10^20 — far past Number.MAX_SAFE_INTEGER, so the composite is carried as
+// a BigInt throughout and displayed/parsed as hexadecimal (compact and exact).
+const SEED_RNG_RADIX = 6553600000n;
+const SEED_PARAM_SPACE = 101n * 101n * 101n * 101n * 100n * 11n;
+const SEED_MAX_COMPOSITE = SEED_RNG_RADIX * SEED_PARAM_SPACE - 1n;
+const SEED_MAX_HEX_LEN = SEED_MAX_COMPOSITE.toString(16).length;
 
 function encodeSeed(rng, landSea, wetDry, mountains, temp, density, countries) {
-  let c = rng;
-  c = c * 101 + landSea;
-  c = c * 101 + wetDry;
-  c = c * 101 + mountains;
-  c = c * 101 + temp;
-  c = c * 100 + (density - 1);
-  c = c * 11  + (countries - 2);
+  let c = BigInt(rng);
+  c = c * 101n + BigInt(landSea);
+  c = c * 101n + BigInt(wetDry);
+  c = c * 101n + BigInt(mountains);
+  c = c * 101n + BigInt(temp);
+  c = c * 100n + BigInt(density - 1);
+  c = c * 11n  + BigInt(countries - 2);
   return c;
 }
 
 function decodeSeed(composite) {
-  let v = composite;
-  const countries = (v % 11) + 2;   v = Math.floor(v / 11);
-  const density   = (v % 100) + 1;  v = Math.floor(v / 100);
-  const temp      = v % 101;        v = Math.floor(v / 101);
-  const mountains = v % 101;        v = Math.floor(v / 101);
-  const wetDry    = v % 101;        v = Math.floor(v / 101);
-  const landSea   = v % 101;        v = Math.floor(v / 101);
-  const rng       = v; // unbounded most-significant remainder — makes this a true bijection
+  let v = BigInt(composite);
+  const countries = Number(v % 11n) + 2;   v /= 11n;
+  const density   = Number(v % 100n) + 1;  v /= 100n;
+  const temp      = Number(v % 101n);      v /= 101n;
+  const mountains = Number(v % 101n);      v /= 101n;
+  const wetDry    = Number(v % 101n);      v /= 101n;
+  const landSea   = Number(v % 101n);      v /= 101n;
+  const rng       = v; // unbounded most-significant remainder (BigInt) — makes this a true bijection
   return { rng, landSea, wetDry, mountains, temp, density, countries };
 }
 
-// Returns the clamped composite seed typed into the field, or null if the field
-// is blank/non-numeric (meaning "roll a fresh one").
+// Rolls a fresh RNG component in [0, SEED_RNG_RADIX) as a BigInt.
+function rollRng() {
+  return BigInt(Math.floor(Math.random() * Number(SEED_RNG_RADIX)));
+}
+
+// Returns the clamped composite seed (BigInt) typed into the field as hex, or
+// null if the field is blank/not valid hex (meaning "roll a fresh one").
 function getEffectiveSeed() {
   const seedField = document.getElementById('gen-seed');
   const raw = seedField ? seedField.value.trim() : '';
-  if (!/^\d+$/.test(raw)) return null;
-  return Math.min(parseInt(raw, 10), SEED_MAX_COMPOSITE);
+  if (!/^[0-9a-fA-F]+$/.test(raw)) return null;
+  const composite = BigInt('0x' + raw);
+  return composite > SEED_MAX_COMPOSITE ? SEED_MAX_COMPOSITE : composite;
 }
 
 function readSliderParams() {
@@ -4519,9 +4529,9 @@ function syncSeedFromParams() {
   const seedField = document.getElementById('gen-seed');
   if (!seedField) return;
   const composite = getEffectiveSeed();
-  const rng = composite !== null ? decodeSeed(composite).rng : ((Math.random() * SEED_RNG_RADIX) >>> 0);
+  const rng = composite !== null ? decodeSeed(composite).rng : rollRng();
   const p = readSliderParams();
-  seedField.value = String(encodeSeed(rng, p.landSea, p.wetDry, p.mountains, p.temp, p.density, p.countries));
+  seedField.value = encodeSeed(rng, p.landSea, p.wetDry, p.mountains, p.temp, p.density, p.countries).toString(16).toUpperCase();
 }
 
 // ── Top-level map generation ──────────────────────────────────────────────────
@@ -4568,15 +4578,17 @@ function generateMap() {
     const seedField = document.getElementById('gen-seed');
     let composite = getEffectiveSeed();
     if (composite === null) {
-      const freshRng = (Math.random() * 65536) >>> 0;
       const cur = readSliderParams();
-      composite = encodeSeed(freshRng, cur.landSea, cur.wetDry, cur.mountains, cur.temp, cur.density, cur.countries);
+      composite = encodeSeed(rollRng(), cur.landSea, cur.wetDry, cur.mountains, cur.temp, cur.density, cur.countries);
     }
     const decoded = decodeSeed(composite);
     applySliderParams(decoded);
-    const seed1 = decoded.rng + 1;
-    const seed2 = ((Math.imul(decoded.rng, 2654435761) >>> 0) % 0xFFFFF) + 0x80000;
-    if (seedField) seedField.value = String(composite);
+    // The RNG component can exceed 32 bits, so fold it down before deriving the
+    // two 32-bit noise seeds (same mixing as the original masterSeed scheme).
+    const rngFold = Number(decoded.rng % 4294967296n);
+    const seed1 = (rngFold % 0xFFFFF) + 1;
+    const seed2 = ((Math.imul(rngFold, 2654435761) >>> 0) % 0xFFFFF) + 0x80000;
+    if (seedField) seedField.value = composite.toString(16).toUpperCase();
     // Scale: ~4 "noise units" across the shorter dimension
     const scale = 4.0 / Math.min(W, H);
 
@@ -4640,22 +4652,31 @@ function generateMap() {
 document.getElementById('btn-generate').addEventListener('click', generateMap);
 document.getElementById('btn-gen-go').addEventListener('click', generateMap);
 
-// Seed field: digits only (it's parsed as an unsigned integer), and typing/pasting
-// a seed immediately decodes it and snaps every slider to match (full encoding —
-// the seed IS the recipe). The reroll button keeps the current sliders and rolls
-// just a fresh RNG component, giving a new terrain variation of the same recipe.
-// (Setting `.value` via JS never fires `input`, so these two directions can't
+// Seed field: hex digits only (the composite is a BigInt, displayed/parsed as
+// hex so it stays compact and exact past Number.MAX_SAFE_INTEGER), and typing/
+// pasting a seed immediately decodes it and snaps every slider to match (full
+// encoding — the seed IS the recipe). The reroll button rolls a brand-new fully
+// random recipe — fresh RNG AND fresh slider values — and auto-adjusts every
+// slider/field to display exactly what the new seed encodes.
+// (Setting `.value` via JS never fires `input`, so these directions can't
 // trigger each other and cause a feedback loop.)
 const seedField = document.getElementById('gen-seed');
 seedField.addEventListener('input', () => {
-  const digits = seedField.value.replace(/\D/g, '');
-  if (digits !== seedField.value) seedField.value = digits;
+  const hex = seedField.value.replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+  if (hex !== seedField.value) seedField.value = hex;
   syncParamsFromSeed();
 });
 document.getElementById('btn-gen-seed-reroll').addEventListener('click', () => {
-  const freshRng = (Math.random() * SEED_RNG_RADIX) >>> 0;
-  const p = readSliderParams();
-  seedField.value = String(encodeSeed(freshRng, p.landSea, p.wetDry, p.mountains, p.temp, p.density, p.countries));
+  const p = {
+    landSea:   Math.floor(Math.random() * 101),
+    wetDry:    Math.floor(Math.random() * 101),
+    mountains: Math.floor(Math.random() * 101),
+    temp:      Math.floor(Math.random() * 101),
+    density:   1 + Math.floor(Math.random() * 100),
+    countries: 2 + Math.floor(Math.random() * 11)
+  };
+  seedField.value = encodeSeed(rollRng(), p.landSea, p.wetDry, p.mountains, p.temp, p.density, p.countries).toString(16).toUpperCase();
+  applySliderParams(p);
   seedField.focus();
 });
 
