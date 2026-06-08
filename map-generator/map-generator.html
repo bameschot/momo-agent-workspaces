@@ -549,9 +549,6 @@ body {
 .gen-row input[type=range] { width:100%; accent-color:#7a4020; }
 .gen-actions { display:flex; gap:8px; margin-top:16px; }
 .gen-actions .tb-btn { flex:1; text-align:center; font-size:13px; padding:7px; }
-.gen-checks { display:flex; flex-direction:column; gap:4px; margin:8px 0 6px; padding-top:8px; border-top:1px solid #a07840; }
-.gen-check { font-size:11px; color:#3a1a05; display:flex; align-items:center; gap:6px; cursor:pointer; padding:1px 0; }
-.gen-check input[type=checkbox] { accent-color:#7a4020; width:13px; height:13px; flex-shrink:0; }
 </style>
 </head>
 <body>
@@ -741,11 +738,6 @@ body {
         <div class="gen-label"><span>Cold / Hot</span><span id="gen-temp-val">50%</span></div>
         <input type="range" id="gen-temp" min="0" max="100" value="50">
         <div class="gen-desc"><span>Polar</span><span>Tropical</span></div>
-      </div>
-      <div class="gen-checks">
-        <label class="gen-check"><input type="checkbox" id="gen-do-stamps" checked> Towns &amp; cities</label>
-        <label class="gen-check"><input type="checkbox" id="gen-do-zones"  checked> Country zones</label>
-        <label class="gen-check"><input type="checkbox" id="gen-do-roads"  checked> Roads &amp; rivers</label>
       </div>
       <div class="gen-row">
         <div class="gen-label"><span>Settlement Density</span><span id="gen-density-val">40</span></div>
@@ -3602,33 +3594,25 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot)
 }
 
 // Runs the content-placement pipeline (stamps → zones → town roads → rivers →
-// water-body labels → biome labels) against the current `genParams`, honoring
-// the "what to generate" checkboxes so users can re-roll just one layer at a
-// time. Order matters: town roads need stamps' `cityPositions` to connect, and
-// the two label-only stages (water bodies, biomes) run last and unconditionally
-// — like the terrain itself, seas/lakes/biome regions aren't an optional
-// generated "layer" the user toggles, so they always reflect the current
-// terrain regardless of which optional content layers were (re)generated.
+// water-body labels → biome labels) against the current `genParams`. Every
+// layer is always generated — order matters: town roads need stamps'
+// `cityPositions` to connect, and the label-only stages (water bodies, biomes)
+// run last, describing the terrain itself rather than an optional layer.
 function generateContent() {
   if (!genParams) { render(); return; }
   const { seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot } = genParams;
-  const doStamps = document.getElementById('gen-do-stamps').checked;
-  const doZones  = document.getElementById('gen-do-zones').checked;
-  const doRoads  = document.getElementById('gen-do-roads').checked;
 
   const cityPositions = [];
 
-  if (doStamps) placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityPositions);
-  if (doZones)  placeZones(seed1, seed2, seaLevel);
-  if (doStamps && cityPositions.length >= 2) placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh);
-  if (doRoads)  placeRivers(seed1, seed2, seaLevel, mtThresh);
-  // Sea/lake labels describe the terrain itself (like biome labels) rather than
-  // an optional generated layer, so — unlike rivers — they're placed unconditionally
+  placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityPositions);
+  placeZones(seed1, seed2, seaLevel);
+  if (cityPositions.length >= 2) placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh);
+  placeRivers(seed1, seed2, seaLevel, mtThresh);
   placeWaterLabels(seed1, seed2, seaLevel);
   placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot);
   resolveLabelOverlaps();
 
-  if (doStamps || doRoads) redrawRoadsCanvas();
+  redrawRoadsCanvas();
   updateZoneFilters();
   render();
 }
