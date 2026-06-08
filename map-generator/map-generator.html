@@ -4661,7 +4661,6 @@ document.getElementById('btn-gen-seed-reroll').addEventListener('click', () => {
   };
   seedField.value = encodeSeed(rollRng(), p.landSea, p.wetDry, p.mountains, p.temp, p.density, p.countries).toString(16).toUpperCase();
   applySliderParams(p);
-  seedField.focus();
 });
 
 ['landsea','wetdry','mountains','temp'].forEach(id => {
