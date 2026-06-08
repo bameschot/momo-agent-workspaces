@@ -3274,9 +3274,9 @@ function makeNamePicker(list, sharedUsed) {
 
 function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot) {
   const W = state.canvasW, H = state.canvasH;
-  const cellW = 190, cellH = 170;
+  const cellW = 150, cellH = 130;
   const cols = Math.floor(W / cellW), rows = Math.floor(H / cellH);
-  const placed = [];
+  const placedByBiome = {};
   const minSep = 300;
   const biomeNamePickers = {};
   function pickBiomeName(biome) {
@@ -3306,7 +3306,8 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot)
 
       const key = `${biome}-${Math.floor(px/minSep)}-${Math.floor(py/minSep)}`;
       if (biomeSeen[key]) continue;
-      if (placed.some(p => Math.hypot(p.x - px, p.y - py) < minSep)) continue;
+      const placedSameBiome = placedByBiome[biome] || (placedByBiome[biome] = []);
+      if (placedSameBiome.some(p => Math.hypot(p.x - px, p.y - py) < minSep)) continue;
 
       const name = pickBiomeName(biome);
       if (!name) continue;
@@ -3324,7 +3325,7 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot)
       const s = styleMap[biome] || { color: 'rgba(50,30,10,0.38)', size: 15 };
 
       state.labels.push({ text: name, x: px, y: py, size: s.size, color: s.color, style: 'italic' });
-      placed.push({ x: px, y: py });
+      placedSameBiome.push({ x: px, y: py });
       biomeSeen[key] = true;
     }
   }
