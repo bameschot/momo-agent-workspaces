@@ -4014,16 +4014,17 @@ function placeRivers(seed1, seed2, seaLevel, mtThresh) {
 // sea/ocean (oceans realistically always reach the map boundary somewhere);
 // anything else fully enclosed by land is a lake. Components smaller than
 // `minCells` are skipped — they're coastal nooks/puddles too small to be worth
-// naming. Returns up to a handful of the largest bodies of each kind, each as
-// a labeling point snapped to the component cell nearest its centroid (so the
-// label always lands on actual water, not on the averaged-out centroid which
-// could fall on an intervening peninsula for an irregularly-shaped body).
+// naming. Returns up to a handful of the largest bodies of each kind, each
+// with a labeling point chosen to sit deep in the body's interior (see
+// `distToLand` below) rather than near a shore — so large, irregularly-shaped
+// seas and lakes read as centered rather than crowding a coastline.
 function findWaterBodies(seaLevel) {
   const W = state.canvasW, H = state.canvasH;
   const step = 40;
   const cols = Math.ceil(W / step) + 1;
   const rows = Math.ceil(H / step) + 1;
   const n = cols * rows;
+  const dirs = [[-1,0],[1,0],[0,-1],[0,1]];
 
   const isWater = new Uint8Array(n);
   for (let j = 0; j < rows; j++) {
@@ -4032,28 +4033,61 @@ function findWaterBodies(seaLevel) {
     }
   }
 
+  // Multi-source BFS distance-to-nearest-land, computed once for the whole
+  // grid: seed the queue with every land cell at distance 0, then expand
+  // outward over water. The water cell with the largest resulting distance is
+  // the "most interior" point of its body — the natural place for a label,
+  // analogous to a polygon's pole-of-inaccessibility.
+  const distToLand = new Int32Array(n).fill(-1);
+  const landQueue = [];
+  for (let i = 0; i < n; i++) if (!isWater[i]) { distToLand[i] = 0; landQueue.push(i); }
+  for (let qi = 0; qi < landQueue.length; qi++) {
+    const cur = landQueue[qi];
+    const ci = cur % cols, cj = (cur / cols) | 0;
+    for (const [di, dj] of dirs) {
+      const ni = ci + di, nj = cj + dj;
+      if (ni < 0 || ni >= cols || nj < 0 || nj >= rows) continue;
+      const nb = nj * cols + ni;
+      if (distToLand[nb] === -1) { distToLand[nb] = distToLand[cur] + 1; landQueue.push(nb); }
+    }
+  }
+
   const visited = new Uint8Array(n);
   const minCells = 6;
-  const bodies = []; // {type, cells, sumX, sumY, touchesEdge}
+  // A small edge-touching fragment (a corner inlet/bay clipped by the canvas
+  // boundary) technically "touches the edge" like a true open sea, but doesn't
+  // read as one — so seas need to clear a notably higher cell count than the
+  // general lake/puddle floor before they're worth naming as their own sea.
+  const minSeaCells = 30;
+  const bodies = []; // {type, cells, x, y}
 
   for (let start = 0; start < n; start++) {
     if (!isWater[start] || visited[start]) continue;
 
-    let cells = 0, sumX = 0, sumY = 0, touchesEdge = false;
-    const members = [];
+    let cells = 0, touchesEdge = false;
+    let interior = start, interiorDist = -1;
     const queue = [start];
     visited[start] = 1;
     while (queue.length) {
       const cur = queue.pop();
       const ci = cur % cols, cj = (cur / cols) | 0;
-      cells++; sumX += ci; sumY += cj;
-      members.push(cur);
+      cells++;
       if (ci === 0 || cj === 0 || ci === cols - 1 || cj === rows - 1) touchesEdge = true;
+      // Score by min(distance-to-land, distance-to-grid-edge): a point only
+      // reads as "centered" if it's both far from any shoreline AND well
+      // within the visible canvas — without the edge term, a sea that runs
+      // off-canvas would score its corner cells highest (they're farthest from
+      // the LAND that happens to be visible) and place labels hugging a corner.
+      // For lakes the edge term is moot — land always lies between a lake and
+      // the grid border, so distToLand is already the binding constraint.
+      const distToEdge = Math.min(ci, cj, cols - 1 - ci, rows - 1 - cj);
+      const score = Math.min(distToLand[cur], distToEdge);
+      if (score > interiorDist) { interiorDist = score; interior = cur; }
 
       // 4-directional neighbours via explicit row/col deltas — avoids the
       // false-adjacency bug of using linear-index ±1 across a row boundary
       // (the last cell of row j and the first cell of row j+1 aren't adjacent)
-      for (const [di, dj] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+      for (const [di, dj] of dirs) {
         const ni = ci + di, nj = cj + dj;
         if (ni < 0 || ni >= cols || nj < 0 || nj >= rows) continue;
         const nb = nj * cols + ni;
@@ -4063,27 +4097,19 @@ function findWaterBodies(seaLevel) {
       }
     }
     if (cells < minCells) continue;
+    const type = touchesEdge ? 'sea' : 'lake';
+    if (type === 'sea' && cells < minSeaCells) continue;
 
-    // Snap the label point to the member cell closest to the component's centroid
-    const cx = sumX / cells, cy = sumY / cells;
-    let best = members[0], bestD = Infinity;
-    for (const m of members) {
-      const mi = m % cols, mj = (m / cols) | 0;
-      const d = (mi - cx) * (mi - cx) + (mj - cy) * (mj - cy);
-      if (d < bestD) { bestD = d; best = m; }
-    }
-    const bi = best % cols, bj = (best / cols) | 0;
-    bodies.push({
-      type: touchesEdge ? 'sea' : 'lake',
-      cells, x: bi * step, y: bj * step
-    });
+    const bi = interior % cols, bj = (interior / cols) | 0;
+    bodies.push({ type, cells, x: bi * step, y: bj * step });
   }
 
   bodies.sort((a, b) => b.cells - a.cells);
-  const seas  = bodies.filter(b => b.type === 'sea').slice(0, 2);
-  const lakes = bodies.filter(b => b.type === 'lake').slice(0, 4);
+  const seas  = bodies.filter(b => b.type === 'sea').slice(0, 4);
+  const lakes = bodies.filter(b => b.type === 'lake').slice(0, 5);
   return seas.concat(lakes);
 }
+
 
 // Names the water bodies findWaterBodies discovers — large/edge-connected seas
 // get a prominent label (sized between a capital and a regular settlement, in
