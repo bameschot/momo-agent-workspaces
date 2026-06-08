@@ -4548,15 +4548,15 @@ document.getElementById('btn-generate').addEventListener('click', generateMap);
 document.getElementById('btn-gen-go').addEventListener('click', generateMap);
 
 // Seed field: digits only (it's parsed as an unsigned integer), and the reroll
-// button just clears it so the next Generate click rolls (and then displays) a
-// fresh random seed rather than reusing whatever's currently shown.
+// button rolls and displays a brand-new random seed immediately (rather than
+// waiting for the next Generate click to pick one implicitly).
 const seedField = document.getElementById('gen-seed');
 seedField.addEventListener('input', () => {
   const digits = seedField.value.replace(/\D/g, '');
   if (digits !== seedField.value) seedField.value = digits;
 });
 document.getElementById('btn-gen-seed-reroll').addEventListener('click', () => {
-  seedField.value = '';
+  seedField.value = String((Math.random() * 0x100000000) >>> 0);
   seedField.focus();
 });
 
