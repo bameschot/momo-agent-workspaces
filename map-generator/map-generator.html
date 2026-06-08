@@ -717,6 +717,14 @@ body {
     <div class="panel" id="panel-generate">
       <div class="panel-title">&#x2726; Generate Map</div>
       <div class="gen-row">
+        <div class="gen-label"><span>Seed</span></div>
+        <div style="display:flex;gap:6px;">
+          <input class="tb-input" id="gen-seed" type="text" inputmode="numeric" maxlength="10" placeholder="Random" style="flex:1;width:auto;">
+          <button class="tb-btn" id="btn-gen-seed-reroll" type="button" style="font-size:11px;padding:4px 9px;" title="Clear seed (use random on next generate)">&#x21bb;</button>
+        </div>
+        <div class="gen-desc"><span>Same seed + settings = same map</span><span></span></div>
+      </div>
+      <div class="gen-row">
         <div class="gen-label"><span>Land / Sea</span><span id="gen-landsea-val">50%</span></div>
         <input type="range" id="gen-landsea" min="0" max="100" value="50">
         <div class="gen-desc"><span>More Ocean</span><span>More Land</span></div>
@@ -4463,8 +4471,21 @@ function generateMap() {
   setTimeout(() => {
    try {
     const W = state.canvasW, H = state.canvasH;
-    const seed1 = (Math.random() * 0xFFFFF | 0) + 1;
-    const seed2 = (Math.random() * 0xFFFFF | 0) + 0x80000;
+    // Single master seed drives every random choice the generator makes — terrain
+    // noise, stamps, zones, roads, rivers, labels all derive from `seed1`/`seed2`
+    // (plus per-feature offsets), and both of those are themselves deterministic
+    // functions of `masterSeed`. Re-entering the same seed (with the same sliders)
+    // therefore reproduces the exact same map. A blank/invalid field means "pick a
+    // fresh random seed"; either way the resulting value is written back into the
+    // field so the user can see and copy whatever seed actually produced this map.
+    const seedField = document.getElementById('gen-seed');
+    const seedRaw = seedField ? seedField.value.trim() : '';
+    const masterSeed = /^\d+$/.test(seedRaw)
+      ? (parseInt(seedRaw, 10) >>> 0)
+      : ((Math.random() * 0x100000000) >>> 0);
+    const seed1 = (masterSeed % 0xFFFFF) + 1;
+    const seed2 = ((Math.imul(masterSeed, 2654435761) >>> 0) % 0xFFFFF) + 0x80000;
+    if (seedField) seedField.value = String(masterSeed);
     // Scale: ~4 "noise units" across the shorter dimension
     const scale = 4.0 / Math.min(W, H);
 
@@ -4527,6 +4548,19 @@ function generateMap() {
 // Wire up generate controls
 document.getElementById('btn-generate').addEventListener('click', generateMap);
 document.getElementById('btn-gen-go').addEventListener('click', generateMap);
+
+// Seed field: digits only (it's parsed as an unsigned integer), and the reroll
+// button just clears it so the next Generate click rolls (and then displays) a
+// fresh random seed rather than reusing whatever's currently shown.
+const seedField = document.getElementById('gen-seed');
+seedField.addEventListener('input', () => {
+  const digits = seedField.value.replace(/\D/g, '');
+  if (digits !== seedField.value) seedField.value = digits;
+});
+document.getElementById('btn-gen-seed-reroll').addEventListener('click', () => {
+  seedField.value = '';
+  seedField.focus();
+});
 
 ['landsea','wetdry','mountains','temp'].forEach(id => {
   const sl  = document.getElementById('gen-' + id);
