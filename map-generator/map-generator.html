@@ -2005,6 +2005,69 @@ function distToSegment(px,py,ax,ay,bx,by) {
   return Math.hypot(px-(ax+t*dx), py-(ay+t*dy));
 }
 
+function labelBox(l, mctx) {
+  mctx.font = `${l.style==='italic'?'italic':'bold'} ${l.size}px Palatino, 'Book Antiqua', Georgia, serif`;
+  const w = mctx.measureText(l.text).width;
+  return { x: l.x, y: l.y, right: l.x + w, bottom: l.y + l.size };
+}
+
+function boxOverlapArea(a, b) {
+  const ox = Math.max(0, Math.min(a.right, b.right) - Math.max(a.x, b.x));
+  const oy = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.y, b.y));
+  return ox * oy;
+}
+
+// Post-placement pass: nudge overlapping labels within a small fixed ring around
+// their original anchor until none overlap, settling on the least-overlap layout
+// when a clean fit isn't possible. Both loops run over fixed-size collections
+// (a ~33-entry candidate ring, MAX_PASSES) so the routine always terminates.
+function resolveLabelOverlaps() {
+  const labels = state.labels;
+  if (labels.length < 2) return;
+  const mctx = document.createElement('canvas').getContext('2d');
+
+  const RADII = [0, 12, 24, 36, 48];
+  const ANGLES = 8;
+  const candidates = [{dx:0, dy:0}];
+  for (const r of RADII.slice(1)) {
+    for (let a = 0; a < ANGLES; a++) {
+      const th = (a / ANGLES) * Math.PI * 2;
+      candidates.push({ dx: Math.round(Math.cos(th)*r), dy: Math.round(Math.sin(th)*r) });
+    }
+  }
+
+  labels.forEach(l => { l._ox = l.x; l._oy = l.y; l._w = labelBox(l, mctx).right - l.x; });
+
+  // Larger/more important labels (capitals, cities, seas…) are placed first so
+  // they keep their preferred spot and smaller labels move out of their way.
+  const order = labels.map((_, i) => i).sort((a, b) => labels[b].size - labels[a].size);
+
+  const MAX_PASSES = 4;
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    let movedAny = false;
+    for (const i of order) {
+      const l = labels[i];
+      let bestDx = l.x - l._ox, bestDy = l.y - l._oy, bestOverlap = Infinity;
+      for (const c of candidates) {
+        const tx = l._ox + c.dx, ty = l._oy + c.dy;
+        const tb = { x: tx, right: tx + l._w, y: ty, bottom: ty + l.size };
+        let total = 0;
+        for (const j of order) {
+          if (j === i) continue;
+          total += boxOverlapArea(tb, labelBox(labels[j], mctx));
+          if (total >= bestOverlap) break;
+        }
+        if (total < bestOverlap) { bestOverlap = total; bestDx = c.dx; bestDy = c.dy; }
+        if (bestOverlap === 0) break;
+      }
+      const nx = l._ox + bestDx, ny = l._oy + bestDy;
+      if (nx !== l.x || ny !== l.y) { l.x = nx; l.y = ny; movedAny = true; }
+    }
+    if (!movedAny) break;
+  }
+  labels.forEach(l => { delete l._ox; delete l._oy; delete l._w; });
+}
+
 function isZoneVisible(z) {
   if(!state.filterTypes[z.type]) return false;
   if(state.filterNames[z.name] === false) return false;
@@ -3532,6 +3595,7 @@ function generateContent() {
   // an optional generated layer, so — unlike rivers — they're placed unconditionally
   placeWaterLabels(seed1, seed2, seaLevel);
   placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot);
+  resolveLabelOverlaps();
 
   if (doStamps || doRoads) redrawRoadsCanvas();
   updateZoneFilters();
