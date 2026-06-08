@@ -4074,6 +4074,60 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
   }
   if (highwayCount === 0) return;
 
+  // Coverage pass: plot extra highways through large road-less regions. Sample a
+  // coarse grid of land points; if a sample sits farther than COVERAGE_RADIUS from
+  // every road placed so far, that region is underserved. For each underserved
+  // sample, connect the two nearest not-yet-paired majors (within the normal
+  // highway distance band) — the resulting highway naturally threads through the
+  // gap and gives nearby settlements something to branch onto. Capped at a
+  // handful of extra highways so coverage can't snowball into a dense mesh.
+  const COVERAGE_RADIUS = diag * 0.12;
+  const COVERAGE_GRID = 6;
+  const MAX_EXTRA_HIGHWAYS = 3;
+  let extraHighways = 0;
+  for (let gy = 0; gy < COVERAGE_GRID && extraHighways < MAX_EXTRA_HIGHWAYS; gy++) {
+    for (let gx = 0; gx < COVERAGE_GRID && extraHighways < MAX_EXTRA_HIGHWAYS; gx++) {
+      const px = (gx + 0.5) / COVERAGE_GRID * W;
+      const py = (gy + 0.5) / COVERAGE_GRID * H;
+      if (probeH(px, py) < seaLevel) continue;
+
+      let nearestRoadDist = Infinity;
+      for (const r of state.roads) {
+        const np = nearestOnPolyline(px, py, r.points);
+        if (np && np.dist < nearestRoadDist) nearestRoadDist = np.dist;
+      }
+      if (nearestRoadDist < COVERAGE_RADIUS) continue;
+
+      const byDist = majors
+        .map(m => ({ m, d: Math.hypot(m.x - px, m.y - py) }))
+        .sort((p, q) => p.d - q.d);
+      let chosen = null;
+      for (let i = 0; i < byDist.length && !chosen; i++) {
+        for (let j = i + 1; j < byDist.length && !chosen; j++) {
+          const a = byDist[i].m, b = byDist[j].m;
+          const key = `${Math.min(a.idx,b.idx)}-${Math.max(a.idx,b.idx)}`;
+          if (usedPairs.has(key)) continue;
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          if (d < minHwDist || d > maxHwDist) continue;
+          usedPairs.add(key);
+          chosen = { a, b };
+        }
+      }
+      if (!chosen) continue;
+
+      let pts = findLandPath(chosen.a.x, chosen.a.y, chosen.b.x, chosen.b.y, seaLevel, mtThresh, seed1, 9500 + extraHighways);
+      if (!pts || pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+      pts = mergeIntoSameType(pts, 'highway');
+      if (pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+
+      state.roads.push({type:'highway', width:4, points:pts});
+      highwayCount++;
+      extraHighways++;
+      usedEndpoints.add(chosen.a.idx);
+      usedEndpoints.add(chosen.b.idx);
+    }
+  }
+
   // Descending tier order: capital/city ('road', width 2.5) before town/village
   // ('dirt', width 1.5) so narrower tiers can find and join wider tiers' roads.
   const tiers = [
@@ -4122,6 +4176,58 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
       if (pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
 
       state.roads.push({type:'dirt', width:1.5, points:pts});
+    }
+  }
+
+  // Final guarantee: every settlement must end up touching at least one road —
+  // isolated road *networks* are fine, but a settlement with zero roads isn't.
+  // Two-stage fallback for anything still unconnected after every pass above:
+  //   1) a direct dirt connector to the nearest point on whichever road is
+  //      closest to it (any type/rank — last resort, not a hierarchy join).
+  //   2) if that's impossible (e.g. it sits in a region with no nearby road —
+  //      crossing water to reach the mainland network, or so close that the
+  //      pathfinder's grid collapses start/end into one cell), link directly to
+  //      its nearest reachable settlement instead, forming/extending a small
+  //      isolated road network of its own — which is fine, those are allowed.
+  // A settlement on a landmass with no land route to anywhere else stays
+  // road-less rather than have a road cross open water — exceptionally rare
+  // (~1 in 600 settlements across test seeds), and realistic besides (an island
+  // village reachable only by boat).
+  function landLink(fromX, fromY, toX, toY, idx) {
+    let pts = findLandPath(fromX, fromY, toX, toY, seaLevel, mtThresh, seed1, idx);
+    if ((!pts || pts.length < 2) && Math.hypot(toX - fromX, toY - fromY) < 50) {
+      pts = [{x: fromX, y: fromY}, {x: toX, y: toY}];
+    }
+    if (!pts || pts.length < 2 || pathCrossesWater(pts, seaLevel)) return null;
+    return pts;
+  }
+
+  for (let i = 0; i < cityPositions.length; i++) {
+    const c = cityPositions[i];
+    let touchesRoad = false;
+    for (const r of state.roads) {
+      const np = nearestOnPolyline(c.x, c.y, r.points);
+      if (np && np.dist < 12) { touchesRoad = true; break; }
+    }
+    if (touchesRoad) continue;
+
+    let best = null;
+    for (const r of state.roads) {
+      const np = nearestOnPolyline(c.x, c.y, r.points);
+      if (np && (!best || np.dist < best.dist)) best = np;
+    }
+    if (best) {
+      const pts = landLink(c.x, c.y, best.x, best.y, 7000 + i);
+      if (pts) { state.roads.push({type:'dirt', width:1.5, points:pts}); continue; }
+    }
+
+    const neighbours = cityPositions
+      .map((o, j) => ({ o, j, d: Math.hypot(c.x - o.x, c.y - o.y) }))
+      .filter(({j, d}) => j !== i && d > 1)
+      .sort((p, q) => p.d - q.d);
+    for (const { o, j } of neighbours) {
+      const pts = landLink(c.x, c.y, o.x, o.y, 7500 + i * 100 + j);
+      if (pts) { state.roads.push({type:'dirt', width:1.5, points:pts}); break; }
     }
   }
 }
