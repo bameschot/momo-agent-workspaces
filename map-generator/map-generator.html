@@ -562,8 +562,8 @@ body {
     <div class="panel">
       <div class="panel-title">Tools</div>
       <div class="tool-grid">
-        <button class="tool-btn" data-tool="brush" title="Terrain Brush">
-          <span class="icon">&#x1F58C;</span>Brush
+        <button class="tool-btn" data-tool="biome" title="Biome Painter">
+          <span class="icon">&#x1F3DE;</span>Biome
         </button>
         <button class="tool-btn" data-tool="road" title="Draw Roads">
           <span class="icon">&#x1F6E3;</span>Roads
@@ -583,23 +583,24 @@ body {
       </div>
     </div>
 
-    <!-- Terrain Panel -->
-    <div class="panel sub-panel" id="panel-brush">
-      <div class="panel-title">Terrain</div>
-      <div class="terrain-grid" id="terrain-grid"></div>
+    <!-- Biome Painter Panel -->
+    <div class="panel sub-panel" id="panel-biome">
+      <div class="panel-title">Biome Painter</div>
+      <div class="terrain-grid" id="biome-picker"></div>
       <div class="range-row">
         <label>Size:</label>
-        <input type="range" id="brush-size" min="5" max="120" value="30">
-        <span class="range-val" id="brush-size-val">30</span>
+        <input type="range" id="biome-size" min="20" max="260" value="90">
+        <span class="range-val" id="biome-size-val">90</span>
       </div>
       <div class="range-row">
-        <label>Opacity:</label>
-        <input type="range" id="brush-opacity" min="10" max="100" value="80">
-        <span class="range-val" id="brush-opacity-val">80%</span>
+        <label>Strength:</label>
+        <input type="range" id="biome-strength" min="10" max="100" value="70">
+        <span class="range-val" id="biome-strength-val">70%</span>
       </div>
       <div style="margin-top:8px;">
-        <button class="radio-btn active" id="btn-erase" data-erase="false" style="width:100%;text-align:center;">&#x1F5D1; Erase (back to parchment)</button>
+        <button class="radio-btn" id="btn-biome-reroll" style="width:100%;text-align:center;">&#x1F3B2; Reroll Pattern</button>
       </div>
+      <div class="gen-desc" style="margin-top:6px;line-height:1.4;">Paints a procedurally-generated patch in the same noise style &amp; resolution as Generate Map. Requires a generated map.</div>
     </div>
 
     <!-- Roads Panel -->
@@ -769,7 +770,7 @@ body {
 
 <!-- STATUS BAR -->
 <div id="statusbar">
-  <span id="status-tool">Tool: Brush</span>
+  <span id="status-tool">Tool: Select</span>
   <span id="status-coords">Pos: 0, 0</span>
   <span id="status-zoom">Zoom: 100%</span>
   <span id="status-items">Items: 0</span>
@@ -1309,6 +1310,20 @@ const TERRAINS = [
   { id:'lava',     label:'Lava',     color:'#c03010', bg:'rgba(192,48,16,0.75)',  text:'#f5e0a0' }
 ];
 
+// ── BIOME PAINTER PRESETS ────────────────────────────────────────────────────
+// Each preset biases the same fbm noise used by Generate Map toward a target
+// height/moisture range, so painted patches share the generated map's look.
+const BIOME_PRESETS = [
+  { id:'ocean',    label:'Ocean',     bg:'rgba(58,120,192,0.75)',  text:'#e8f2ff' },
+  { id:'beach',    label:'Beach',     bg:'rgba(215,170,82,0.75)',  text:'#4a2a00' },
+  { id:'grass',    label:'Grassland', bg:'rgba(118,152,58,0.75)',  text:'#1a2a00' },
+  { id:'forest',   label:'Forest',    bg:'rgba(38,92,44,0.75)',    text:'#f0f0e0' },
+  { id:'swamp',    label:'Swamp',     bg:'rgba(82,108,58,0.75)',   text:'#f0f0d0' },
+  { id:'desert',   label:'Desert',    bg:'rgba(185,132,48,0.75)',  text:'#3a2200' },
+  { id:'mountain', label:'Mountains', bg:'rgba(135,125,108,0.75)', text:'#2a2018' },
+  { id:'snow',     label:'Snowcap',   bg:'rgba(222,234,242,0.85)', text:'#2a3a4a' }
+];
+
 // ── ROAD TYPES ───────────────────────────────────────────────────────────────
 const ROAD_TYPES = [
   { id:'dirt',    label:'Dirt Path',       color:'#8b6030', dash:[4,4],  width:2 },
@@ -1332,11 +1347,11 @@ const state = {
   // current tool
   tool: 'select',
 
-  // brush
-  terrain: 'grass',
-  brushSize: 30,
-  brushOpacity: 0.80,
-  isErasing: false,
+  // biome painter
+  biomeType: 'grass',
+  biomeSize: 90,
+  biomeStrength: 0.70,
+  biomeSeed: (Math.random() * 99999) | 0,
 
   // road
   roadType: 'dirt',
@@ -1509,17 +1524,17 @@ function render() {
     renderZonePreview(dctx);
   }
 
-  // Brush cursor preview
-  if(state.tool === 'brush' && !state.isPanning && !state.isDrawingZone) {
+  // Biome painter cursor preview
+  if(state.tool === 'biome' && !state.isPanning && !state.isDrawingZone) {
     const mp = screenToCanvas(state.lastMouseX, state.lastMouseY);
-    const terrain = TERRAINS.find(t=>t.id===state.terrain);
+    const preset = BIOME_PRESETS.find(b=>b.id===state.biomeType);
     dctx.save();
-    dctx.globalAlpha = 0.3;
-    dctx.strokeStyle = terrain ? terrain.color : '#ffffff';
+    dctx.globalAlpha = 0.35;
+    dctx.strokeStyle = preset ? preset.bg.replace(/[\d.]+\)$/, '1)') : '#ffffff';
     dctx.lineWidth = 2/state.zoom;
     dctx.setLineDash([4/state.zoom, 4/state.zoom]);
     dctx.beginPath();
-    dctx.arc(mp.x, mp.y, state.brushSize, 0, Math.PI*2);
+    dctx.arc(mp.x, mp.y, state.biomeSize, 0, Math.PI*2);
     dctx.stroke();
     dctx.restore();
   }
@@ -1761,47 +1776,102 @@ function canvasToScreen(cx, cy) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  BRUSH PAINTING
+//  BIOME PAINTING
 // ═══════════════════════════════════════════════════════════
-function paintAt(cx, cy) {
-  if(state.isErasing) {
-    terrainCtx.save();
-    terrainCtx.globalCompositeOperation = 'destination-out';
-    terrainCtx.beginPath();
-    terrainCtx.arc(cx, cy, state.brushSize, 0, Math.PI*2);
-    terrainCtx.fillStyle = 'rgba(0,0,0,1)';
-    terrainCtx.fill();
-    terrainCtx.restore();
-    // Redraw parchment under erased area
-    const x0 = Math.max(0, cx - state.brushSize - 2);
-    const y0 = Math.max(0, cy - state.brushSize - 2);
-    const bw = Math.min(state.canvasW - x0, state.brushSize*2+4);
-    const bh = Math.min(state.canvasH - y0, state.brushSize*2+4);
-    // Create temp canvas for patch
-    const tmp = document.createElement('canvas');
-    tmp.width = bw; tmp.height = bh;
-    const tc = tmp.getContext('2d');
-    drawParchmentBackground(tc, bw, bh);
-    terrainCtx.save();
-    terrainCtx.globalCompositeOperation = 'destination-over';
-    terrainCtx.drawImage(tmp, x0, y0);
-    terrainCtx.restore();
-  } else {
-    const terrain = TERRAINS.find(t=>t.id===state.terrain);
-    if(!terrain) return;
-    terrainCtx.save();
-    terrainCtx.globalAlpha = state.brushOpacity * 0.5;
-    // Radial gradient for soft brush
-    const gr = terrainCtx.createRadialGradient(cx,cy,0, cx,cy,state.brushSize);
-    gr.addColorStop(0, terrain.color);
-    gr.addColorStop(0.6, terrain.color);
-    gr.addColorStop(1, terrain.color+'00');
-    terrainCtx.fillStyle = gr;
-    terrainCtx.beginPath();
-    terrainCtx.arc(cx, cy, state.brushSize, 0, Math.PI*2);
-    terrainCtx.fill();
-    terrainCtx.restore();
+// Shared terrain palette + classifier — used by both Generate Map's
+// per-pixel pass and the Biome Painter, so painted patches match exactly.
+const TERRAIN_PALETTE = {
+  deepwater: [28,  62, 148],
+  water:     [55, 115, 190],
+  shallow:   [90, 155, 210],
+  sand:      [215,170,  82],
+  grass:     [118,152,  58],
+  forest:    [ 38, 92,  44],
+  swamp:     [ 82,108,  58],
+  mountain:  [135,125, 108],
+  snow:      [222,234, 242],
+  desert:    [185,132,  48]
+};
+function classifyTerrainColor(hv, mv, seaLevel, mtThresh, snowThresh) {
+  const C = TERRAIN_PALETTE;
+  if      (hv < seaLevel - 0.14)  return C.deepwater;
+  else if (hv < seaLevel - 0.02)  return C.water;
+  else if (hv < seaLevel)         return C.shallow;
+  else if (hv < seaLevel + 0.012) return C.sand;
+  else if (hv > snowThresh)       return C.snow;
+  else if (hv > mtThresh)         return C.mountain;
+  else if (mv > 0.63)             return (hv < seaLevel + 0.07) ? C.swamp  : C.forest;
+  else if (mv > 0.35)             return C.grass;
+  else                            return (hv < seaLevel + 0.05) ? C.sand   : C.desert;
+}
+
+// Biases two 0-1 noise samples toward the height/moisture range that the
+// chosen biome classifies as, so a painted patch always reads as that biome
+// while still varying "semi-randomly" in the map's own noise style.
+function sampleBiomeHV(presetId, n1, n2, gp) {
+  const { seaLevel, mtThresh, snowThresh } = gp;
+  const landRange = mtThresh - seaLevel;
+  const peakRange = Math.max(0.02, snowThresh - mtThresh);
+  let hv, mv;
+  switch (presetId) {
+    case 'ocean':    hv = (seaLevel - 0.03) - n1 * 0.22;            mv = 0.30 + n2 * 0.40; break;
+    case 'beach':    hv = (seaLevel - 0.006) + n1 * 0.018;          mv = 0.30 + n2 * 0.40; break;
+    case 'forest':   hv = seaLevel + 0.05 + n1 * landRange * 0.55;  mv = 0.66 + n2 * 0.30; break;
+    case 'swamp':    hv = seaLevel + 0.01 + n1 * 0.05;              mv = 0.66 + n2 * 0.30; break;
+    case 'desert':   hv = seaLevel + 0.05 + n1 * landRange * 0.55;  mv = 0.04 + n2 * 0.26; break;
+    case 'mountain': hv = mtThresh + 0.006 + n1 * peakRange * 0.85; mv = 0.30 + n2 * 0.40; break;
+    case 'snow':     hv = snowThresh + 0.01 + n1 * 0.10;            mv = 0.30 + n2 * 0.40; break;
+    case 'grass':
+    default:         hv = seaLevel + 0.03 + n1 * landRange * 0.55;  mv = 0.38 + n2 * 0.24; break;
   }
+  return { hv: Math.max(0, Math.min(1.3, hv)), mv: Math.max(0, Math.min(1, mv)) };
+}
+
+function paintBiomeAt(cx, cy) {
+  if (!genParams) return;
+  const gp   = genParams;
+  const size = state.biomeSize;
+  const x0 = Math.max(0, Math.floor(cx - size));
+  const y0 = Math.max(0, Math.floor(cy - size));
+  const x1 = Math.min(state.canvasW, Math.ceil(cx + size));
+  const y1 = Math.min(state.canvasH, Math.ceil(cy + size));
+  const bw = x1 - x0, bh = y1 - y0;
+  if (bw <= 0 || bh <= 0) return;
+
+  const imgData = terrainCtx.getImageData(x0, y0, bw, bh);
+  const d    = imgData.data;
+  const seed = state.biomeSeed;
+  const r2   = size * size;
+
+  for (let yy = 0; yy < bh; yy++) {
+    for (let xx = 0; xx < bw; xx++) {
+      const px = x0 + xx, py = y0 + yy;
+      const dx = px - cx, dy = py - cy;
+      const dist2 = dx*dx + dy*dy;
+      if (dist2 > r2) continue;
+      const falloff = 1 - Math.sqrt(dist2) / size;
+      const alpha = state.biomeStrength * falloff * falloff;
+      if (alpha <= 0.004) continue;
+
+      // Same fbm noise family as Generate Map, offset by a per-stroke seed
+      const n1 = fbm(px * gp.scale * 1.4,  py * gp.scale * 1.4,  seed,        4);
+      const n2 = fbm(px * gp.scale * 0.85, py * gp.scale * 0.85, seed + 7777, 4);
+      const { hv, mv } = sampleBiomeHV(state.biomeType, n1, n2, gp);
+      const tv  = valueNoise(px * 0.09, py * 0.09, seed + 888);
+      const col = classifyTerrainColor(hv, mv, gp.seaLevel, gp.mtThresh, gp.snowThresh);
+      const noise = (tv - 0.5) * 24;
+      const tr = Math.max(0, Math.min(255, col[0] + noise));
+      const tg = Math.max(0, Math.min(255, col[1] + noise * 0.85));
+      const tb = Math.max(0, Math.min(255, col[2] + noise * 0.65));
+
+      const idx = (yy * bw + xx) * 4;
+      d[idx]   += (tr - d[idx])   * alpha;
+      d[idx+1] += (tg - d[idx+1]) * alpha;
+      d[idx+2] += (tb - d[idx+2]) * alpha;
+      d[idx+3] += (218 - d[idx+3]) * alpha;
+    }
+  }
+  terrainCtx.putImageData(imgData, x0, y0);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1897,9 +1967,9 @@ function onMouseDown(e) {
   if(e.button !== 0) return;
 
   // Tool dispatch
-  if(state.tool === 'brush') {
+  if(state.tool === 'biome') {
     state.isPainting = true;
-    paintAt(cp.x, cp.y);
+    paintBiomeAt(cp.x, cp.y);
     render();
   } else if(state.tool === 'road') {
     state.isDrawingRoad = true;
@@ -1957,8 +2027,8 @@ function onMouseMove(e) {
 
   const cp = screenToCanvas(e.clientX, e.clientY);
 
-  if(state.isPainting && state.tool==='brush') {
-    paintAt(cp.x, cp.y);
+  if(state.isPainting && state.tool==='biome') {
+    paintBiomeAt(cp.x, cp.y);
   } else if(state.isDrawingRoad && state.currentRoad) {
     const last = state.currentRoad.points[state.currentRoad.points.length-1];
     const dx = cp.x-last.x, dy = cp.y-last.y;
@@ -2293,24 +2363,21 @@ function updateZoneFilters() {
 //  UI BUILDING
 // ═══════════════════════════════════════════════════════════
 function buildUI() {
-  // Terrain palette
-  const grid = document.getElementById('terrain-grid');
-  TERRAINS.forEach(t=>{
+  // Biome painter palette
+  const biomeGrid = document.getElementById('biome-picker');
+  BIOME_PRESETS.forEach(b=>{
     const btn = document.createElement('button');
-    btn.className = 'terrain-btn' + (t.id===state.terrain?' active':'');
-    btn.style.background = t.bg;
-    btn.style.color = t.text;
-    btn.dataset.terrain = t.id;
-    btn.textContent = t.label;
+    btn.className = 'terrain-btn' + (b.id===state.biomeType?' active':'');
+    btn.style.background = b.bg;
+    btn.style.color = b.text;
+    btn.dataset.biome = b.id;
+    btn.textContent = b.label;
     btn.addEventListener('click',()=>{
-      state.terrain = t.id;
-      state.isErasing = false;
-      document.getElementById('btn-erase').dataset.erase='false';
-      document.getElementById('btn-erase').classList.remove('active');
-      grid.querySelectorAll('.terrain-btn').forEach(b=>b.classList.remove('active'));
+      state.biomeType = b.id;
+      biomeGrid.querySelectorAll('.terrain-btn').forEach(x=>x.classList.remove('active'));
       btn.classList.add('active');
     });
-    grid.appendChild(btn);
+    biomeGrid.appendChild(btn);
   });
 
   // Road types
@@ -2431,30 +2498,21 @@ document.querySelectorAll('.tool-btn').forEach(btn=>{
 });
 
 // ── ERASE BUTTON ─────────────────────────────────────────────────────────────
-document.getElementById('btn-erase').addEventListener('click',function(){
-  state.isErasing = !state.isErasing;
-  this.dataset.erase = state.isErasing;
-  this.classList.toggle('active', state.isErasing);
-  if(state.isErasing) {
-    document.querySelectorAll('.terrain-btn').forEach(b=>b.classList.remove('active'));
-  } else {
-    // re-activate current terrain
-    const btn = document.querySelector(`.terrain-btn[data-terrain="${state.terrain}"]`);
-    if(btn) btn.classList.add('active');
-  }
+document.getElementById('btn-biome-reroll').addEventListener('click',function(){
+  state.biomeSeed = (Math.random() * 99999) | 0;
 });
 
 // ── CANCEL ZONE ──────────────────────────────────────────────────────────────
 document.getElementById('btn-cancel-zone').addEventListener('click', cancelZone);
 
-// ── BRUSH SIZE & OPACITY ─────────────────────────────────────────────────────
-document.getElementById('brush-size').addEventListener('input',function(){
-  state.brushSize = +this.value;
-  document.getElementById('brush-size-val').textContent = this.value;
+// ── BIOME PAINTER SIZE & STRENGTH ────────────────────────────────────────────
+document.getElementById('biome-size').addEventListener('input',function(){
+  state.biomeSize = +this.value;
+  document.getElementById('biome-size-val').textContent = this.value;
 });
-document.getElementById('brush-opacity').addEventListener('input',function(){
-  state.brushOpacity = this.value/100;
-  document.getElementById('brush-opacity-val').textContent = this.value+'%';
+document.getElementById('biome-strength').addEventListener('input',function(){
+  state.biomeStrength = this.value/100;
+  document.getElementById('biome-strength-val').textContent = this.value+'%';
 });
 document.getElementById('road-width').addEventListener('input',function(){
   state.roadWidth = +this.value;
@@ -3155,20 +3213,6 @@ function generateMap() {
     const snowFactor = 0.02 + coldHot * 1.08;  // 0.02 (polar) → 1.10 (tropical)
     const snowThresh = mtThresh + landRange * snowFactor;
 
-    // Terrain RGB colours
-    const C = {
-      deepwater: [28,  62, 148],
-      water:     [55, 115, 190],
-      shallow:   [90, 155, 210],
-      sand:      [215,170,  82],
-      grass:     [118,152,  58],
-      forest:    [ 38, 92,  44],
-      swamp:     [ 82,108,  58],
-      mountain:  [135,125, 108],
-      snow:      [222,234, 242],
-      desert:    [185,132,  48]
-    };
-
     const imgData = terrainCtx.createImageData(W, H);
     const d = imgData.data;
 
@@ -3180,17 +3224,7 @@ function generateMap() {
         // fine pixel-level texture variation
         const tv = valueNoise(px*0.09, py*0.09, seed1 + 888);
 
-        let col;
-        if      (hv < seaLevel - 0.14) col = C.deepwater;
-        else if (hv < seaLevel - 0.02) col = C.water;
-        else if (hv < seaLevel)        col = C.shallow;
-        else if (hv < seaLevel + 0.012) col = C.sand;
-        else if (hv > snowThresh)      col = C.snow;
-        else if (hv > mtThresh)        col = C.mountain;
-        else if (mv > 0.63)            col = (hv < seaLevel + 0.07) ? C.swamp  : C.forest;
-        else if (mv > 0.35)            col = C.grass;
-        else                           col = (hv < seaLevel + 0.05) ? C.sand   : C.desert;
-
+        const col = classifyTerrainColor(hv, mv, seaLevel, mtThresh, snowThresh);
         const noise = (tv - 0.5) * 24;
         const idx = (py*W + px) * 4;
         d[idx]   = Math.max(0, Math.min(255, col[0] + noise));
