@@ -3963,8 +3963,8 @@ function pathCrossesWater(pts, seaLevel) {
 
 // Closest point to (px,py) lying on any segment of `poly`, clamping the
 // projection parameter `t` to [0,1] so the result stays on the segment (not its
-// infinite extension) — used by placeTownRoads to find where a new road should
-// fork onto an existing one.
+// infinite extension) — used by placeTownRoads to find where a settlement's
+// branch road should aim on the nearest highway.
 function nearestOnPolyline(px, py, poly) {
   let best = null;
   for (let s = 0; s < poly.length - 1; s++) {
@@ -3980,71 +3980,77 @@ function nearestOnPolyline(px, py, poly) {
   return best;
 }
 
-// For each settlement, connects it to its ~2 nearest sufficiently-close
-// neighbours (villages use a tighter radius than towns/cities/capitals so they
-// don't sprout long highways) via A*-routed land paths (findLandPath). New
-// roads prefer to fork off an existing road that shares their origin — rather
-// than drawing a second independent path out of the same town — for a more
-// realistic branching network. `connected` dedupes pairs (order-independent key)
-// so a link is only attempted once even though both endpoints consider it.
+// Builds a "trunk + branches" network rather than a city-to-city mesh: a
+// handful of long-distance highways are routed between random pairs of major
+// settlements (town/city/capital), with their endpoint-to-endpoint distance
+// capped to a believable 10–25% of the map diagonal so they read as regional
+// routes rather than corner-to-corner megaroads. Every other settlement —
+// including villages — then finds the nearest point on whichever highway is
+// closest and pathfinds its own branch road there (never directly to another
+// settlement). Highway-pair selection is bounded (fixed attempt cap) so it
+// always terminates even on sparse maps where few valid pairs exist.
 function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
   const W = state.canvasW, H = state.canvasH;
-  const connected = new Set();
-  const maxDist   = Math.min(W, H) * 0.55;
-  const FORK_DIST = 30;
+  const diag = Math.hypot(W, H);
+  const minHwDist = diag * 0.10, maxHwDist = diag * 0.25;
 
-  for (let i = 0; i < cityPositions.length; i++) {
-    const isVillage = cityPositions[i].rank === 'village';
-    const effMax = isVillage ? Math.min(W, H) * 0.20 : maxDist;
-    // Nearest two candidates beyond a minimum spacing (40px, to skip
-    // essentially-coincident settlements) and within the effective radius.
-    const sorted = cityPositions
-      .map((c, j) => ({j, d: Math.hypot(c.x - cityPositions[i].x, c.y - cityPositions[i].y)}))
-      .filter(({j, d}) => j !== i && d > 40 && d < effMax)
-      .sort((a, b) => a.d - b.d)
-      .slice(0, 2);
+  const majors = cityPositions
+    .map((c, idx) => ({x:c.x, y:c.y, rank:c.rank, idx}))
+    .filter(c => c.rank !== 'village');
+  if (majors.length < 2) return;
 
-    for (const {j, d} of sorted) {
-      const key = `${Math.min(i,j)}-${Math.max(i,j)}`;
-      if (connected.has(key)) continue;
-      connected.add(key);
+  const numHighways = Math.max(1, Math.min(4, Math.round(majors.length / 5)));
+  const usedPairs = new Set();
+  const usedEndpoints = new Set();
+  const highways = [];
 
-      const from = cityPositions[i], to = cityPositions[j];
-      const pts = findLandPath(from.x, from.y, to.x, to.y, seaLevel, mtThresh, seed1, i * 100 + j);
-      if (!pts || pts.length < 2) continue;
-
-      // If an existing road already leaves "from", let this new road fork off
-      // of it partway along rather than running its own separate path from town i.
-      let finalPts = pts;
-      for (const r of state.roads) {
-        const p0 = r.points[0], pN = r.points[r.points.length - 1];
-        const sharesOrigin = Math.hypot(p0.x - from.x, p0.y - from.y) < 25
-                          || Math.hypot(pN.x - from.x, pN.y - from.y) < 25;
-        if (!sharesOrigin) continue;
-
-        let forkIdx = 0;
-        for (let k = 1; k < pts.length; k++) {
-          const np = nearestOnPolyline(pts[k].x, pts[k].y, r.points);
-          if (np.dist < FORK_DIST) forkIdx = k; else break;
-        }
-        if (forkIdx >= 2 && forkIdx < pts.length - 2) {
-          const fork = nearestOnPolyline(pts[forkIdx].x, pts[forkIdx].y, r.points);
-          finalPts = [{x: fork.x, y: fork.y}, ...pts.slice(forkIdx + 1)];
-        }
-        break;
-      }
-      if (finalPts.length < 2) continue;
-      // Land routing (plus jitter) can still occasionally clip a strait or inlet —
-      // discard any road whose final path actually overlaps water rather than render it.
-      if (pathCrossesWater(finalPts, seaLevel)) continue;
-
-      const rtype = (from.rank === 'capital' || to.rank === 'capital') ? 'highway'
-                  : (from.rank === 'city'    || to.rank === 'city')    ? 'road'
-                  : (from.rank === 'town'    || to.rank === 'town')    ? 'dirt'
-                  : 'dirt';
-      const rw    = rtype === 'highway' ? 4 : rtype === 'road' ? 2.5 : 1.5;
-      state.roads.push({type:rtype, width:rw, points:finalPts});
+  for (let h = 0; h < numHighways; h++) {
+    let chosen = null;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const ai = Math.floor(valueNoise(h * 23 + attempt, 1, seed1 + 31337) * majors.length) % majors.length;
+      const bi = Math.floor(valueNoise(h * 23 + attempt, 2, seed1 + 31337) * majors.length) % majors.length;
+      if (ai === bi) continue;
+      const key = `${Math.min(ai,bi)}-${Math.max(ai,bi)}`;
+      if (usedPairs.has(key)) continue;
+      usedPairs.add(key);
+      const a = majors[ai], b = majors[bi];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (d < minHwDist || d > maxHwDist) continue;
+      chosen = {a, b};
+      break;
     }
+    if (!chosen) continue;
+
+    const { a, b } = chosen;
+    const pts = findLandPath(a.x, a.y, b.x, b.y, seaLevel, mtThresh, seed1, 9000 + h);
+    if (!pts || pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+
+    state.roads.push({type:'highway', width:4, points:pts});
+    highways.push(pts);
+    usedEndpoints.add(a.idx);
+    usedEndpoints.add(b.idx);
+  }
+  if (highways.length === 0) return;
+
+  const maxBranch = Math.min(W, H) * 0.55;
+  for (let i = 0; i < cityPositions.length; i++) {
+    if (usedEndpoints.has(i)) continue;
+    const c = cityPositions[i];
+    const effMax = c.rank === 'village' ? Math.min(W, H) * 0.20 : maxBranch;
+
+    let best = null;
+    for (const hwPts of highways) {
+      const np = nearestOnPolyline(c.x, c.y, hwPts);
+      if (np && (!best || np.dist < best.dist)) best = np;
+    }
+    if (!best || best.dist < 5 || best.dist > effMax) continue;
+
+    const pts = findLandPath(c.x, c.y, best.x, best.y, seaLevel, mtThresh, seed1, 1000 + i);
+    if (!pts || pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+
+    const rtype = (c.rank === 'capital' || c.rank === 'city') ? 'road' : 'dirt';
+    const rw    = rtype === 'road' ? 2.5 : 1.5;
+    state.roads.push({type:rtype, width:rw, points:pts});
   }
 }
 
