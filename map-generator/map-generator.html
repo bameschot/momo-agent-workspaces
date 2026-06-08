@@ -3820,10 +3820,16 @@ function findLandPath(fromX, fromY, toX, toY, seaLevel, mtThresh, seed1, roadIdx
   while(cur!==-1){raw.unshift({x:(cur%cols)*step,y:((cur/cols)|0)*step});cur=prev[cur];}
   if(raw.length<2)return null;
   raw[0]={x:fromX,y:fromY};raw[raw.length-1]={x:toX,y:toY};
-  const thin=raw.filter((_,i)=>i===0||i===raw.length-1||i%3===0);
+  // Keep every raw A* waypoint (rather than thinning to every 3rd) so the
+  // smoothed stroke in drawRoadPath has many more control points to bend
+  // through, and sample the offset noise at a much lower frequency (k*0.6
+  // instead of k*3.7) so neighbouring waypoints pull in similar directions —
+  // that's what turns independent per-point jitter into a smooth, sweeping
+  // meander instead of a jagged wobble.
+  const thin=raw;
   for(let k=1;k<thin.length-1;k++){
-    const jx=(valueNoise(k*3.7,roadIdx*5.1,seed1+roadIdx*17)-0.5)*step*1.8;
-    const jy=(valueNoise(k*3.7+1,roadIdx*5.1+1,seed1+roadIdx*17)-0.5)*step*1.8;
+    const jx=(valueNoise(k*0.6,roadIdx*5.1,seed1+roadIdx*17)-0.5)*step*2.6;
+    const jy=(valueNoise(k*0.6+1,roadIdx*5.1+1,seed1+roadIdx*17)-0.5)*step*2.6;
     const nx=thin[k].x+jx, ny=thin[k].y+jy;
     // Only apply the organic jitter if it doesn't push the waypoint into water
     if(probeH(nx,ny)>=seaLevel){thin[k].x=nx;thin[k].y=ny;}
