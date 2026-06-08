@@ -3638,6 +3638,9 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
     : Math.max(0.14, 0.27 - (densityVal - 40) * 0.0022);
   const spacing = Math.min(W, H) * 0.095 * densityFactor;
   const cols = Math.ceil(W / spacing), rows = Math.ceil(H / spacing);
+  // Keep stamps (and their labels) out of the outer margin so edge labels never
+  // crowd or clip against the frame — 2.5% of the shorter side, at least 60px.
+  const margin = Math.max(Math.min(W, H) * 0.025, 60);
 
   // One name picker per name pool, shared across all stamps placed in this
   // pass so a generation never reuses the same name twice (see makeNamePicker).
@@ -3668,6 +3671,9 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
       const jy = (valueNoise(col * 5.7, row * 3.1, seed2 + 4444) - 0.5) * spacing * 0.7;
       const px = Math.max(10, Math.min(W - 10, col * spacing + spacing / 2 + jx));
       const py = Math.max(10, Math.min(H - 10, row * spacing + spacing / 2 + jy));
+      // Skip cells that fall in the outer margin — clamping them inward would
+      // just pile stamps up against the frame instead of leaving it clear.
+      if (px < margin || px > W - margin || py < margin || py > H - margin) continue;
 
       const hv = probeH(px, py);
       const mv = probeM(px, py);
