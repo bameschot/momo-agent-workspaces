@@ -1373,6 +1373,10 @@ const ZONE_TYPES = ['Country','City Zone','Political Zone','Custom'];
 // ═══════════════════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════════════════
+// Single source of truth for the whole app: current viewport/camera, the
+// active tool and its per-tool settings, all user-placed/generated map data
+// (roads/stamps/zones/labels), and transient UI/interaction flags. Grouped
+// below by concern — see the inline section comments for each cluster.
 const state = {
   // viewport
   offsetX: 0, offsetY: 0,
@@ -2015,6 +2019,16 @@ container.addEventListener('dblclick', onDblClick);
 document.addEventListener('keydown', onKeyDown);
 document.addEventListener('keyup', onKeyUp);
 
+// ── Pointer/tool dispatch ─────────────────────────────────────────────────────
+// onMouseDown/onMouseMove/onMouseUp together implement every pointer-driven
+// editing tool as a small state machine living on `state` (isPainting,
+// isDrawingRoad/currentRoad, isDrawingZone/currentZonePoints,
+// isDraggingSelected/dragStart*). Down starts the gesture appropriate to the
+// active tool, Move continues it (and is also where panning/dragging gets its
+// per-frame updates), and Up commits or discards it. Each tool keeps its own
+// branch below; multi-step tools (road/zone) accumulate points across multiple
+// Move events while `isDrawing*` is true, whereas one-shot tools (stamp/label)
+// act entirely within mousedown.
 function onMouseDown(e) {
   e.preventDefault();
   hideContextMenu();
@@ -2022,18 +2036,22 @@ function onMouseDown(e) {
   const sx = e.clientX, sy = e.clientY;
   const cp = screenToCanvas(sx, sy);
 
-  // Middle click = pan
+  // Middle click, or left-click while space is held, always pans regardless of tool
   if(e.button === 1 || (e.button === 0 && state.spaceDown)) {
     startPan(sx, sy); return;
   }
   if(e.button !== 0) return;
 
-  // Tool dispatch
+  // Tool dispatch — cp is the click position in canvas (map) coordinates
   if(state.tool === 'biome') {
+    // Click-and-drag painting: this mousedown lays the first stroke, then
+    // onMouseMove repaints under the cursor while isPainting stays true
     state.isPainting = true;
     paintBiomeAt(cp.x, cp.y);
     render();
   } else if(state.tool === 'road') {
+    // Begin a freehand road: start a polyline at the click point; subsequent
+    // moves append points (see onMouseMove), mouseup commits it to state.roads
     state.isDrawingRoad = true;
     const rt = ROAD_TYPES.find(r=>r.id===state.roadType);
     state.currentRoad = {
@@ -2042,17 +2060,24 @@ function onMouseDown(e) {
       points: [{x:cp.x,y:cp.y}]
     };
   } else if(state.tool === 'stamp') {
+    // One-shot: drop a single stamp of the currently-selected type/size
     const st = {type:state.stampType, x:cp.x, y:cp.y, size:state.stampSize};
     state.stamps.push(st);
     updateZoneFilters();
     render();
   } else if(state.tool === 'zone') {
+    // Click-to-add-vertex: each click appends a polygon point; the zone is
+    // finished by double-click (see onDblClick/finishZone), not on mouseup
     if(!state.isDrawingZone) { state.isDrawingZone = true; state.currentZonePoints = []; }
     state.currentZonePoints.push({x:cp.x, y:cp.y});
     render();
   } else if(state.tool === 'label') {
+    // One-shot: open the inline text-input popup anchored at the click
     showLabelInput(sx, sy, cp.x, cp.y);
   } else if(state.tool === 'select') {
+    // Hit-test under the cursor; if something is hit, select it and start a
+    // potential drag (recording its start position so onMouseMove can compute
+    // a delta); otherwise clear selection and fall back to panning the canvas
     const hit = hitTestAt(cp.x, cp.y);
     if(hit) {
       state.selected = hit;
@@ -2092,12 +2117,18 @@ function onMouseMove(e) {
   if(state.isPainting && state.tool==='biome') {
     paintBiomeAt(cp.x, cp.y);
   } else if(state.isDrawingRoad && state.currentRoad) {
+    // Only append a new point once the cursor has moved >4px (16 = 4²,
+    // compared against squared distance to avoid a sqrt) from the last one —
+    // keeps freehand roads from accumulating a point per pixel of movement
     const last = state.currentRoad.points[state.currentRoad.points.length-1];
     const dx = cp.x-last.x, dy = cp.y-last.y;
     if(dx*dx+dy*dy > 16) {
       state.currentRoad.points.push({x:cp.x, y:cp.y});
     }
   } else if(state.isDraggingSelected && state.selected) {
+    // Move the selected item by the same delta the cursor has moved since
+    // mousedown, applied to its ORIGINAL position (dragStartItem*) — so the
+    // item tracks the cursor exactly rather than drifting with rounding error
     const dx = cp.x - state.dragStartCanvasX;
     const dy = cp.y - state.dragStartCanvasY;
     if(state.selected.type==='stamp') {
@@ -2119,6 +2150,7 @@ function onMouseUp(e) {
   if(state.isPainting) { state.isPainting = false; }
 
   if(state.isDrawingRoad && state.currentRoad) {
+    // Discard accidental clicks/micro-drags that never accumulated a real path
     if(state.currentRoad.points.length >= 2) {
       state.roads.push(state.currentRoad);
       redrawRoadsCanvas();
@@ -2424,8 +2456,19 @@ function updateZoneFilters() {
 // ═══════════════════════════════════════════════════════════
 //  UI BUILDING
 // ═══════════════════════════════════════════════════════════
+// Populates the static HTML skeleton's empty containers (#biome-picker,
+// #road-list, #stamp-picker, #zone-type-list, #layers-list) with buttons/rows
+// generated from the data tables defined earlier (BIOME_PRESETS, ROAD_TYPES,
+// STAMPS, ZONE_TYPES). Every picker follows the same "radio group" pattern:
+// build one button per option, wire a click handler that (a) updates the
+// relevant `state.*Type` field and (b) moves the `.active` class from whichever
+// button had it to the clicked one — implemented by clearing `.active` from all
+// siblings and re-adding it to `btn`, rather than tracking the previous button,
+// which keeps each handler self-contained. Called once at startup; called again
+// indirectly via updateZoneFilters() whenever the zone list changes.
 function buildUI() {
-  // Biome painter palette
+  // Biome painter palette — one swatch button per BIOME_PRESETS entry, styled
+  // with that biome's actual paint colors so the palette doubles as a preview
   const biomeGrid = document.getElementById('biome-picker');
   BIOME_PRESETS.forEach(b=>{
     const btn = document.createElement('button');
@@ -2442,7 +2485,8 @@ function buildUI() {
     biomeGrid.appendChild(btn);
   });
 
-  // Road types
+  // Road types — radio list of drawable road styles (the ━ glyph is colored
+  // per-type so users can match the freehand tool to the legend at a glance)
   const roadList = document.getElementById('road-list');
   ROAD_TYPES.forEach(r=>{
     const btn = document.createElement('button');
@@ -2457,7 +2501,10 @@ function buildUI() {
     roadList.appendChild(btn);
   });
 
-  // Stamp picker
+  // Stamp picker — first bucket every STAMPS entry by its `.cat` (category)
+  // into ordered groups (preserving first-seen category order via plain-object
+  // iteration), then render each group as a titled sub-grid of icon buttons
+  // (each icon is a tiny rendered-to-SVG preview of the actual stamp artwork)
   const picker = document.getElementById('stamp-picker');
   const cats = {};
   Object.entries(STAMPS).forEach(([id,s])=>{
@@ -2487,7 +2534,8 @@ function buildUI() {
     picker.appendChild(div);
   });
 
-  // Zone types
+  // Zone types — radio list selecting what kind of territory the zone tool
+  // labels new hand-drawn zones as (Country/Region/etc, from ZONE_TYPES)
   const ztList = document.getElementById('zone-type-list');
   ZONE_TYPES.forEach(t=>{
     const btn = document.createElement('button');
@@ -2501,7 +2549,9 @@ function buildUI() {
     ztList.appendChild(btn);
   });
 
-  // Layers
+  // Layers — visibility checkboxes for each renderable layer; toggling one
+  // flips the matching `state.layers[id]` flag (read by render(), see below)
+  // and immediately re-renders so the effect is visible without regenerating
   const layersList = document.getElementById('layers-list');
   const layerDefs = [
     {id:'terrain', icon:'🌿', label:'Terrain'},
@@ -2539,6 +2589,11 @@ function createStampSVGPreview(id, stampDef) {
 // ═══════════════════════════════════════════════════════════
 //  TOOL SWITCHING
 // ═══════════════════════════════════════════════════════════
+// Wires every toolbar button: switching tools updates `state.tool` (which
+// onMouseDown/Move/Up dispatch on), swaps which `.tool-btn`/`.sub-panel` is
+// marked active, sets the canvas cursor class for that tool, and updates the
+// status-bar text. Mid-drawing a zone and switching away cancels it first —
+// otherwise its half-finished point list would linger in `state` unusably.
 document.querySelectorAll('.tool-btn').forEach(btn=>{
   btn.addEventListener('click',()=>{
     const tool = btn.dataset.tool;
@@ -2567,7 +2622,16 @@ document.getElementById('btn-biome-reroll').addEventListener('click',function(){
 // ── CANCEL ZONE ──────────────────────────────────────────────────────────────
 document.getElementById('btn-cancel-zone').addEventListener('click', cancelZone);
 
-// ── BIOME PAINTER SIZE & STRENGTH ────────────────────────────────────────────
+// ── TOOL OPTION INPUTS ───────────────────────────────────────────────────────
+// Each per-tool option control (sliders/color pickers/text fields in the right
+// sidebar) follows the same shape: on 'input', copy the control's value into
+// the matching `state.*` field (used by the next paint/draw/stamp/zone/label
+// action) and, for sliders, mirror the raw value into a "-val" label span so
+// the user sees the live number next to the slider. Percent-based sliders
+// (strength/opacity) are normalized to 0–1 here so downstream code never has
+// to divide by 100 itself. These are repeated rather than looped because each
+// wires a distinct element id to a distinct state field with slightly different
+// formatting/derived side effects (e.g. zone-opacity also triggers a render()).
 document.getElementById('biome-size').addEventListener('input',function(){
   state.biomeSize = +this.value;
   document.getElementById('biome-size-val').textContent = this.value;
@@ -2714,6 +2778,9 @@ function noiseHash(x, y, s) {
   return (h >>> 0) / 0xFFFFFFFF;
 }
 
+// Smooth 2D noise: hash the four integer-lattice corners around (x,y) and
+// bilinearly blend them using a smoothstep curve (`3u² - 2u³`) so the result
+// has continuous derivatives — i.e. no visible grid seams when sampled densely.
 function valueNoise(x, y, seed) {
   const xi = Math.floor(x), yi = Math.floor(y);
   const xf = x - xi, yf = y - yi;
@@ -2725,6 +2792,12 @@ function valueNoise(x, y, seed) {
   return a*(1-u)*(1-v) + b*u*(1-v) + c*(1-u)*v + d*u*v;
 }
 
+// Fractional Brownian motion: stack `octaves` layers of valueNoise at
+// doubling-ish frequencies (×2.1, an arbitrary non-power-of-2 multiplier that
+// avoids the lattices of successive octaves aligning into repeating patterns)
+// and halving amplitudes, normalizing by the total amplitude so the result
+// stays in [0,1]. Each octave gets a distinct seed offset (`+ i*7919`, an
+// arbitrary large prime) purely to decorrelate the layers from one another.
 function fbm(x, y, seed, octaves) {
   let val=0, amp=0.5, freq=1, total=0;
   for(let i=0; i<octaves; i++) {
@@ -2738,17 +2811,35 @@ function fbm(x, y, seed, octaves) {
 //  PROCEDURAL CONTENT GENERATION
 // ═══════════════════════════════════════════════════════════
 
-// Last terrain generation parameters — used by content generators
+// Snapshot of the parameters used for the most recent terrain generation
+// (seeds, noise scale, and the elevation/moisture thresholds chosen from the
+// generation sliders). All content generators (stamps/zones/roads/rivers/
+// labels) read from this so their output matches the painted terrain —
+// they re-derive elevation/moisture at any point via probeH/probeM below
+// rather than re-walking the rendered canvas pixels.
 let genParams = null;
 
+// Re-sample the height fBm at an arbitrary canvas point using the SAME seed
+// and octave count that generated the terrain, so content placement always
+// agrees with what was painted (no separate heightmap buffer is kept).
 function probeH(px, py) {
   return fbm(px * genParams.scale, py * genParams.scale, genParams.seed1, 6);
 }
+// Moisture uses a different seed and a slightly lower frequency (×0.65) and
+// fewer octaves than height, so wet/dry regions form independently of and at
+// a different scale than the elevation features — clamped to [0,1] since fbm's
+// normalized output can occasionally drift slightly outside that range.
 function probeM(px, py) {
   return Math.max(0, Math.min(1,
     fbm(px * genParams.scale * 0.65, py * genParams.scale * 0.65, genParams.seed2, 5)));
 }
 
+// ── Procedural name pools ────────────────────────────────────────────────────
+// Large hand-curated lists of evocative display names, grouped by what they
+// label (settlements, geographic features, ruins/landmarks, biome regions).
+// Consumed via makeNamePicker (below) so repeated generations don't repeat
+// names until a pool is exhausted; pools are sized generously (~200+ entries
+// for settlements/features, ~100+ per biome) so large/dense maps don't run dry.
 const COUNTRY_NAMES = [
   'Arendria','Valdorn','Mythoria','Seraphil','Duskmore',
   'Ironfall','Ashenveil','Stormhaven','Greyveil','Thornmere',
@@ -3250,6 +3341,8 @@ const BIOME_NAMES = {
              'LongGlade','Long Range','The Long Green','LongGrasses'
            ],
 };
+// Cycled (via index modulo) across generated country zones so adjacent
+// territories read as visually distinct on the map.
 const ZONE_COLORS = [
   '#c0392b','#2980b9','#27ae60','#d68910','#8e44ad',
   '#16a085','#ca6f1e','#1a5276','#145a32','#6e2f1a'
@@ -3272,31 +3365,47 @@ function makeNamePicker(list, sharedUsed) {
   };
 }
 
+// Scatter italic region-name labels (e.g. "The Greenwood", "Iron Peaks") across
+// the generated terrain — one per biome "pocket" rather than per pixel, so big
+// contiguous regions read as named places instead of being labeled hundreds of
+// times. Works by laying a jittered sampling grid over the canvas, classifying
+// the biome at each sample point, and only keeping a sample if it's far enough
+// (`minSep`) from previously-placed labels of the SAME biome — which lets e.g.
+// a small jungle pocket get named even when it sits right next to a much more
+// common forest region (separation is tracked per biome type, not globally).
 function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot) {
   const W = state.canvasW, H = state.canvasH;
-  const cellW = 150, cellH = 130;
+  const cellW = 150, cellH = 130; // sampling-grid cell size — smaller = more candidate label spots
   const cols = Math.floor(W / cellW), rows = Math.floor(H / cellH);
-  const placedByBiome = {};
-  const minSep = 300;
+  const placedByBiome = {};        // biome -> [{x,y}, ...] already-placed label positions, for the per-biome separation check
+  const minSep = 300;              // minimum px distance between two labels of the SAME biome
   const biomeNamePickers = {};
   function pickBiomeName(biome) {
     if (!biomeNamePickers[biome]) biomeNamePickers[biome] = makeNamePicker(BIOME_NAMES[biome] || []);
     return biomeNamePickers[biome](seed1 + seed2);
   }
 
-  const biomeSeen = {};
+  const biomeSeen = {}; // spatial-hash dedupe: at most one label per (biome, minSep×minSep bucket)
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
+      // Jitter each grid-cell's sample point with noise so labels don't look
+      // like they're sitting on a rigid grid (±38% of the cell's dimensions).
       const jx = (valueNoise(col * 7.1, row * 3.3, seed1 + 8888) - 0.5) * cellW * 0.38;
       const jy = (valueNoise(col * 7.1, row * 3.3, seed2 + 8888) - 0.5) * cellH * 0.38;
       const px = (col + 0.5) * cellW + jx;
       const py = (row + 0.5) * cellH + jy;
-      if (px < 30 || px > W - 30 || py < 30 || py > H - 30) continue;
+      if (px < 30 || px > W - 30 || py < 30 || py > H - 30) continue; // keep labels off the canvas edge
 
       const hv = probeH(px, py);
       const mv = probeM(px, py);
-      if (hv < seaLevel + 0.04) continue;
+      if (hv < seaLevel + 0.04) continue; // don't label water/coastline
 
+      // NOTE: this elevation/moisture -> biome classification intentionally
+      // mirrors classifyTerrainColor() (~line 1840, used for terrain painting).
+      // It's duplicated rather than shared because this needs only the *biome
+      // name* (not an RGB), is evaluated at arbitrary float coordinates rather
+      // than per-pixel, and the two call sites have historically evolved
+      // independently — keep them in sync if the terrain classification rules change.
       let biome;
       if (hv > snowThresh)        biome = 'snow';
       else if (hv > mtThresh)     biome = 'mountain';
@@ -3310,8 +3419,11 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot)
       if (placedSameBiome.some(p => Math.hypot(p.x - px, p.y - py) < minSep)) continue;
 
       const name = pickBiomeName(biome);
-      if (!name) continue;
+      if (!name) continue; // pool exhausted for this biome — leave the region unlabeled rather than repeat a name
 
+      // Per-biome label color/size — subtle tinted overlays that hint at the
+      // terrain's character (greenish for forest/jungle/plains, icy blue-grey
+      // for snow, sandy for desert, etc.) at a glance.
       const styleMap = {
         forest:   { color: 'rgba(20,60,20,0.38)',    size: 15 },
         jungle:   { color: 'rgba(12,70,28,0.40)',    size: 16 },
@@ -3331,6 +3443,12 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot)
   }
 }
 
+// Runs the content-placement pipeline (stamps → zones → town roads → rivers →
+// biome labels) against the current `genParams`, honoring the "what to
+// generate" checkboxes so users can re-roll just one layer at a time. Order
+// matters: town roads need stamps' `cityPositions` to connect, and biome
+// labels run last (and unconditionally) so they always reflect the current
+// terrain regardless of which optional layers were (re)generated.
 function generateContent() {
   if (!genParams) { render(); return; }
   const { seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot } = genParams;
@@ -3352,6 +3470,15 @@ function generateContent() {
 }
 
 // ── Stamps ────────────────────────────────────────────────────────────────────
+// Scatters terrain features (peaks/hills/forests/ruins/settlements/...) across
+// the map on a jittered grid. For each cell: jitter its centre, probe the
+// elevation/moisture there, then walk a chain of `rng < threshold` probability
+// rolls — branching first on terrain class (snow/mountain/wet/grassland/desert,
+// each its own `else if` arm) and then on feature type within that class — to
+// decide what (if anything) to place. `cityOut` collects settlement positions
+// for `placeTownRoads` to connect afterwards. A separate pass places exactly one
+// capital near the map centre by sampling random candidate points until a
+// suitable land tile is found.
 function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
   const W = state.canvasW, H = state.canvasH;
   const densityVal = parseInt((document.getElementById('gen-stamp-density') || {value:'40'}).value) || 40;
@@ -3364,6 +3491,8 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
   const spacing = Math.min(W, H) * 0.095 * densityFactor;
   const cols = Math.ceil(W / spacing), rows = Math.ceil(H / spacing);
 
+  // One name picker per name pool, shared across all stamps placed in this
+  // pass so a generation never reuses the same name twice (see makeNamePicker).
   const pickName         = makeNamePicker(CITY_NAMES);
   const pickVillageName  = makeNamePicker(VILLAGE_NAMES);
   const pickPeakName     = makeNamePicker(PEAK_NAMES);
@@ -3384,6 +3513,9 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
+      // Jitter the cell centre by up to ±35% of the spacing (using `+ 4444` seed
+      // offsets to decorrelate jitter from every other roll below) so the grid
+      // doesn't read as a mechanical lattice, then clamp to stay on-canvas.
       const jx = (valueNoise(col * 5.7, row * 3.1, seed1 + 4444) - 0.5) * spacing * 0.7;
       const jy = (valueNoise(col * 5.7, row * 3.1, seed2 + 4444) - 0.5) * spacing * 0.7;
       const px = Math.max(10, Math.min(W - 10, col * spacing + spacing / 2 + jx));
@@ -3393,11 +3525,20 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
       const mv = probeM(px, py);
       if (hv < seaLevel + 0.012) continue;
 
+      // `rng`/`rng2` are the primary "what to place here" rolls (each cell gets
+      // its own seed via `col*17 + row*23` so neighbouring cells don't correlate);
+      // `rng2` is a second independent roll reserved for the coastal-specials
+      // check below so it doesn't compete with the main terrain branch's odds.
+      // `nameRoll` is yet another decorrelated roll — see `maybeLabel` — that
+      // independently decides whether a placed feature also gets a name label.
       const rng  = valueNoise(col * 13.7, row * 11.3, seed1 + col * 17 + row * 23);
       const rng2 = valueNoise(col * 9.1,  row * 8.3,  seed2 + 1111);
       // Decorrelated roll that decides whether a feature gets a name label at all
       const nameRoll = valueNoise(col * 6.3, row * 17.9, seed1 + 55555);
 
+      // Terrain classification mirrors classifyTerrainColor/placeBiomeLabels:
+      // snow > mountain > wet (forest/ruins) > grassland (settlements) > desert,
+      // each branch then rolls sub-thresholds to pick a specific feature type.
       if (hv > snowThresh) {
         if (rng < 0.22) {
           state.stamps.push({type:'mountain_peak', x:px, y:py, size:26});
@@ -3497,10 +3638,18 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
 }
 
 // ── Zones (countries) ─────────────────────────────────────────────────────────
+// Scatters `numC` country centres on land (rejection-sampled so they stay at
+// least `minSep` apart), then builds each country's outline as a ray-cast
+// polygon: for `numV` evenly-spaced angles around the centre, the ray length is
+// capped at the nearest Voronoi bisector with every other centre (so countries
+// never overlap) and then shortened further by noise for an organic coastline.
+// Names are drawn round-robin from COUNTRY_NAMES, skipping any already used.
 function placeZones(seed1, seed2, seaLevel) {
   const W = state.canvasW, H = state.canvasH;
   const numC = parseInt((document.getElementById('gen-num-countries') || {value:'5'}).value) || 5;
   const centers = [];
+  // Fewer countries get more breathing room; more countries pack tighter —
+  // floor of 0.12×min-dimension keeps even dense settings visually distinct.
   const minSep  = Math.min(W, H) * Math.max(0.12, 0.34 - numC * 0.018);
 
   for (let a = 0; a < 600 && centers.length < numC; a++) {
@@ -3555,6 +3704,16 @@ function placeZones(seed1, seed2, seaLevel) {
 }
 
 // ── A* land pathfinder ────────────────────────────────────────────────────────
+// Routes a road between two canvas points across a coarse `step`-px grid using
+// A* with a Euclidean-distance heuristic (weighted ×0.4 to stay admissible-ish
+// while still guiding search toward the goal). Edge cost `tc` is terrain-based:
+// water is heavily penalized (600) so paths avoid it, mountains are cheap-ish
+// to discourage but passable (6), and normal land scales gently with elevation
+// (1 + height-above-sea×3) so roads mildly prefer lowlands. Diagonal moves cost
+// ×√2. The raw grid path is thinned to every 3rd waypoint (keeping the
+// endpoints) and each interior waypoint is nudged by noise — but only kept if
+// the nudge doesn't land it in water — for a hand-drawn look instead of a rigid
+// grid-aligned line.
 function findLandPath(fromX, fromY, toX, toY, seaLevel, mtThresh, seed1, roadIdx) {
   const W = state.canvasW, H = state.canvasH;
   const step = 40;
@@ -3611,6 +3770,10 @@ function findLandPath(fromX, fromY, toX, toY, seaLevel, mtThresh, seed1, roadIdx
 }
 
 // ── Town road network ─────────────────────────────────────────────────────────
+// Sample points along consecutive segments of a path and report whether any
+// sampled point dips below sea level — used to reject road geometry that would
+// otherwise visibly cross open water (land routing plus organic jitter can
+// occasionally clip a strait or inlet that the A* grid itself avoided).
 function pathCrossesWater(pts, seaLevel) {
   for (let i = 0; i < pts.length - 1; i++) {
     const a = pts[i], b = pts[i+1];
@@ -3624,6 +3787,10 @@ function pathCrossesWater(pts, seaLevel) {
   return false;
 }
 
+// Closest point to (px,py) lying on any segment of `poly`, clamping the
+// projection parameter `t` to [0,1] so the result stays on the segment (not its
+// infinite extension) — used by placeTownRoads to find where a new road should
+// fork onto an existing one.
 function nearestOnPolyline(px, py, poly) {
   let best = null;
   for (let s = 0; s < poly.length - 1; s++) {
@@ -3639,6 +3806,13 @@ function nearestOnPolyline(px, py, poly) {
   return best;
 }
 
+// For each settlement, connects it to its ~2 nearest sufficiently-close
+// neighbours (villages use a tighter radius than towns/cities/capitals so they
+// don't sprout long highways) via A*-routed land paths (findLandPath). New
+// roads prefer to fork off an existing road that shares their origin — rather
+// than drawing a second independent path out of the same town — for a more
+// realistic branching network. `connected` dedupes pairs (order-independent key)
+// so a link is only attempted once even though both endpoints consider it.
 function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
   const W = state.canvasW, H = state.canvasH;
   const connected = new Set();
@@ -3648,6 +3822,8 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
   for (let i = 0; i < cityPositions.length; i++) {
     const isVillage = cityPositions[i].rank === 'village';
     const effMax = isVillage ? Math.min(W, H) * 0.20 : maxDist;
+    // Nearest two candidates beyond a minimum spacing (40px, to skip
+    // essentially-coincident settlements) and within the effective radius.
     const sorted = cityPositions
       .map((c, j) => ({j, d: Math.hypot(c.x - cityPositions[i].x, c.y - cityPositions[i].y)}))
       .filter(({j, d}) => j !== i && d > 40 && d < effMax)
@@ -3699,6 +3875,18 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
 }
 
 // ── Rivers ────────────────────────────────────────────────────────────────────
+// Each river starts at a randomly-sampled mountainous point (height comfortably
+// above mtThresh) and performs steepest-descent walking: at every step it
+// samples elevation in 8 directions around the current point (each angle
+// jittered by noise so the path meanders rather than radiating in a perfect
+// star) plus a small noise term added to the candidate heights — purely to
+// avoid razor-straight runs across uniform slopes — and moves toward whichever
+// neighbour is lowest. The walk stops (and the path is trimmed to the exact
+// shoreline crossing via linear interpolation between the last two samples)
+// once it would dip below sea level, or earlier if no direction descends
+// further (a local minimum/lake). Rivers shorter than 5 points are discarded
+// as too small to read on the map; longer ones get a name label at their
+// midpoint when the (exhaustion-safe) name pool still has one to give.
 function placeRivers(seed1, seed2, seaLevel, mtThresh) {
   const W = state.canvasW, H = state.canvasH;
   const step = 28;
@@ -3752,6 +3940,18 @@ function placeRivers(seed1, seed2, seaLevel, mtThresh) {
   }
 }
 
+// ── Top-level map generation ──────────────────────────────────────────────────
+// Entry point for "Generate": clears all existing content, paints a fresh
+// terrain heightmap/colormap from two freshly-rolled random seeds and the
+// generation-panel sliders (translating each 0–100 slider into the actual
+// noise/threshold parameters the pipeline consumes — see the inline comments
+// on seaLevel/moistBias/mtThresh/snowThresh below for the exact mappings and
+// why), stores that derivation in `genParams` for later re-use (probeH/probeM
+// and the content generators all need to agree with what was painted), and
+// finally calls generateContent() to run the stamps/zones/roads/rivers/labels
+// pipeline on top of it. The heavy per-pixel work is wrapped in a setTimeout(0)
+// so the "Generating…" status/overlay actually paints before the main thread
+// blocks on it.
 function generateMap() {
   // Guard against overlapping runs — e.g. a double-click or a click landing while
   // the deferred work below is still running would otherwise generate content
