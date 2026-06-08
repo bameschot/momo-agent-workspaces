@@ -742,8 +742,8 @@ body {
         <label class="gen-check"><input type="checkbox" id="gen-do-roads"  checked> Roads &amp; rivers</label>
       </div>
       <div class="gen-row">
-        <div class="gen-label"><span>Settlement Density</span><span id="gen-density-val">30</span></div>
-        <input type="range" id="gen-stamp-density" min="1" max="40" value="30">
+        <div class="gen-label"><span>Settlement Density</span><span id="gen-density-val">40</span></div>
+        <input type="range" id="gen-stamp-density" min="1" max="100" value="40">
         <div class="gen-desc"><span>Sparse</span><span>Dense</span></div>
       </div>
       <div class="gen-row">
@@ -3354,8 +3354,13 @@ function generateContent() {
 // ── Stamps ────────────────────────────────────────────────────────────────────
 function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
   const W = state.canvasW, H = state.canvasH;
-  const densityVal = parseInt((document.getElementById('gen-stamp-density') || {value:'30'}).value) || 30;
-  const densityFactor = Math.max(0.28, 1.43 - densityVal * 0.029);
+  const densityVal = parseInt((document.getElementById('gen-stamp-density') || {value:'40'}).value) || 40;
+  // Below 40 the curve matches the original 1-40 range exactly; beyond 40 it keeps
+  // easing the spacing down further so the new higher settings actually generate
+  // denser maps rather than plateauing at the old maximum.
+  const densityFactor = densityVal <= 40
+    ? Math.max(0.28, 1.43 - densityVal * 0.029)
+    : Math.max(0.14, 0.27 - (densityVal - 40) * 0.0022);
   const spacing = Math.min(W, H) * 0.095 * densityFactor;
   const cols = Math.ceil(W / spacing), rows = Math.ceil(H / spacing);
 
