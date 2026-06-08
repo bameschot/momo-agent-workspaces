@@ -1647,85 +1647,44 @@ function drawRoadPath(ctx, road, asOffscreen) {
   const rt = ROAD_TYPES.find(r=>r.id===road.type) || ROAD_TYPES[0];
   const pts = road.points;
 
-  // Classify each segment as ferry (water crossing) or land — sample along the
-  // whole segment (not just its midpoint) so narrow water crossings aren't missed
-  const segFerry = [];
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i], b = pts[i+1];
-    let wet = false;
-    if (rt.id !== 'river' && genParams !== null) {
-      const segLen  = Math.hypot(b.x - a.x, b.y - a.y);
-      const samples = Math.max(2, Math.ceil(segLen / 16));
-      for (let s = 0; s <= samples; s++) {
-        const t  = s / samples;
-        const sx = a.x + (b.x - a.x) * t;
-        const sy = a.y + (b.y - a.y) * t;
-        if (probeH(sx, sy) < genParams.seaLevel) { wet = true; break; }
-      }
-    }
-    segFerry.push(wet);
-  }
-  const anyFerry = segFerry.some(Boolean);
-
-  // Group consecutive same-type segments into runs
-  const runs = [];
-  if (pts.length >= 2) {
-    let i = 0;
-    while (i < segFerry.length) {
-      const ferry = segFerry[i];
-      const runPts = [pts[i]];
-      while (i < segFerry.length && segFerry[i] === ferry) { runPts.push(pts[i + 1]); i++; }
-      runs.push({ ferry, pts: runPts });
-    }
-  }
-
-  function strokeRun(runPts, ferry) {
+  function strokePath() {
     ctx.beginPath();
-    ctx.moveTo(runPts[0].x, runPts[0].y);
-    for (let k = 1; k < runPts.length - 1; k++) {
-      const mx = (runPts[k].x + runPts[k+1].x) / 2;
-      const my = (runPts[k].y + runPts[k+1].y) / 2;
-      ctx.quadraticCurveTo(runPts[k].x, runPts[k].y, mx, my);
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let k = 1; k < pts.length - 1; k++) {
+      const mx = (pts[k].x + pts[k+1].x) / 2;
+      const my = (pts[k].y + pts[k+1].y) / 2;
+      ctx.quadraticCurveTo(pts[k].x, pts[k].y, mx, my);
     }
-    ctx.lineTo(runPts[runPts.length-1].x, runPts[runPts.length-1].y);
+    ctx.lineTo(pts[pts.length-1].x, pts[pts.length-1].y);
     ctx.stroke();
   }
 
-  for (const run of runs) {
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
 
-    if (run.ferry) {
-      ctx.strokeStyle = '#1aadcc';
-      ctx.lineWidth = road.width || rt.width;
-      ctx.setLineDash([10, 6]);
-      ctx.globalAlpha = 0.9;
-      ctx.shadowColor = 'rgba(26,173,204,0.5)';
-      ctx.shadowBlur = 5;
-    } else if (rt.id === 'river') {
-      ctx.strokeStyle = '#2060c0';
-      ctx.lineWidth = road.width || 4;
-      ctx.globalAlpha = 0.75;
-      ctx.shadowColor = 'rgba(100,160,255,0.4)';
-      ctx.shadowBlur = 4;
-    } else {
-      ctx.strokeStyle = rt.color;
-      ctx.lineWidth = road.width || rt.width;
-      if (rt.id === 'dirt') ctx.setLineDash([4, 4]);
-    }
-
-    strokeRun(run.pts, run.ferry);
-
-    if (!run.ferry && rt.id === 'highway') {
-      ctx.strokeStyle = 'rgba(255,250,220,0.5)';
-      ctx.lineWidth = Math.max(1, (road.width||5)-2);
-      ctx.setLineDash([]);
-      strokeRun(run.pts, false);
-    }
-
-    ctx.restore();
+  if (rt.id === 'river') {
+    ctx.strokeStyle = '#2060c0';
+    ctx.lineWidth = road.width || 4;
+    ctx.globalAlpha = 0.75;
+    ctx.shadowColor = 'rgba(100,160,255,0.4)';
+    ctx.shadowBlur = 4;
+  } else {
+    ctx.strokeStyle = rt.color;
+    ctx.lineWidth = road.width || rt.width;
+    if (rt.id === 'dirt') ctx.setLineDash([4, 4]);
   }
+
+  strokePath();
+
+  if (rt.id === 'highway') {
+    ctx.strokeStyle = 'rgba(255,250,220,0.5)';
+    ctx.lineWidth = Math.max(1, (road.width||5)-2);
+    ctx.setLineDash([]);
+    strokePath();
+  }
+
+  ctx.restore();
 }
 
 function redrawRoadsCanvas() {
@@ -3019,13 +2978,29 @@ function findLandPath(fromX, fromY, toX, toY, seaLevel, mtThresh, seed1, roadIdx
   raw[0]={x:fromX,y:fromY};raw[raw.length-1]={x:toX,y:toY};
   const thin=raw.filter((_,i)=>i===0||i===raw.length-1||i%3===0);
   for(let k=1;k<thin.length-1;k++){
-    thin[k].x+=(valueNoise(k*3.7,roadIdx*5.1,seed1+roadIdx*17)-0.5)*step*1.8;
-    thin[k].y+=(valueNoise(k*3.7+1,roadIdx*5.1+1,seed1+roadIdx*17)-0.5)*step*1.8;
+    const jx=(valueNoise(k*3.7,roadIdx*5.1,seed1+roadIdx*17)-0.5)*step*1.8;
+    const jy=(valueNoise(k*3.7+1,roadIdx*5.1+1,seed1+roadIdx*17)-0.5)*step*1.8;
+    const nx=thin[k].x+jx, ny=thin[k].y+jy;
+    // Only apply the organic jitter if it doesn't push the waypoint into water
+    if(probeH(nx,ny)>=seaLevel){thin[k].x=nx;thin[k].y=ny;}
   }
   return thin;
 }
 
 // ── Town road network ─────────────────────────────────────────────────────────
+function pathCrossesWater(pts, seaLevel) {
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i+1];
+    const segLen  = Math.hypot(b.x - a.x, b.y - a.y);
+    const samples = Math.max(2, Math.ceil(segLen / 16));
+    for (let s = 0; s <= samples; s++) {
+      const t = s / samples;
+      if (probeH(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t) < seaLevel) return true;
+    }
+  }
+  return false;
+}
+
 function nearestOnPolyline(px, py, poly) {
   let best = null;
   for (let s = 0; s < poly.length - 1; s++) {
@@ -3086,6 +3061,9 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
         break;
       }
       if (finalPts.length < 2) continue;
+      // Land routing (plus jitter) can still occasionally clip a strait or inlet —
+      // discard any road whose final path actually overlaps water rather than render it.
+      if (pathCrossesWater(finalPts, seaLevel)) continue;
 
       const rtype = (from.rank === 'capital' || to.rank === 'capital') ? 'highway'
                   : (from.rank === 'city'    || to.rank === 'city')    ? 'road'
