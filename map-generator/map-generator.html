@@ -3880,7 +3880,9 @@ function placeZones(seed1, seed2, seaLevel) {
 // grid-aligned line.
 function findLandPath(fromX, fromY, toX, toY, seaLevel, mtThresh, seed1, roadIdx) {
   const W = state.canvasW, H = state.canvasH;
-  const step = 40;
+  // 20 px grid so the A* sees water features down to ~20 px wide
+  // (the old 40 px step was blind to narrow shallows/inlets).
+  const step = 20;
   const cols = Math.ceil(W / step) + 1;
   const rows = Math.ceil(H / step) + 1;
   const gi0 = Math.max(0, Math.min(cols-1, Math.round(fromX/step)));
@@ -3948,7 +3950,7 @@ function pathCrossesWater(pts, seaLevel) {
   for (let i = 0; i < pts.length - 1; i++) {
     const a = pts[i], b = pts[i+1];
     const segLen  = Math.hypot(b.x - a.x, b.y - a.y);
-    const samples = Math.max(2, Math.ceil(segLen / 16));
+    const samples = Math.max(2, Math.ceil(segLen / 6));
     for (let s = 0; s <= samples; s++) {
       const t = s / samples;
       if (probeH(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t) < seaLevel) return true;
