@@ -1700,8 +1700,8 @@ function renderLabels(ctx) {
     } else {
       // Cream/white halo makes labels legible against any terrain or water background.
       // Italic labels (biome/water) get a slightly thicker halo; settlement labels thinner.
-      ctx.strokeStyle = isItalic ? 'rgba(255,252,235,0.70)' : 'rgba(255,255,255,0.82)';
-      ctx.lineWidth = (isItalic ? 3.5 : 3) / state.zoom;
+      ctx.strokeStyle = isItalic ? 'rgba(255,252,235,0.45)' : 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = (isItalic ? 2 : 1.8) / state.zoom;
       ctx.strokeText(l.text, l.x, l.y);
     }
     ctx.fillStyle = l.color;
