@@ -418,13 +418,13 @@ body {
   border: 1px solid #8b6030;
 }
 
-/* ── BIOME LEGEND ────────────────────────────────────────── */
-#legend summary::-webkit-details-marker { display: none; }
-#legend summary::marker { display: none; }
-#legend summary:hover { background: rgba(200,168,100,0.3); border-radius: 3px; }
-#legend .legend-arrow { font-size: 9px; transition: transform 0.2s; }
-#legend[open] .legend-arrow { transform: rotate(180deg); }
-#legend[open] summary { margin-bottom: 8px; border-bottom: 1px solid #a07840; padding-bottom: 4px; }
+/* ── COLLAPSIBLE SIDEBAR PANELS ──────────────────────────── */
+.panel[open] > summary, details.panel[open] > summary { margin-bottom: 8px; border-bottom: 1px solid #a07840; padding-bottom: 4px; }
+details.panel summary::-webkit-details-marker { display: none; }
+details.panel summary::marker { display: none; }
+details.panel summary:hover { background: rgba(200,168,100,0.3); border-radius: 3px; }
+.legend-arrow { font-size: 9px; transition: transform 0.2s; }
+details[open] .legend-arrow { transform: rotate(180deg); }
 #legend .legend-body {
   display: flex;
   flex-direction: column;
@@ -804,10 +804,13 @@ body {
     <div class="sidebar-close-row"><button id="btn-close-right">&#x2715;</button></div>
 
     <!-- Layers -->
-    <div class="panel">
-      <div class="panel-title">Layers</div>
-      <div id="layers-list"></div>
-    </div>
+    <details class="panel" open>
+      <summary class="panel-title" style="list-style:none;cursor:pointer;display:flex;align-items:center;margin-bottom:0;">
+        <span style="flex:1;">Layers</span>
+        <span class="legend-arrow">&#x25BC;</span>
+      </summary>
+      <div style="margin-top:8px;" id="layers-list"></div>
+    </details>
 
     <!-- Biome Legend -->
     <details class="panel" id="legend">
@@ -832,17 +835,22 @@ body {
     </details>
 
     <!-- Zone Filters -->
-    <div class="panel">
-      <div class="panel-title">Zone Filters</div>
-      <div class="filter-section">
-        <div class="filter-title">By Type</div>
-        <div id="filter-by-type"></div>
+    <details class="panel" open>
+      <summary class="panel-title" style="list-style:none;cursor:pointer;display:flex;align-items:center;margin-bottom:0;">
+        <span style="flex:1;">Zone Filters</span>
+        <span class="legend-arrow">&#x25BC;</span>
+      </summary>
+      <div style="margin-top:8px;">
+        <div class="filter-section">
+          <div class="filter-title">By Type</div>
+          <div id="filter-by-type"></div>
+        </div>
+        <div class="filter-section">
+          <div class="filter-title">By Name</div>
+          <div id="filter-by-name"></div>
+        </div>
       </div>
-      <div class="filter-section">
-        <div class="filter-title">By Name</div>
-        <div id="filter-by-name"></div>
-      </div>
-    </div>
+    </details>
 
     <!-- Selection Info -->
     <div class="panel" id="selection-panel" style="display:none;">
