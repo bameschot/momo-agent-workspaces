@@ -4796,13 +4796,13 @@ function generateMap() {
     const mtns    = document.getElementById('gen-mountains').value / 100; // 0–1
     const coldHot = document.getElementById('gen-temp').value / 100;      // 0=polar, 1=tropical
 
-    // seaLevel: 0→0.62 (mostly ocean), 1→0.30 (mostly land)
-    const seaLevel  = 0.62 - landSea * 0.32;
-    // moistureBias: -0.30 (dry) → +0.30 (wet); cold shifts noticeably wetter, hot noticeably drier
-    const moistBias = (wetDry - 0.5) * 0.60 + (0.5 - coldHot) * 0.14;
-    // mountainThresh: fraction above sea level where mountains start
+    // seaLevel: 0→0.65 (near-total ocean), 1→0.25 (vast landmass)
+    const seaLevel  = 0.65 - landSea * 0.40;
+    // moistureBias: -0.45 (desert world) → +0.45 (swamp/jungle world); cold/hot adds secondary ±0.11
+    const moistBias = (wetDry - 0.5) * 0.90 + (0.5 - coldHot) * 0.22;
+    // mountainThresh: landRange×0.15 (nearly all land is mountains) → landRange×0.57 (only peaks are mountains)
     const landRange = 1 - seaLevel;
-    const mtThresh  = seaLevel + landRange * (0.52 + (1 - mtns) * 0.38) * 0.5;
+    const mtThresh  = seaLevel + landRange * (0.15 + (1 - mtns) * 0.42);
     // snowThresh: polar→snow blankets most highland; tropical→far above max height (no snow)
     const snowFactor = 0.02 + coldHot * 1.08;  // 0.02 (polar) → 1.10 (tropical)
     const snowThresh = mtThresh + landRange * snowFactor;
