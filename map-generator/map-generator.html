@@ -650,11 +650,6 @@ details[open] .legend-arrow { transform: rotate(180deg); }
         <input type="range" id="biome-size" min="1" max="260" value="90">
         <span class="range-val" id="biome-size-val">90</span>
       </div>
-      <div class="range-row">
-        <label>Strength:</label>
-        <input type="range" id="biome-strength" min="10" max="100" value="70">
-        <span class="range-val" id="biome-strength-val">70%</span>
-      </div>
       <div style="margin-top:8px;">
         <button class="radio-btn" id="btn-biome-reroll" style="width:100%;text-align:center;">&#x1F3B2; Reroll Pattern</button>
       </div>
@@ -2003,16 +1998,27 @@ function paintBiomeAt(cx, cy) {
       const edgeDist = size + edgeN * size * 0.30;
       if (warpDist > edgeDist) continue;
       const rim = edgeDist - warpDist;
-      let alpha = state.biomeStrength;
-      if (rim < 2) alpha *= rim / 2;
+      let alpha = 1.0;
+      if (rim < 2) alpha = rim / 2;
       if (alpha <= 0.01) continue;
+
+      // Land biomes crossing into water: paint beach at the shoreline boundary
+      const isLandBiome = state.biomeType !== 'ocean' && state.biomeType !== 'sand';
+      let isBeach = false;
+      if (isLandBiome) {
+        const ah = probeH(px, py);
+        if (ah < gp.seaLevel) continue; // land brush skips open water
+        if (ah < gp.seaLevel + 0.015) isBeach = true; // beach strip at the waterline
+      }
 
       // Same fbm noise family as Generate Map, offset by a per-stroke seed
       const n1 = fbm(px * gp.scale * 1.4,  py * gp.scale * 1.4,  seed,        4);
       const n2 = fbm(px * gp.scale * 0.85, py * gp.scale * 0.85, seed + 7777, 4);
       const { hv, mv } = sampleBiomeHV(state.biomeType, n1, n2, gp);
       const tv  = valueNoise(px * 0.09, py * 0.09, seed + 888);
-      let col = classifyTerrainColor(hv, mv, gp.seaLevel, gp.mtThresh, gp.snowThresh, paintTemp);
+      let col = isBeach
+        ? TERRAIN_PALETTE.sand
+        : classifyTerrainColor(hv, mv, gp.seaLevel, gp.mtThresh, gp.snowThresh, paintTemp);
 
       const noise = (tv - 0.5) * 24;
       const tr = Math.max(0, Math.min(255, col[0] + noise));
@@ -2812,10 +2818,6 @@ document.getElementById('btn-cancel-zone').addEventListener('click', cancelZone)
 document.getElementById('biome-size').addEventListener('input',function(){
   state.biomeSize = +this.value;
   document.getElementById('biome-size-val').textContent = this.value;
-});
-document.getElementById('biome-strength').addEventListener('input',function(){
-  state.biomeStrength = this.value/100;
-  document.getElementById('biome-strength-val').textContent = this.value+'%';
 });
 document.getElementById('road-width').addEventListener('input',function(){
   state.roadWidth = +this.value;
