@@ -741,12 +741,12 @@ body {
       </div>
       <div class="gen-row">
         <div class="gen-label"><span>Max Settlements</span><span id="gen-density-val">40</span></div>
-        <input type="range" id="gen-stamp-density" min="1" max="250" value="40">
+        <input type="range" id="gen-stamp-density" min="1" max="500" value="40">
         <div class="gen-desc"><span>Sparse</span><span>Dense</span></div>
       </div>
       <div class="gen-row">
         <div class="gen-label"><span>Number of Countries</span><span id="gen-num-countries-val">5</span></div>
-        <input type="range" id="gen-num-countries" min="2" max="12" value="5">
+        <input type="range" id="gen-num-countries" min="2" max="30" value="5">
         <div class="gen-desc"><span>Few</span><span>Many</span></div>
       </div>
       <button class="tb-btn" id="btn-gen-go" style="width:100%;margin-top:2px;background:linear-gradient(180deg,#507820,#385810);color:#f0e8c0;border-color:#2a3a10;font-size:12px;">&#x2726; Generate</button>
@@ -2970,7 +2970,26 @@ const COUNTRY_NAMES = [
   'Yorshire','Yorvale','Yororn','Yorstrand','Yormarch',
   'Yormore','Yorisle','Yorgarde','Yorspire','Yorespa',
   'Yorheim','Yorovia','Yorhall','Yorwic','Mournhold',
-  'Mournwynd','Mournreach','Mourndale','Mournfen','Mournania'
+  'Mournwynd','Mournreach','Mourndale','Mournfen','Mournania',
+  'Caldenmere','Caldenwald','Caldenspire','Caldenmarch','Caldenreach',
+  'Dravan','Dravenmoor','Dravenspire','Dravenwald','Dravenmarch',
+  'Eldarion','Eldarmore','Eldarspire','Eldarwald','Eldarmarch',
+  'Farenhold','Farenmere','Farenspire','Farenwald','Farenmarch',
+  'Grenvast','Grenmere','Grenspire','Grenwald','Grenmarch',
+  'Halvenmoor','Halvenmere','Halvenspire','Halvenwald','Halvenmarch',
+  'Ironmere','Ironwald','Ironspire','Ironmarch','Ironreach',
+  'Jadenmoor','Jadenmere','Jadenspire','Jadenwald','Jadenmarch',
+  'Kaelthor','Kaelmere','Kaelspire','Kaelwald','Kaelmarch',
+  'Lunavar','Lunamere','Lunaspire','Lunawald','Lunamarch',
+  'Mordania','Mordmere','Mordspire','Mordwald','Mordmarch',
+  'Novalund','Novamere','Novaspire','Novawald','Novamarch',
+  'Orendor','Orenmere','Orenspire','Orenwald','Orenmarch',
+  'Peladon','Pelamere','Pelaspire','Pelawald','Pelamarch',
+  'Quorath','Quormere','Quorspire','Quorwald','Quormarch',
+  'Ravenholm','Ravenmere','Ravenspire','Ravenwald','Ravenmarch',
+  'Solanthar','Solanmere','Solanspire','Solanwald','Solanmarch',
+  'Thalindor','Thalinmere','Thalinspire','Thalinwald','Thalinmarch',
+  'Ulvenmoor','Ulvenmere','Ulvenspire','Ulvenwald','Ulvenmarch'
 ];
 const CITY_NAMES = [
   'Aldmere','Brynholt','Caerwyn','Duskport','Estmere',
@@ -3022,7 +3041,56 @@ const CITY_NAMES = [
   'Taldmark','Taldcombe','Taldbrook','Taldfield','Taldcrown',
   'Taldvale','Talddon','Taldmere','Taldwell','Taldreach',
   'Taldgate','Taldshire','Talddale','Taldwyn','Taldbourne',
-  'Taldspire','Taldton','Taldhold','Taldridge','Taldglen'
+  'Taldspire','Taldton','Taldhold','Taldridge','Taldglen',
+  'Arenvale','Arenport','Arenholm','Arenwick','Arencroft',
+  'Belthorne','Beltmere','Beltwick','Beltford','Beltholm',
+  'Caerholm','Caerwick','Caerford','Caerport','Caervale',
+  'Dravenmere','Dravenport','Dravencroft','Dravenstein','Dravenfeld',
+  'Elbwatch','Elbmere','Elbholt','Elbcrest','Elbdale',
+  'Fenmere','Fenwick','Fenford','Fenholm','Fencroft',
+  'Galehaven','Galecrest','Galewick','Galeholm','Galekeep',
+  'Halvenmere','Halvenport','Halvencroft','Halvenridge','Halvenglen',
+  'Ironcross','Ironwick','Ironmore','Ironvale','Ironmere',
+  'Jadehollow','Jadewatch','Jadecrest','Jadewell','Jadeford',
+  'Keldmere','Keldwick','Keldholm','Keldcroft','Keldvale',
+  'Lorenvale','Lorenport','Lorenwich','Lorencroft','Lorenholm',
+  'Mirrorhaven','Mirrorwick','Mirrorford','Mirrorcrest','Mirrormere',
+  'Nordwatch','Nordholm','Nordcroft','Nordwick','Nordvale',
+  'Ostenmore','Ostenwick','Ostenvale','Ostenholm','Ostencroft',
+  'Peaksward','Peaksmere','Peaksholm','Peakswick','Peakscroft',
+  'Quillmere','Quillwick','Quillholm','Quillcroft','Quillvale',
+  'Reedhollow','Reedwatch','Reedcrest','Reedwell','Reedford',
+  'Saltwatch','Saltmere','Saltvale','Saltholm','Saltcroft',
+  'Stormgate','Stormwick','Stormford','Stormholm','Stormcroft',
+  'Talwatch','Talvale','Talholm','Talcroft','Talwick',
+  'Umberwatch','Umbermere','Umbervale','Umberholm','Umbercroft',
+  'Vaultmere','Vaultwick','Vaultholm','Vaultcroft','Vaultvale',
+  'Woldenwatch','Woldenmere','Woldenvale','Woldenholm','Woldencroft',
+  'Xandrimere','Xandriwick','Xandriholm','Xandricroft','Xandrivale',
+  'Yewmere','Yewwick','Yewholm','Yewcroft','Yewvale',
+  'Zephyrmere','Zephyrwick','Zephyrholm','Zephyrcroft','Zephyrvale',
+  'Amberwatch','Ambermere','Ambervale','Amberholm','Ambercroft',
+  'Brindlehaven','Brindlewick','Brindlemere','Brindleholm','Brindlecroft',
+  'Cinderwatch','Cindermere','Cindervale','Cinderholm','Cindercroft',
+  'Duskwatch','Duskmere','Duskvale','Duskholm','Duskcroft',
+  'Embermere','Emberwatch','Embervale','Emberholm','Embercroft',
+  'Flintwatch','Flintmere','Flintvale','Flintholm','Flintcroft',
+  'Gloomwatch','Gloommere','Gloomvale','Gloomholm','Gloomcroft',
+  'Hawthornemere','Hawthornholm','Hawthornwick','Hawthorncroft','Hawthornevale',
+  'Inkmere','Inkwatch','Inkvale','Inkholm','Inkcroft',
+  'Jestmere','Jestwatch','Jestvale','Jestholm','Jestcroft',
+  'Keelmere','Keelwatch','Keelvale','Keelholm','Keelcroft',
+  'Lunwatch','Lunmere','Lunvale','Lunholm','Luncroft',
+  'Mosspeak','Mossmere','Mossvale','Mossholm','Mosscroft',
+  'Nightwatch','Nightmere','Nightvale','Nightholm','Nightcroft',
+  'Oakwatch','Oakmere','Oakvale','Oakholm','Oakcroft',
+  'Pinwatch','Pinmere','Pinvale','Pinholm','Pincroft',
+  'Rivenmere','Rivenwatch','Rivenvale','Rivenholm','Rivencroft',
+  'Shadowmere','Shadowwatch','Shadowvale','Shadowholm','Shadowcroft',
+  'Thornwatch','Thornmere','Thornvale','Thornholm','Thorncroft',
+  'Umbermere','Umberwatch','Umbervale','Umberholm','Umbercroft',
+  'Verdantmere','Verdantwatch','Verdantvale','Verdantholm','Verdantcroft',
+  'Winterwatch','Wintermere','Wintervale','Winterholm','Wintercroft'
 ];
 const VILLAGE_NAMES = [
   'Millhaven','Creekside','Thornwick','Dustfall','Ashford',
@@ -3069,7 +3137,56 @@ const VILLAGE_NAMES = [
   'Blackdale','Blackglen','Blackmead','Blackfen','Blackgreen',
   'Blackshaw','Blackridge','Blackholt','Blackstead','Blackden',
   'Blackvale','Blackfall','Blackbridge','Blackdell','Blackwood',
-  'Blackgate','Blackside','Blackbank','Blackgarth','Quailbury'
+  'Blackgate','Blackside','Blackbank','Blackgarth','Quailbury',
+  'Amberley','Ashcombe','Ashdell','Ashfen','Ashglen',
+  'Barleymow','Barleyton','Barleyfield','Barleyford','Barleymere',
+  'Brackenbury','Brackenford','Brackenmere','Brackenholm','Brackenvale',
+  'Brindlecot','Brindleford','Brindleglen','Brindlemead','Brindleston',
+  'Burntwick','Burntcot','Burntford','Burntholt','Burntfen',
+  'Clovercot','Cloverden','Cloverfield','Cloverfen','Cloverton',
+  'Coppergate','Copperglen','Copperholm','Copperford','Coppercroft',
+  'Cornhaven','Cornwick','Cornford','Cornmere','Cornton',
+  'Crabapple','Crabmere','Crabwick','Crabford','Crabcot',
+  'Craneford','Cranemere','Craneholm','Cranewick','Cranecroft',
+  'Cressington','Cressford','Cressmere','Cresston','Cresswick',
+  'Dirtholm','Dirtcot','Dirtfen','Dirtford','Dirtvale',
+  'Dovington','Dovecross','Dovestead','Dovewick','Dovefen',
+  'Dustcroft','Dustfen','Dustholm','Dustmere','Dustwick',
+  'Elderbury','Elderford','Eldermere','Elderwick','Eldercroft',
+  'Elmbury','Elmcroft','Elmden','Elmdell','Elmfen',
+  'Emmerwick','Emmerford','Emmercroft','Emmermere','Emmerholm',
+  'Fallowfield','Fallowford','Fallowmere','Fallowwick','Fallowcroft',
+  'Fenbury','Fencot','Fenden','Fendell','Fenton',
+  'Flaxbury','Flaxcroft','Flaxden','Flaxfen','Flaxford',
+  'Foxbury','Foxcroft','Foxden','Foxfen','Foxfield',
+  'Frostbury','Frostcot','Frostden','Frostfen','Frostfield',
+  'Gatewick','Gatecroft','Gateden','Gatefell','Gatefold',
+  'Goldenwick','Goldenford','Goldenmere','Goldenholm','Goldencroft',
+  'Goosebury','Goosecroft','Gooseden','Goosefen','Gooseton',
+  'Grainbury','Grainford','Grainmere','Graincroft','Grainton',
+  'Gravelwick','Gravel croft','Gravelford','Gravelmere','Gravelholm',
+  'Graybury','Graycroft','Grayden','Grayfen','Grayfield',
+  'Greenbury','Greencroft','Greenden','Greenfen','Greenfield',
+  'Grimwick','Grimcroft','Grimden','Grimfen','Grimford',
+  'Halfwick','Halfcroft','Halfden','Halffen','Halfford',
+  'Harrowwick','Harrowcroft','Harrowden','Harrowfen','Harrowford',
+  'Hawthorn','Hawthorncot','Hawthornden','Hawthornton','Hawthornwick',
+  'Hazelmere','Hazelwick','Hazelford','Hazelholm','Hazelcroft',
+  'Heatherwick','Heatherford','Heathermere','Heatherholm','Heathercroft',
+  'Heronwick','Heronford','Heronmere','Heronholm','Heroncroft',
+  'Hollywick','Hollyford','Hollymere','Hollyholm','Hollycroft',
+  'Honeywick','Honeyford','Honeymere','Honeyholm','Honeycroft',
+  'Hopswick','Hopsford','Hopsmere','Hopsholm','Hopscroft',
+  'Horseton','Horsewick','Horseford','Horsemere','Horsecroft',
+  'Houndwick','Houndford','Houndmere','Houndholm','Houndcroft',
+  'Huntwick','Huntford','Huntmere','Huntholm','Huntcroft',
+  'Hushwick','Hushford','Hushmere','Hushholm','Hushcroft',
+  'Ivywick','Ivyford','Ivymere','Ivyholm','Ivycroft',
+  'Knotwick','Knotford','Knotmere','Knotholm','Knotcroft',
+  'Larchwick','Larchford','Larchmere','Larchholm','Larchcroft',
+  'Lavenderwick','Lavenderford','Lavendermere','Lavenderholm','Lavendercroft',
+  'Leafwick','Leafford','Leafmere','Leafholm','Leafcroft',
+  'Lichen','Lichenwick','Lichenford','Lichenmere','Lichenholm'
 ];
 const PEAK_NAMES = [
   'Mount Drakenor','The Stormcrown','Skyreach Spire','Mount Veythorn','The Sunderpeak',
@@ -3977,7 +4094,7 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
     .filter(c => c.rank !== 'village');
   if (majors.length < 2) return;
 
-  const numHighways = Math.max(1, Math.min(4, Math.round(majors.length / 5)));
+  const numHighways = Math.max(1, Math.min(8, Math.round(majors.length / 5)));
   const usedPairs = new Set();
   const usedEndpoints = new Set();
   let highwayCount = 0;
@@ -4235,13 +4352,13 @@ function findWaterBodies(seaLevel) {
   // read as one — so seas need to clear a notably higher cell count than the
   // general lake/puddle floor before they're worth naming as their own sea.
   const minSeaCells = 8;
-  const bodies = []; // {type, cells, x, y}
+  const bodies = []; // {type, cells, labelPoints:[{x,y}]}
 
   for (let start = 0; start < n; start++) {
     if (!isWater[start] || visited[start]) continue;
 
     let cells = 0, touchesEdge = false;
-    let interior = start, interiorDist = -1;
+    const cellScores = []; // [idx, score] — collected to pick multiple label spots
     const queue = [start];
     visited[start] = 1;
     while (queue.length) {
@@ -4258,7 +4375,7 @@ function findWaterBodies(seaLevel) {
       // the grid border, so distToLand is already the binding constraint.
       const distToEdge = Math.min(ci, cj, cols - 1 - ci, rows - 1 - cj);
       const score = Math.min(distToLand[cur], distToEdge);
-      if (score > interiorDist) { interiorDist = score; interior = cur; }
+      cellScores.push([cur, score]);
 
       // 4-directional neighbours via explicit row/col deltas — avoids the
       // false-adjacency bug of using linear-index ±1 across a row boundary
@@ -4276,8 +4393,20 @@ function findWaterBodies(seaLevel) {
     const type = touchesEdge ? 'sea' : 'lake';
     if (type === 'sea' && cells < minSeaCells) continue;
 
-    const bi = interior % cols, bj = (interior / cols) | 0;
-    bodies.push({ type, cells, x: bi * step, y: bj * step });
+    // Number of labels scales with body size: large oceans get up to 4,
+    // medium seas 2-3, small bodies 1. Min separation = 10 grid cells (~400px).
+    const numLabels = cells > 400 ? 4 : cells > 150 ? 3 : cells > 60 ? 2 : 1;
+    const minSep = 10;
+    cellScores.sort((a, b) => b[1] - a[1]);
+    const chosen = []; // [ci, cj]
+    for (const [idx] of cellScores) {
+      const ci = idx % cols, cj = (idx / cols) | 0;
+      if (chosen.every(([cci, ccj]) => Math.hypot(cci - ci, ccj - cj) >= minSep)) {
+        chosen.push([ci, cj]);
+        if (chosen.length >= numLabels) break;
+      }
+    }
+    bodies.push({ type, cells, labelPoints: chosen.map(([ci, cj]) => ({ x: ci * step, y: cj * step })) });
   }
 
   bodies.sort((a, b) => b.cells - a.cells);
@@ -4298,12 +4427,14 @@ function placeWaterLabels(seed1, seed2, seaLevel) {
     const isSea = body.type === 'sea';
     const name  = isSea ? pickSeaName(i * 11 + seed1) : pickLakeName(i * 11 + seed2);
     if (!name) return;
-    state.labels.push({
-      text: name, x: body.x, y: body.y,
-      size: isSea ? 13 : 10,
-      color: isSea ? '#0d3a5c' : '#1a3a5a',
-      style: 'italic'
-    });
+    for (const pt of body.labelPoints) {
+      state.labels.push({
+        text: name, x: pt.x, y: pt.y,
+        size: isSea ? 13 : 10,
+        color: isSea ? '#0d3a5c' : '#1a3a5a',
+        style: 'italic'
+      });
+    }
   });
 }
 
@@ -4312,13 +4443,13 @@ function placeWaterLabels(seed1, seed2, seaLevel) {
 // every generation slider's value into one mixed-radix number (Horner's method),
 // so a seed is a complete reproducible "recipe": typing one sets every slider to
 // an exact position, and moving a slider regenerates the seed to match it.
-//   composite = (((((rng*101+landSea)*101+wetDry)*101+mountains)*101+temp)*250+(density-1))*11+(countries-2)
+//   composite = (((((rng*101+landSea)*101+wetDry)*101+mountains)*101+temp)*500+(density-1))*29+(countries-2)
 // The RNG component spans 6,553,600,000 values (~9.8 decimal digits — five more
 // than the prior 65,536-value range), which pushes MAX_COMPOSITE to roughly
 // 7.5 × 10^20 — far past Number.MAX_SAFE_INTEGER, so the composite is carried as
 // a BigInt throughout and displayed/parsed as hexadecimal (compact and exact).
 const SEED_RNG_RADIX = 6553600000n;
-const SEED_PARAM_SPACE = 101n * 101n * 101n * 101n * 250n * 11n;
+const SEED_PARAM_SPACE = 101n * 101n * 101n * 101n * 500n * 29n;
 const SEED_MAX_COMPOSITE = SEED_RNG_RADIX * SEED_PARAM_SPACE - 1n;
 const SEED_MAX_HEX_LEN = SEED_MAX_COMPOSITE.toString(16).length;
 
@@ -4328,15 +4459,15 @@ function encodeSeed(rng, landSea, wetDry, mountains, temp, density, countries) {
   c = c * 101n + BigInt(wetDry);
   c = c * 101n + BigInt(mountains);
   c = c * 101n + BigInt(temp);
-  c = c * 250n + BigInt(density - 1);
-  c = c * 11n  + BigInt(countries - 2);
+  c = c * 500n + BigInt(density - 1);
+  c = c * 29n  + BigInt(countries - 2);
   return c;
 }
 
 function decodeSeed(composite) {
   let v = BigInt(composite);
-  const countries = Number(v % 11n) + 2;   v /= 11n;
-  const density   = Number(v % 250n) + 1;  v /= 250n;
+  const countries = Number(v % 29n) + 2;   v /= 29n;
+  const density   = Number(v % 500n) + 1;  v /= 500n;
   const temp      = Number(v % 101n);      v /= 101n;
   const mountains = Number(v % 101n);      v /= 101n;
   const wetDry    = Number(v % 101n);      v /= 101n;
@@ -4545,7 +4676,7 @@ document.getElementById('btn-gen-seed-reroll').addEventListener('click', () => {
     mountains: Math.floor(Math.random() * 101),
     temp:      Math.floor(Math.random() * 101),
     density:   1 + Math.floor(Math.random() * 250),
-    countries: 2 + Math.floor(Math.random() * 11)
+    countries: 2 + Math.floor(Math.random() * 29)
   };
   seedField.value = encodeSeed(rollRng(), p.landSea, p.wetDry, p.mountains, p.temp, p.density, p.countries).toString(16).toUpperCase();
   applySliderParams(p);
