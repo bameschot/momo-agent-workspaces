@@ -3572,6 +3572,7 @@ function generateContent() {
 // suitable land tile is found.
 function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
   const W = state.canvasW, H = state.canvasH;
+  const MAX_SETTLEMENTS = 250;
   const densityVal = parseInt((document.getElementById('gen-stamp-density') || {value:'40'}).value) || 40;
   // Below 40 the curve matches the original 1-40 range exactly; beyond 40 it keeps
   // easing the spacing down further so the new higher settings actually generate
@@ -3677,22 +3678,22 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
           const name = pickName(col * 31 + row);
           state.stamps.push({type:'city', x:px, y:py, size:30});
           state.labels.push({text:name, x:px+15, y:py-10, size:11, color:'#3a1a05'});
-          cityOut.push({x:px, y:py, rank:'city'});
+          if (cityOut.length < MAX_SETTLEMENTS) cityOut.push({x:px, y:py, rank:'city'});
         } else if (rng < 0.11) {
           const name = pickName(col * 31 + row + 50);
           state.stamps.push({type:'town', x:px, y:py, size:24});
           state.labels.push({text:name, x:px+12, y:py-8, size:10, color:'#3a1a05'});
-          cityOut.push({x:px, y:py, rank:'town'});
+          if (cityOut.length < MAX_SETTLEMENTS) cityOut.push({x:px, y:py, rank:'town'});
         } else if (rng < 0.20) {
           const name = pickVillageName(col * 31 + row + 100);
           state.stamps.push({type:'village',  x:px, y:py, size:20});
           state.labels.push({text:name, x:px+10, y:py-6, size:9, color:'#3a1a05'});
-          cityOut.push({x:px, y:py, rank:'village'});
+          if (cityOut.length < MAX_SETTLEMENTS) cityOut.push({x:px, y:py, rank:'village'});
         } else if (rng < 0.23) {
           const name = pickVillageName(col * 31 + row + 200);
           state.stamps.push({type:'castle',   x:px, y:py, size:24});
           state.labels.push({text:name, x:px+12, y:py-8, size:9, color:'#3a1a05'});
-          cityOut.push({x:px, y:py, rank:'village'});
+          if (cityOut.length < MAX_SETTLEMENTS) cityOut.push({x:px, y:py, rank:'village'});
         } else if (rng < 0.25) {
           state.stamps.push({type:'tower', x:px, y:py, size:20});
           maybeLabel(nameRoll, 0.40, pickLandmarkName, col*31+row+1000, px, py, 10, -6, 9, '#3a1a05');
@@ -3709,7 +3710,7 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
           const name = pickVillageName(col * 31 + row + 400);
           state.stamps.push({type:'outpost', x:px, y:py, size:20});
           state.labels.push({text:name, x:px+10, y:py-6, size:9, color:'#3a1a05'});
-          cityOut.push({x:px, y:py, rank:'village'});
+          if (cityOut.length < MAX_SETTLEMENTS) cityOut.push({x:px, y:py, rank:'village'});
         }
       }
 
@@ -3719,7 +3720,7 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
           const name = pickVillageName(col * 31 + row + 300);
           state.stamps.push({type:'port',       x:px, y:py, size:22});
           state.labels.push({text:name, x:px+11, y:py-8, size:9, color:'#3a1a05'});
-          cityOut.push({x:px, y:py, rank:'village'});
+          if (cityOut.length < MAX_SETTLEMENTS) cityOut.push({x:px, y:py, rank:'village'});
         } else if (rng2 < 0.09) {
           state.stamps.push({type:'lighthouse', x:px, y:py, size:20});
           maybeLabel(nameRoll, 0.40, pickLandmarkName, col*31+row+1300, px, py, 12, -8, 9, '#3a1a05');
@@ -3738,7 +3739,7 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
       const name = pickName(999);
       state.stamps.push({type:'capital', x:tx, y:ty, size:36});
       state.labels.push({text:name, x:tx+18, y:ty-12, size:13, color:'#2c0a00'});
-      cityOut.unshift({x:tx, y:ty, rank:'capital'});
+      if (cityOut.length < MAX_SETTLEMENTS) cityOut.unshift({x:tx, y:ty, rank:'capital'});
       break;
     }
   }
