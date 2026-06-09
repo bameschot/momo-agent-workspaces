@@ -577,6 +577,7 @@ body {
   <button class="tb-btn" id="btn-export" style="background:linear-gradient(180deg,#a06020,#7a4010);color:#f5e0a0;border-color:#3a1a05;">&#x1F5BC; Export PNG</button>
   <div class="tb-sep"></div>
   <button class="tb-btn" id="btn-save-map" style="background:linear-gradient(180deg,#a06020,#7a4010);color:#f5e0a0;border-color:#3a1a05;">&#x1F4BE; Save Map</button>
+  <button class="tb-btn" id="btn-save-map-full" style="background:linear-gradient(180deg,#a06020,#7a4010);color:#f5e0a0;border-color:#3a1a05;">&#x1F4BE; Save Map (Full)</button>
   <button class="tb-btn" id="btn-load-map" style="background:linear-gradient(180deg,#a06020,#7a4010);color:#f5e0a0;border-color:#3a1a05;">&#x1F4C2; Load Map</button>
   <input type="file" id="import-file-input" accept=".mmap,.json" style="display:none">
 </div>
@@ -4868,7 +4869,7 @@ document.getElementById('gen-num-countries').addEventListener('input', function(
 //  EXPORT / IMPORT (.mmap format)
 // ═══════════════════════════════════════════════════════════
 
-function exportMap() {
+function exportMap(withTerrain) {
   const data = {
     momo: 1,
     canvas: { w: state.canvasW, h: state.canvasH },
@@ -4879,6 +4880,9 @@ function exportMap() {
     zones:  state.zones,
     labels: state.labels,
   };
+  if (withTerrain && terrainCanvas) {
+    data.terrainData = terrainCanvas.toDataURL('image/png');
+  }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
@@ -4887,12 +4891,16 @@ function exportMap() {
 }
 
 function showImportDialog(data) {
-  const hasTerrain = !!data.genParams;
+  const terrainLine = data.terrainData
+    ? 'Terrain: pixel snapshot (includes biome paints)'
+    : data.genParams
+      ? 'Terrain: will be regenerated from saved parameters'
+      : 'Terrain: none (blank canvas)';
   const summary = [
     `Canvas: ${data.canvas.w} × ${data.canvas.h}`,
     `Stamps: ${(data.stamps||[]).length}  ·  Zones: ${(data.zones||[]).length}  ·  Roads: ${(data.roads||[]).length}  ·  Labels: ${(data.labels||[]).length}`,
     `Seed: ${data.seed || '(none)'}`,
-    hasTerrain ? 'Terrain: will be restored from saved parameters' : 'Terrain: none (blank canvas)',
+    terrainLine,
   ].join('\n');
   document.getElementById('import-summary').textContent = summary;
   const dlg = document.getElementById('import-dialog');
@@ -4921,6 +4929,24 @@ function handleImportFileSelected(e) {
   e.target.value = '';
 }
 
+function _finishImport(data) {
+  if (data.seed) {
+    const sf = document.getElementById('gen-seed');
+    if (sf) sf.value = data.seed;
+    try { applySliderParams(decodeSeed(BigInt('0x' + data.seed))); } catch(_) {}
+  }
+  state.roads  = data.roads  || [];
+  state.stamps = data.stamps || [];
+  state.zones  = data.zones  || [];
+  state.labels = data.labels || [];
+  state.selected = null;
+  roadsCtx.clearRect(0, 0, state.canvasW, state.canvasH);
+  updateZoneFilters();
+  updateSelectionPanel();
+  redrawRoadsCanvas();
+  render();
+}
+
 function applyImport(data) {
   hideImportDialog();
 
@@ -4935,8 +4961,18 @@ function applyImport(data) {
     initCanvases();
   }
 
-  // Restore terrain
-  if (data.genParams) {
+  if (data.terrainData) {
+    // Full export: restore pixel-exact terrain (includes biome paints) — async
+    genParams = data.genParams || null;
+    const img = new Image();
+    img.onload = () => {
+      terrainCtx.clearRect(0, 0, state.canvasW, state.canvasH);
+      terrainCtx.drawImage(img, 0, 0);
+      _finishImport(data);
+    };
+    img.src = data.terrainData;
+    return;
+  } else if (data.genParams) {
     genParams = data.genParams;
     paintTerrainFromParams(genParams);
   } else {
@@ -4944,27 +4980,11 @@ function applyImport(data) {
     genParams = null;
   }
 
-  // Restore seed field
-  if (data.seed) {
-    const sf = document.getElementById('gen-seed');
-    if (sf) sf.value = data.seed;
-  }
-
-  // Restore layers
-  state.roads  = data.roads  || [];
-  state.stamps = data.stamps || [];
-  state.zones  = data.zones  || [];
-  state.labels = data.labels || [];
-  state.selected = null;
-
-  roadsCtx.clearRect(0, 0, state.canvasW, state.canvasH);
-  updateZoneFilters();
-  updateSelectionPanel();
-  redrawRoadsCanvas();
-  render();
+  _finishImport(data);
 }
 
-document.getElementById('btn-save-map').addEventListener('click', exportMap);
+document.getElementById('btn-save-map').addEventListener('click', () => exportMap(false));
+document.getElementById('btn-save-map-full').addEventListener('click', () => exportMap(true));
 document.getElementById('btn-load-map').addEventListener('click', () => {
   document.getElementById('import-file-input').click();
 });
