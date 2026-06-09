@@ -2002,12 +2002,15 @@ function paintBiomeAt(cx, cy) {
       if (rim < 2) alpha = rim / 2;
       if (alpha <= 0.01) continue;
 
-      // Land biomes crossing into water: paint beach at the shoreline boundary
+      // Land biomes: paint beach at the water-side edge of the brush.
+      // Keyed on (a) pixel is in actual water terrain AND (b) near the brush boundary.
+      // Land pixels — including existing sand — always receive the chosen biome color.
       const isLandBiome = state.biomeType !== 'ocean' && state.biomeType !== 'sand';
       let isBeach = false;
       if (isLandBiome) {
         const ah = probeH(px, py);
-        if (ah >= gp.seaLevel && ah < gp.seaLevel + 0.015) isBeach = true;
+        const beachRim = Math.max(6, size * 0.20);
+        if (ah < gp.seaLevel && rim < beachRim) isBeach = true;
       }
 
       // Same fbm noise family as Generate Map, offset by a per-stroke seed
