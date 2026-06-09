@@ -647,7 +647,7 @@ details[open] .legend-arrow { transform: rotate(180deg); }
       <div class="terrain-grid" id="biome-picker"></div>
       <div class="range-row">
         <label>Size:</label>
-        <input type="range" id="biome-size" min="20" max="260" value="90">
+        <input type="range" id="biome-size" min="1" max="260" value="90">
         <span class="range-val" id="biome-size-val">90</span>
       </div>
       <div class="range-row">
@@ -1962,11 +1962,6 @@ function sampleBiomeHV(presetId, n1, n2, gp) {
   return { hv: Math.max(0, Math.min(1.3, hv)), mv: Math.max(0, Math.min(1, mv)) };
 }
 
-// Biomes whose brush respects the shoreline and auto-places beach at the waterline
-const _LAND_BIOMES  = new Set(['grass','forest','jungle','swamp','desert','tundra','mountain','snow']);
-const _BEACH_BIOMES = new Set(['grass','forest','jungle','swamp','desert','tundra']);
-const _BEACH_WIDTH  = 0.015; // hard sand strip width — matches natural terrain beach zone
-
 function paintBiomeAt(cx, cy) {
   if (!genParams) return;
   const gp   = genParams;
@@ -1983,9 +1978,6 @@ function paintBiomeAt(cx, cy) {
   const imgData = terrainCtx.getImageData(x0, y0, bw, bh);
   const d    = imgData.data;
   const seed = state.biomeSeed;
-  const isLand  = _LAND_BIOMES.has(state.biomeType);
-  const isOcean = state.biomeType === 'ocean';
-  const doBeach = _BEACH_BIOMES.has(state.biomeType) || isOcean;
 
   // Jungle/tundra classification depends on climate (coldHot) as well as moisture, but a
   // painted patch should always read as the chosen biome regardless of the map's overall
@@ -2015,24 +2007,12 @@ function paintBiomeAt(cx, cy) {
       if (rim < 2) alpha *= rim / 2;
       if (alpha <= 0.01) continue;
 
-      // Beach edge: land brushes skip open water; both land and ocean brushes paint a
-      // hard sand strip at the shoreline with no gradient bleed into the biome color.
-      let isBeach = false;
-      if (doBeach) {
-        const ah = probeH(px, py);
-        if (isLand && ah < gp.seaLevel) continue; // skip open water
-        if (ah >= gp.seaLevel && ah < gp.seaLevel + _BEACH_WIDTH) isBeach = true;
-      }
-
       // Same fbm noise family as Generate Map, offset by a per-stroke seed
       const n1 = fbm(px * gp.scale * 1.4,  py * gp.scale * 1.4,  seed,        4);
       const n2 = fbm(px * gp.scale * 0.85, py * gp.scale * 0.85, seed + 7777, 4);
       const { hv, mv } = sampleBiomeHV(state.biomeType, n1, n2, gp);
       const tv  = valueNoise(px * 0.09, py * 0.09, seed + 888);
-      // Hard beach strip: pure sand color, no gradient into the biome
-      let col = isBeach
-        ? TERRAIN_PALETTE.sand
-        : classifyTerrainColor(hv, mv, gp.seaLevel, gp.mtThresh, gp.snowThresh, paintTemp);
+      let col = classifyTerrainColor(hv, mv, gp.seaLevel, gp.mtThresh, gp.snowThresh, paintTemp);
 
       const noise = (tv - 0.5) * 24;
       const tr = Math.max(0, Math.min(255, col[0] + noise));
