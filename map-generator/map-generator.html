@@ -1687,16 +1687,24 @@ function renderStamps(ctx) {
 function renderLabels(ctx) {
   state.labels.forEach((l,i)=>{
     ctx.save();
-    ctx.font = `${l.style === 'italic' ? 'italic' : 'bold'} ${l.size}px Palatino, 'Book Antiqua', Georgia, serif`;
-    ctx.fillStyle = l.color;
+    const isItalic = l.style === 'italic';
+    ctx.font = `${isItalic ? 'italic' : 'bold'} ${l.size}px Palatino, 'Book Antiqua', Georgia, serif`;
     ctx.textBaseline = 'top';
+    ctx.lineJoin = 'round';
     if(state.selected && state.selected.type==='label' && state.selected.index===i) {
       ctx.shadowColor = '#f5d060';
       ctx.shadowBlur = 8/state.zoom;
       ctx.strokeStyle = '#f5d060';
-      ctx.lineWidth = 0.5/state.zoom;
+      ctx.lineWidth = 2/state.zoom;
+      ctx.strokeText(l.text, l.x, l.y);
+    } else {
+      // Cream/white halo makes labels legible against any terrain or water background.
+      // Italic labels (biome/water) get a slightly thicker halo; settlement labels thinner.
+      ctx.strokeStyle = isItalic ? 'rgba(255,252,235,0.88)' : 'rgba(255,255,255,0.82)';
+      ctx.lineWidth = (isItalic ? 4.5 : 3) / state.zoom;
       ctx.strokeText(l.text, l.x, l.y);
     }
+    ctx.fillStyle = l.color;
     ctx.fillText(l.text, l.x, l.y);
     ctx.restore();
   });
@@ -3636,14 +3644,14 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot)
       // terrain's character (greenish for forest/jungle/plains, icy blue-grey
       // for snow, sandy for desert, etc.) at a glance.
       const styleMap = {
-        forest:   { color: 'rgba(20,60,20,0.38)',    size: 15 },
-        jungle:   { color: 'rgba(12,70,28,0.40)',    size: 16 },
-        mountain: { color: 'rgba(70,55,40,0.40)',    size: 16 },
-        snow:     { color: 'rgba(100,120,150,0.45)', size: 15 },
-        tundra:   { color: 'rgba(120,132,120,0.38)', size: 14 },
-        desert:   { color: 'rgba(130,80,20,0.40)',   size: 15 },
-        swamp:    { color: 'rgba(30,60,30,0.38)',    size: 14 },
-        plains:   { color: 'rgba(40,70,20,0.35)',    size: 15 },
+        forest:   { color: 'rgba(15,55,15,0.82)',    size: 16 },
+        jungle:   { color: 'rgba(8,65,22,0.84)',     size: 17 },
+        mountain: { color: 'rgba(65,50,35,0.82)',    size: 17 },
+        snow:     { color: 'rgba(80,105,140,0.84)',  size: 16 },
+        tundra:   { color: 'rgba(95,112,105,0.80)',  size: 15 },
+        desert:   { color: 'rgba(130,72,10,0.84)',   size: 16 },
+        swamp:    { color: 'rgba(25,58,28,0.82)',    size: 15 },
+        plains:   { color: 'rgba(35,68,15,0.80)',    size: 16 },
       };
       const s = styleMap[biome] || { color: 'rgba(50,30,10,0.38)', size: 15 };
 
@@ -4430,8 +4438,8 @@ function placeWaterLabels(seed1, seed2, seaLevel) {
     for (const pt of body.labelPoints) {
       state.labels.push({
         text: name, x: pt.x, y: pt.y,
-        size: isSea ? 13 : 10,
-        color: isSea ? '#0d3a5c' : '#1a3a5a',
+        size: isSea ? 15 : 12,
+        color: isSea ? '#0a2e50' : '#143452',
         style: 'italic'
       });
     }
