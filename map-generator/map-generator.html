@@ -4353,7 +4353,39 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
     usedEndpoints.add(a.idx);
     usedEndpoints.add(b.idx);
   }
-  if (highwayCount === 0) return;
+
+  // Fallback: if the random attempts found no valid pair within the distance band
+  // (e.g. all majors are clustered close together or very far apart), try every
+  // remaining pair sorted by closeness to the ideal band centre so the best
+  // candidate is always attempted first.
+  if (highwayCount === 0) {
+    const bandMid = (minHwDist + maxHwDist) / 2;
+    const fallback = [];
+    for (let ai = 0; ai < majors.length; ai++) {
+      for (let bi = ai + 1; bi < majors.length; bi++) {
+        const key = `${ai}-${bi}`;
+        if (usedPairs.has(key)) continue;
+        const a = majors[ai], b = majors[bi];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        fallback.push({ a, b, d, key });
+      }
+    }
+    fallback.sort((p, q) => Math.abs(p.d - bandMid) - Math.abs(q.d - bandMid));
+    for (const fp of fallback) {
+      if (highwayCount >= numHighways) break;
+      usedPairs.add(fp.key);
+      let pts = findLandPath(fp.a.x, fp.a.y, fp.b.x, fp.b.y, seaLevel, mtThresh, seed1, 9000 + highwayCount);
+      if (!pts || pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+      pts = mergeIntoSameType(pts, 'highway');
+      if (pts.length < 2 || pathCrossesWater(pts, seaLevel)) continue;
+      state.roads.push({type:'highway', width:4, points:pts});
+      highwayCount++;
+      usedEndpoints.add(fp.a.idx);
+      usedEndpoints.add(fp.b.idx);
+    }
+  }
+  // Do not early-exit on highwayCount === 0 — branch roads and dirt connections
+  // between towns/villages are still generated independently below.
 
   // Coverage pass: plot extra highways through large road-less regions. Sample a
   // coarse grid of land points; if a sample sits farther than COVERAGE_RADIUS from
