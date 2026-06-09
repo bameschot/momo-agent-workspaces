@@ -575,6 +575,10 @@ body {
   <button class="tb-btn" id="btn-generate" style="background:linear-gradient(180deg,#507820,#385810);color:#f0e8c0;border-color:#2a3a10;">&#x2726; Generate</button>
   <div class="tb-sep"></div>
   <button class="tb-btn" id="btn-export" style="background:linear-gradient(180deg,#a06020,#7a4010);color:#f5e0a0;border-color:#3a1a05;">&#x1F5BC; Export PNG</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" id="btn-save-map" style="background:linear-gradient(180deg,#a06020,#7a4010);color:#f5e0a0;border-color:#3a1a05;">&#x1F4BE; Save Map</button>
+  <button class="tb-btn" id="btn-load-map" style="background:linear-gradient(180deg,#a06020,#7a4010);color:#f5e0a0;border-color:#3a1a05;">&#x1F4C2; Load Map</button>
+  <input type="file" id="import-file-input" accept=".mmap,.json" style="display:none">
 </div>
 
 <!-- MAIN -->
@@ -818,6 +822,23 @@ body {
   <div class="ctx-item" id="ctx-edit">&#x270E; Edit</div>
   <div class="ctx-item" id="ctx-bring-front">&#x2B06; Bring to Front</div>
   <div class="ctx-item" id="ctx-send-back">&#x2B07; Send to Back</div>
+</div>
+
+<!-- IMPORT DIALOG -->
+<div id="import-dialog" style="position:fixed;display:none;top:0;left:0;right:0;bottom:0;
+     background:rgba(20,10,5,0.6);z-index:3000;align-items:center;justify-content:center;">
+  <div style="background:#eddfa8;border:3px solid #7a5030;border-radius:8px;padding:24px 28px;
+              max-width:380px;font-family:Palatino,serif;color:#3a1a05;">
+    <div style="font-size:15px;font-weight:bold;margin-bottom:12px;">&#x1F4C2; Load Map</div>
+    <div id="import-summary" style="font-size:12px;line-height:1.7;margin-bottom:16px;white-space:pre-line;"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button id="import-cancel" class="tb-btn">Cancel</button>
+      <button id="import-confirm" class="tb-btn"
+        style="background:linear-gradient(180deg,#507820,#385810);color:#f0e8c0;border-color:#2a3a10;">
+        Load Map
+      </button>
+    </div>
+  </div>
 </div>
 
 <!-- TOOLTIP -->
@@ -2910,6 +2931,7 @@ function fbm(x, y, seed, octaves) {
 // they re-derive elevation/moisture at any point via probeH/probeM below
 // rather than re-walking the rendered canvas pixels.
 let genParams = null;
+let pendingImport = null;
 
 // Re-sample the height fBm at an arbitrary canvas point using the SAME seed
 // and octave count that generated the terrain, so content placement always
@@ -4694,6 +4716,34 @@ function syncSeedFromParams() {
 // pipeline on top of it. The heavy per-pixel work is wrapped in a setTimeout(0)
 // so the "Generating…" status/overlay actually paints before the main thread
 // blocks on it.
+
+function paintTerrainFromParams(p) {
+  const W = state.canvasW, H = state.canvasH;
+  const { seed1, seed2, scale, seaLevel, mtThresh, snowThresh, coldHot, moistBias } = p;
+  const bias = (moistBias !== undefined) ? moistBias : 0;
+  const imgData = terrainCtx.createImageData(W, H);
+  const d = imgData.data;
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      const hv = fbm(px*scale, py*scale, seed1, 6);
+      const mv = Math.max(0, Math.min(1, fbm(px*scale*0.65, py*scale*0.65, seed2, 5) + bias));
+      const tv = valueNoise(px*0.09, py*0.09, seed1 + 888);
+      const col = classifyTerrainColor(hv, mv, seaLevel, mtThresh, snowThresh, coldHot);
+      const noise = (tv - 0.5) * 24;
+      const idx = (py*W + px) * 4;
+      d[idx]   = Math.max(0, Math.min(255, col[0] + noise));
+      d[idx+1] = Math.max(0, Math.min(255, col[1] + noise * 0.85));
+      d[idx+2] = Math.max(0, Math.min(255, col[2] + noise * 0.65));
+      d[idx+3] = 218;
+    }
+  }
+  drawParchmentBackground(terrainCtx, W, H);
+  const tmpC = document.createElement('canvas');
+  tmpC.width = W; tmpC.height = H;
+  tmpC.getContext('2d').putImageData(imgData, 0, 0);
+  terrainCtx.drawImage(tmpC, 0, 0);
+}
+
 function generateMap() {
   // Guard against overlapping runs — e.g. a double-click or a click landing while
   // the deferred work below is still running would otherwise generate content
@@ -4756,35 +4806,8 @@ function generateMap() {
     const snowFactor = 0.02 + coldHot * 1.08;  // 0.02 (polar) → 1.10 (tropical)
     const snowThresh = mtThresh + landRange * snowFactor;
 
-    const imgData = terrainCtx.createImageData(W, H);
-    const d = imgData.data;
-
-    for(let py = 0; py < H; py++) {
-      for(let px = 0; px < W; px++) {
-        const hv = fbm(px*scale,       py*scale,       seed1, 6);
-        const mv = Math.max(0, Math.min(1,
-                   fbm(px*scale*0.65,  py*scale*0.65,  seed2, 5) + moistBias));
-        // fine pixel-level texture variation
-        const tv = valueNoise(px*0.09, py*0.09, seed1 + 888);
-
-        const col = classifyTerrainColor(hv, mv, seaLevel, mtThresh, snowThresh, coldHot);
-        const noise = (tv - 0.5) * 24;
-        const idx = (py*W + px) * 4;
-        d[idx]   = Math.max(0, Math.min(255, col[0] + noise));
-        d[idx+1] = Math.max(0, Math.min(255, col[1] + noise * 0.85));
-        d[idx+2] = Math.max(0, Math.min(255, col[2] + noise * 0.65));
-        d[idx+3] = 218; // slight transparency so parchment shows through
-      }
-    }
-
-    // Redraw parchment base, then overlay generated terrain
-    drawParchmentBackground(terrainCtx, W, H);
-    const tmpC = document.createElement('canvas');
-    tmpC.width = W; tmpC.height = H;
-    tmpC.getContext('2d').putImageData(imgData, 0, 0);
-    terrainCtx.drawImage(tmpC, 0, 0);
-
-    genParams = { seed1, seed2, scale, seaLevel, mtThresh, snowThresh, coldHot };
+    genParams = { seed1, seed2, scale, seaLevel, mtThresh, snowThresh, coldHot, moistBias };
+    paintTerrainFromParams(genParams);
     document.getElementById('status-tool').textContent = 'Tool: ' +
       document.querySelector('.tool-btn.active').textContent.trim();
     generateContent();
@@ -4839,6 +4862,116 @@ document.getElementById('gen-stamp-density').addEventListener('input', function(
 document.getElementById('gen-num-countries').addEventListener('input', function() {
   document.getElementById('gen-num-countries-val').textContent = this.value;
   syncSeedFromParams();
+});
+
+// ═══════════════════════════════════════════════════════════
+//  EXPORT / IMPORT (.mmap format)
+// ═══════════════════════════════════════════════════════════
+
+function exportMap() {
+  const data = {
+    momo: 1,
+    canvas: { w: state.canvasW, h: state.canvasH },
+    genParams: genParams,
+    seed: document.getElementById('gen-seed').value,
+    roads:  state.roads,
+    stamps: state.stamps,
+    zones:  state.zones,
+    labels: state.labels,
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'fantasy-map.mmap'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function showImportDialog(data) {
+  const hasTerrain = !!data.genParams;
+  const summary = [
+    `Canvas: ${data.canvas.w} × ${data.canvas.h}`,
+    `Stamps: ${(data.stamps||[]).length}  ·  Zones: ${(data.zones||[]).length}  ·  Roads: ${(data.roads||[]).length}  ·  Labels: ${(data.labels||[]).length}`,
+    `Seed: ${data.seed || '(none)'}`,
+    hasTerrain ? 'Terrain: will be restored from saved parameters' : 'Terrain: none (blank canvas)',
+  ].join('\n');
+  document.getElementById('import-summary').textContent = summary;
+  const dlg = document.getElementById('import-dialog');
+  dlg.style.display = 'flex';
+}
+
+function hideImportDialog() {
+  document.getElementById('import-dialog').style.display = 'none';
+  pendingImport = null;
+}
+
+function handleImportFileSelected(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const parsed = JSON.parse(ev.target.result);
+      if (parsed.momo !== 1) throw new Error('Unknown format version');
+      if (!parsed.canvas || !parsed.canvas.w || !parsed.canvas.h) throw new Error('Missing canvas dimensions');
+      pendingImport = parsed;
+      showImportDialog(pendingImport);
+    } catch(err) { alert('Invalid map file: ' + err.message); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+function applyImport(data) {
+  hideImportDialog();
+
+  // Resize canvas if dimensions differ
+  if (data.canvas.w !== state.canvasW || data.canvas.h !== state.canvasH) {
+    state.canvasW = data.canvas.w;
+    state.canvasH = data.canvas.h;
+    const wi = document.getElementById('inp-width');
+    const hi = document.getElementById('inp-height');
+    if (wi) wi.value = state.canvasW;
+    if (hi) hi.value = state.canvasH;
+    initCanvases();
+  }
+
+  // Restore terrain
+  if (data.genParams) {
+    genParams = data.genParams;
+    paintTerrainFromParams(genParams);
+  } else {
+    drawParchmentBackground(terrainCtx, state.canvasW, state.canvasH);
+    genParams = null;
+  }
+
+  // Restore seed field
+  if (data.seed) {
+    const sf = document.getElementById('gen-seed');
+    if (sf) sf.value = data.seed;
+  }
+
+  // Restore layers
+  state.roads  = data.roads  || [];
+  state.stamps = data.stamps || [];
+  state.zones  = data.zones  || [];
+  state.labels = data.labels || [];
+  state.selected = null;
+
+  roadsCtx.clearRect(0, 0, state.canvasW, state.canvasH);
+  updateZoneFilters();
+  updateSelectionPanel();
+  redrawRoadsCanvas();
+  render();
+}
+
+document.getElementById('btn-save-map').addEventListener('click', exportMap);
+document.getElementById('btn-load-map').addEventListener('click', () => {
+  document.getElementById('import-file-input').click();
+});
+document.getElementById('import-file-input').addEventListener('change', handleImportFileSelected);
+document.getElementById('import-cancel').addEventListener('click', hideImportDialog);
+document.getElementById('import-confirm').addEventListener('click', () => {
+  if (pendingImport) applyImport(pendingImport);
 });
 
 // ═══════════════════════════════════════════════════════════
