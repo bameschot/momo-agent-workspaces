@@ -1981,12 +1981,6 @@ function paintBiomeAt(cx, cy) {
   if      (state.biomeType === 'jungle') paintTemp = 0.85;
   else if (state.biomeType === 'tundra') paintTemp = 0.15;
 
-  // Auto-beach only fires when the brush center is on land — prevents re-applying beach
-  // when painting over previously-beached pixels or when painting from the sea.
-  const isAutoBeachBrush = state.biomeType !== 'ocean' && state.biomeType !== 'sand' && state.biomeType !== 'beach';
-  const brushCenterOnLand = isAutoBeachBrush && probeH(cx, cy) >= gp.seaLevel;
-  const beachRim = Math.max(6, size * 0.20);
-
   for (let yy = 0; yy < bh; yy++) {
     for (let xx = 0; xx < bw; xx++) {
       const px = x0 + xx, py = y0 + yy;
@@ -2008,25 +2002,12 @@ function paintBiomeAt(cx, cy) {
       if (rim < 2) alpha = rim / 2;
       if (alpha <= 0.01) continue;
 
-      // Beach edge: fires only for water pixels near the brush rim when the brush
-      // center is on land. Uses the 'beach' sampleBiomeHV path so it matches the
-      // natural shoreline appearance, not flat desert-sand color.
-      let isBeach = false;
-      if (brushCenterOnLand && probeH(px, py) < gp.seaLevel && rim < beachRim) {
-        isBeach = true;
-        alpha = 1.0; // beach strip is always fully opaque — never faded by rim softening
-      }
-
       // Same fbm noise family as Generate Map, offset by a per-stroke seed
       const n1 = fbm(px * gp.scale * 1.4,  py * gp.scale * 1.4,  seed,        4);
       const n2 = fbm(px * gp.scale * 0.85, py * gp.scale * 0.85, seed + 7777, 4);
       const { hv, mv } = sampleBiomeHV(state.biomeType, n1, n2, gp);
       const tv  = valueNoise(px * 0.09, py * 0.09, seed + 888);
-      // Beach strip uses the sand (shoreline) palette entry — same color as the
-      // natural coastal transition, distinct from the desert-sand biome.
-      let col = isBeach
-        ? TERRAIN_PALETTE.sand
-        : classifyTerrainColor(hv, mv, gp.seaLevel, gp.mtThresh, gp.snowThresh, paintTemp);
+      let col = classifyTerrainColor(hv, mv, gp.seaLevel, gp.mtThresh, gp.snowThresh, paintTemp);
 
       const noise = (tv - 0.5) * 24;
       const tr = Math.max(0, Math.min(255, col[0] + noise));
