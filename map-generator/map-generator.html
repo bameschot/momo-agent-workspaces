@@ -2007,8 +2007,7 @@ function paintBiomeAt(cx, cy) {
       let isBeach = false;
       if (isLandBiome) {
         const ah = probeH(px, py);
-        if (ah < gp.seaLevel) continue; // land brush skips open water
-        if (ah < gp.seaLevel + 0.015) isBeach = true; // beach strip at the waterline
+        if (ah >= gp.seaLevel && ah < gp.seaLevel + 0.015) isBeach = true;
       }
 
       // Same fbm noise family as Generate Map, offset by a per-stroke seed
