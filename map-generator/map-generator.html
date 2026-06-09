@@ -4240,15 +4240,14 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
 // at an inland basin are discarded.
 function placeRivers(seed1, seed2, seaLevel, mtThresh) {
   const W = state.canvasW, H = state.canvasH;
-  const step = 18; // finer step → more control points → smoother curves
+  const step = 15;
   const pickRiverName = makeNamePicker(RIVER_NAMES);
 
-  const numRivers = 2 + (valueNoise(1, 1, seed1 + 11111) * 2 | 0); // 2–3 large rivers
-  // Start rivers in upper-hilly / mountainous terrain (just below the mountain
-  // threshold) so they flow through lower land and have room to meander before
-  // reaching the sea. 500 random candidates virtually guarantees finding a valid
-  // start even on maps with sparse high terrain.
+  const numRivers = 3 + (valueNoise(1, 1, seed1 + 11111) * 3 | 0); // 3–5 rivers (was 2–3)
+  // Keep the original source threshold (mtThresh * 0.94) — rivers below this have
+  // insufficient gradient to reliably overcome the noise term (0.06) and produce loops.
   const sourceFloor = mtThresh * 0.94;
+
   for (let r = 0; r < numRivers; r++) {
     let sx = null, sy = null;
     for (let a = 0; a < 500; a++) {
@@ -4258,8 +4257,6 @@ function placeRivers(seed1, seed2, seaLevel, mtThresh) {
     }
     if (sx === null) continue;
 
-    // Seed the initial heading from the steepest-descent direction at the source
-    // so the river flows downhill from the very first step.
     let headingAng = 0;
     let initBestH = probeH(sx, sy);
     for (let d = 0; d < 16; d++) {
@@ -4273,8 +4270,6 @@ function placeRivers(seed1, seed2, seaLevel, mtThresh) {
     let reachedSea = false;
 
     for (let s = 0; s < 600; s++) {
-      // Sample 14 candidates within a ±120° forward cone — the river can curve
-      // left or right freely but cannot reverse, forcing gradual bends.
       let bestScore = Infinity, bx = cx, by = cy;
       for (let d = 0; d < 14; d++) {
         const relAng = ((d / 13) - 0.5) * (Math.PI * 4 / 3); // ±120° cone
@@ -4283,11 +4278,10 @@ function placeRivers(seed1, seed2, seaLevel, mtThresh) {
         const nx = cx + Math.cos(ang) * step;
         const ny = cy + Math.sin(ang) * step;
         if (nx < 5 || nx >= W - 5 || ny < 5 || ny >= H - 5) continue;
-        // Larger noise amplitude forces sinuous paths on gentle slopes
         const nh = probeH(nx, ny) + valueNoise(nx * 0.018, ny * 0.018, seed2 + r * 77) * 0.06;
         if (nh < bestScore) { bestScore = nh; bx = nx; by = ny; }
       }
-      if (bx === cx && by === cy) break; // stuck — inland basin, discard later
+      if (bx === cx && by === cy) break;
 
       const bestH = probeH(bx, by);
       if (bestH < seaLevel) {
@@ -4296,21 +4290,43 @@ function placeRivers(seed1, seed2, seaLevel, mtThresh) {
         reachedSea = true;
         break;
       }
-
-      // Update heading to the direction we actually moved (momentum)
       headingAng = Math.atan2(by - cy, bx - cx);
       cx = bx; cy = by; curH = bestH;
       const lp = pts[pts.length - 1];
       if (Math.hypot(cx - lp.x, cy - lp.y) > 8) pts.push({x:cx, y:cy});
     }
 
-    // Discard rivers that never reached the sea (stalled at inland basin)
     if (!reachedSea || pts.length < 8) continue;
 
-    state.roads.push({type:'river', width: 3 + valueNoise(r, 1, seed2 + 222) * 2.5, points:pts});
+    // Discard rivers that looped during pathfinding (noise overcame gradient).
+    // Natural rivers have sinuosity < 4; anything > 5 indicates a spiral path.
+    let rawLen = 0;
+    for (let j = 1; j < pts.length; j++) rawLen += Math.hypot(pts[j].x - pts[j-1].x, pts[j].y - pts[j-1].y);
+    const rawDisp = Math.hypot(pts[pts.length-1].x - pts[0].x, pts[pts.length-1].y - pts[0].y);
+    if (rawLen / Math.max(rawDisp, 1) > 5) continue;
+
+    // Post-process: sinusoidal lateral displacement adds dramatic S-bends.
+    // Amplitude is capped at rawDisp/4 to prevent self-crossing on curved base paths.
+    const mFreq  = 1.5 + valueNoise(r, 4, seed1 + 3333) * 1.5; // 1.5–3 cycles
+    const mPhase = valueNoise(r * 3, 1, seed1 + 9999) * Math.PI * 2;
+    const mAmp   = Math.min(rawDisp / 4, Math.min(80, Math.max(15, pts.length * 1.5)));
+    const meanPts = pts.map((p, i) => {
+      const t = i / (pts.length - 1);
+      const env = Math.sin(t * Math.PI); // zero at source/mouth, peaks in middle
+      const off = Math.sin(t * Math.PI * 2 * mFreq + mPhase) * mAmp * env;
+      const i1 = Math.min(i + 2, pts.length - 1), i0 = Math.max(i - 2, 0);
+      const dx = pts[i1].x - pts[i0].x, dy = pts[i1].y - pts[i0].y;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = p.x + (-dy / len) * off, ny = p.y + (dx / len) * off;
+      if (nx < 5 || nx >= W - 5 || ny < 5 || ny >= H - 5) return p;
+      if (probeH(nx, ny) < seaLevel - 0.01) return p;
+      return { x: nx, y: ny };
+    });
+
+    state.roads.push({type:'river', width: 2.5 + valueNoise(r, 1, seed2 + 222) * 2.5, points:meanPts});
     const name = pickRiverName(r * 7 + (seed1 + seed2));
     if (name) {
-      const mid = pts[Math.floor(pts.length / 2)];
+      const mid = meanPts[Math.floor(meanPts.length / 2)];
       state.labels.push({text:name, x:mid.x, y:mid.y - 8, size:9, color:'#1a3a5a', style:'italic'});
     }
   }
