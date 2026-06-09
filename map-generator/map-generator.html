@@ -419,45 +419,16 @@ body {
 }
 
 /* ── BIOME LEGEND ────────────────────────────────────────── */
-#legend {
-  position: absolute;
-  bottom: 16px;
-  left: 16px;
-  z-index: 20;
-  background: rgba(237,220,160,0.93);
-  border: 2px solid #7a5030;
-  border-radius: 6px;
-  font-family: Palatino, 'Book Antiqua', Georgia, serif;
-  box-shadow: 2px 3px 10px rgba(0,0,0,0.45);
-  min-width: 140px;
-  pointer-events: all;
-}
-#legend summary {
-  list-style: none;
-  padding: 6px 10px;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: bold;
-  color: #3a1a05;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  user-select: none;
-  border-radius: 4px;
-}
 #legend summary::-webkit-details-marker { display: none; }
 #legend summary::marker { display: none; }
-#legend summary:hover { background: rgba(200,168,100,0.4); }
-#legend .legend-arrow { margin-left: auto; font-size: 9px; transition: transform 0.2s; }
+#legend summary:hover { background: rgba(200,168,100,0.3); border-radius: 3px; }
+#legend .legend-arrow { font-size: 9px; transition: transform 0.2s; }
 #legend[open] .legend-arrow { transform: rotate(180deg); }
+#legend[open] summary { margin-bottom: 8px; border-bottom: 1px solid #a07840; padding-bottom: 4px; }
 #legend .legend-body {
-  padding: 4px 10px 9px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  border-top: 1px solid #a07840;
+  gap: 5px;
 }
 #legend .legend-row {
   display: flex;
@@ -826,9 +797,24 @@ body {
       <div class="gen-overlay-label">Generating map…</div>
     </div>
 
-    <!-- BIOME LEGEND -->
-    <details id="legend">
-      <summary>&#x2726; Legend <span class="legend-arrow">&#x25BC;</span></summary>
+  </div>
+
+  <!-- RIGHT SIDEBAR -->
+  <div id="right-sidebar" class="sidebar">
+    <div class="sidebar-close-row"><button id="btn-close-right">&#x2715;</button></div>
+
+    <!-- Layers -->
+    <div class="panel">
+      <div class="panel-title">Layers</div>
+      <div id="layers-list"></div>
+    </div>
+
+    <!-- Biome Legend -->
+    <details class="panel" id="legend">
+      <summary class="panel-title" style="list-style:none;cursor:pointer;display:flex;align-items:center;margin-bottom:0;">
+        <span style="flex:1;">Biome Legend</span>
+        <span class="legend-arrow">&#x25BC;</span>
+      </summary>
       <div class="legend-body">
         <div class="legend-row"><span class="legend-swatch" style="background:rgb(28,62,148)"></span>Deep Water</div>
         <div class="legend-row"><span class="legend-swatch" style="background:rgb(55,115,190)"></span>Ocean</div>
@@ -844,17 +830,6 @@ body {
         <div class="legend-row"><span class="legend-swatch" style="background:rgb(222,234,242)"></span>Snow</div>
       </div>
     </details>
-  </div>
-
-  <!-- RIGHT SIDEBAR -->
-  <div id="right-sidebar" class="sidebar">
-    <div class="sidebar-close-row"><button id="btn-close-right">&#x2715;</button></div>
-
-    <!-- Layers -->
-    <div class="panel">
-      <div class="panel-title">Layers</div>
-      <div id="layers-list"></div>
-    </div>
 
     <!-- Zone Filters -->
     <div class="panel">
