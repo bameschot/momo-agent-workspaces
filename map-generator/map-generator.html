@@ -1965,13 +1965,14 @@ function sampleBiomeHV(presetId, n1, n2, gp) {
 // Biomes whose brush respects the shoreline and auto-places beach at the waterline
 const _LAND_BIOMES  = new Set(['grass','forest','jungle','swamp','desert','tundra','mountain','snow']);
 const _BEACH_BIOMES = new Set(['grass','forest','jungle','swamp','desert','tundra']);
-const _BEACH_WIDTH  = 0.05; // height units above seaLevel for the sand→biome blend band
+const _BEACH_WIDTH  = 0.015; // hard sand strip width — matches natural terrain beach zone
 
 function paintBiomeAt(cx, cy) {
   if (!genParams) return;
   const gp   = genParams;
   const size = state.biomeSize;
-  const pad  = size * 1.45; // room for the noise-perturbed border to extend past `size`
+  // Domain warp displaces coords by up to ±1.5×size — pad must cover that plus edge noise
+  const pad  = size * 2.8;
   const x0 = Math.max(0, Math.floor(cx - pad));
   const y0 = Math.max(0, Math.floor(cy - pad));
   const x1 = Math.min(state.canvasW, Math.ceil(cx + pad));
@@ -1996,27 +1997,31 @@ function paintBiomeAt(cx, cy) {
   for (let yy = 0; yy < bh; yy++) {
     for (let xx = 0; xx < bw; xx++) {
       const px = x0 + xx, py = y0 + yy;
-      const dx = px - cx, dy = py - cy;
-      const dist = Math.hypot(dx, dy);
 
-      // Two-frequency edge noise: low freq creates large organic lobes, high freq adds
-      // medium-scale bumpiness — total deviation ≈ ±67% of radius, clearly non-circular.
-      const loFreq = (valueNoise(px * 0.005, py * 0.005, seed + 4242) - 0.5);
-      const hiFreq = (valueNoise(px * 0.022, py * 0.022, seed + 8484) - 0.5);
-      const edgeDist = size + loFreq * size * 0.55 + hiFreq * size * 0.20;
-      if (dist > edgeDist) continue;
-      const rim = edgeDist - dist;
+      // Domain warp: displace the pixel coordinate by large-amplitude noise before
+      // computing distance to centre. This creates highly erratic, tentacle-like shapes
+      // rather than circles or smooth blobs. Offset coordinates use different phases so
+      // x and y warp independently, avoiding axis-aligned artefacts.
+      const wx = (valueNoise(px * 0.006,       py * 0.006,       seed + 1111) - 0.5) * size * 1.5;
+      const wy = (valueNoise(px * 0.006 + 2.8, py * 0.006 + 1.9, seed + 2222) - 0.5) * size * 1.5;
+      const warpDist = Math.hypot(px + wx - cx, py + wy - cy);
+
+      // Fine edge perturbation on top of the warp for jagged detail at the border
+      const edgeN  = (valueNoise(px * 0.018, py * 0.018, seed + 4242) - 0.5);
+      const edgeDist = size + edgeN * size * 0.30;
+      if (warpDist > edgeDist) continue;
+      const rim = edgeDist - warpDist;
       let alpha = state.biomeStrength;
       if (rim < 2) alpha *= rim / 2;
       if (alpha <= 0.01) continue;
 
-      // Beach edge: skip land-biome paint over open water; auto-blend to sand at shoreline
-      let beachT = -1; // -1 = no beach override; 0–1 = blend factor (0=sand, 1=biome)
+      // Beach edge: land brushes skip open water; both land and ocean brushes paint a
+      // hard sand strip at the shoreline with no gradient bleed into the biome color.
+      let isBeach = false;
       if (doBeach) {
         const ah = probeH(px, py);
-        if (isLand && ah < gp.seaLevel) continue; // land brush: don't paint over open water
-        if (ah >= gp.seaLevel && ah < gp.seaLevel + _BEACH_WIDTH)
-          beachT = (ah - gp.seaLevel) / _BEACH_WIDTH;
+        if (isLand && ah < gp.seaLevel) continue; // skip open water
+        if (ah >= gp.seaLevel && ah < gp.seaLevel + _BEACH_WIDTH) isBeach = true;
       }
 
       // Same fbm noise family as Generate Map, offset by a per-stroke seed
@@ -2024,17 +2029,10 @@ function paintBiomeAt(cx, cy) {
       const n2 = fbm(px * gp.scale * 0.85, py * gp.scale * 0.85, seed + 7777, 4);
       const { hv, mv } = sampleBiomeHV(state.biomeType, n1, n2, gp);
       const tv  = valueNoise(px * 0.09, py * 0.09, seed + 888);
-      let col = classifyTerrainColor(hv, mv, gp.seaLevel, gp.mtThresh, gp.snowThresh, paintTemp);
-
-      if (beachT >= 0) {
-        // Shoreline transition: blend from sand (at waterline) toward biome color (inland)
-        const sand = TERRAIN_PALETTE.sand;
-        col = [
-          sand[0] * (1 - beachT) + col[0] * beachT,
-          sand[1] * (1 - beachT) + col[1] * beachT,
-          sand[2] * (1 - beachT) + col[2] * beachT,
-        ];
-      }
+      // Hard beach strip: pure sand color, no gradient into the biome
+      let col = isBeach
+        ? TERRAIN_PALETTE.sand
+        : classifyTerrainColor(hv, mv, gp.seaLevel, gp.mtThresh, gp.snowThresh, paintTemp);
 
       const noise = (tv - 0.5) * 24;
       const tr = Math.max(0, Math.min(255, col[0] + noise));
