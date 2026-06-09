@@ -741,7 +741,7 @@ body {
       </div>
       <div class="gen-row">
         <div class="gen-label"><span>Settlement Density</span><span id="gen-density-val">40</span></div>
-        <input type="range" id="gen-stamp-density" min="1" max="100" value="40">
+        <input type="range" id="gen-stamp-density" min="1" max="250" value="40">
         <div class="gen-desc"><span>Sparse</span><span>Dense</span></div>
       </div>
       <div class="gen-row">
@@ -3574,12 +3574,13 @@ function placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityOut) {
   const W = state.canvasW, H = state.canvasH;
   const MAX_SETTLEMENTS = 250;
   const densityVal = parseInt((document.getElementById('gen-stamp-density') || {value:'40'}).value) || 40;
-  // Below 40 the curve matches the original 1-40 range exactly; beyond 40 it keeps
-  // easing the spacing down further so the new higher settings actually generate
-  // denser maps rather than plateauing at the old maximum.
+  // Three-segment piecewise curve: [1,40] sparse→default, [41,100] default→dense,
+  // [101,250] dense→very dense (floors at 0.06 at max slider).
   const densityFactor = densityVal <= 40
     ? Math.max(0.28, 1.43 - densityVal * 0.029)
-    : Math.max(0.14, 0.27 - (densityVal - 40) * 0.0022);
+    : densityVal <= 100
+      ? Math.max(0.14, 0.27 - (densityVal - 40) * 0.0022)
+      : Math.max(0.06, 0.14 - (densityVal - 100) * 0.000533);
   const spacing = Math.min(W, H) * 0.095 * densityFactor;
   const cols = Math.ceil(W / spacing), rows = Math.ceil(H / spacing);
   // Keep stamps (and their labels) out of the outer margin so edge labels never
@@ -4322,7 +4323,7 @@ function placeWaterLabels(seed1, seed2, seaLevel) {
 // 7.5 × 10^20 — far past Number.MAX_SAFE_INTEGER, so the composite is carried as
 // a BigInt throughout and displayed/parsed as hexadecimal (compact and exact).
 const SEED_RNG_RADIX = 6553600000n;
-const SEED_PARAM_SPACE = 101n * 101n * 101n * 101n * 100n * 11n;
+const SEED_PARAM_SPACE = 101n * 101n * 101n * 101n * 250n * 11n;
 const SEED_MAX_COMPOSITE = SEED_RNG_RADIX * SEED_PARAM_SPACE - 1n;
 const SEED_MAX_HEX_LEN = SEED_MAX_COMPOSITE.toString(16).length;
 
@@ -4332,7 +4333,7 @@ function encodeSeed(rng, landSea, wetDry, mountains, temp, density, countries) {
   c = c * 101n + BigInt(wetDry);
   c = c * 101n + BigInt(mountains);
   c = c * 101n + BigInt(temp);
-  c = c * 100n + BigInt(density - 1);
+  c = c * 250n + BigInt(density - 1);
   c = c * 11n  + BigInt(countries - 2);
   return c;
 }
@@ -4340,7 +4341,7 @@ function encodeSeed(rng, landSea, wetDry, mountains, temp, density, countries) {
 function decodeSeed(composite) {
   let v = BigInt(composite);
   const countries = Number(v % 11n) + 2;   v /= 11n;
-  const density   = Number(v % 100n) + 1;  v /= 100n;
+  const density   = Number(v % 250n) + 1;  v /= 250n;
   const temp      = Number(v % 101n);      v /= 101n;
   const mountains = Number(v % 101n);      v /= 101n;
   const wetDry    = Number(v % 101n);      v /= 101n;
