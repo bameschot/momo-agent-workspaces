@@ -1361,8 +1361,7 @@ const BIOME_PRESETS = [
 const ROAD_TYPES = [
   { id:'dirt',    label:'Dirt Path',       color:'#8b6030', dash:[4,4],  width:2 },
   { id:'road',    label:'Road',            color:'#6a4820', dash:[],     width:3 },
-  { id:'highway', label:'Highway',         color:'#4a3010', dash:[],     width:5 },
-  { id:'river',   label:'River',           color:'#2060c0', dash:[],     width:4 }
+  { id:'highway', label:'Highway',         color:'#4a3010', dash:[],     width:5 }
 ];
 
 // ── ZONE TYPES ───────────────────────────────────────────────────────────────
@@ -1724,17 +1723,9 @@ function drawRoadPath(ctx, road, asOffscreen) {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  if (rt.id === 'river') {
-    ctx.strokeStyle = '#2060c0';
-    ctx.lineWidth = road.width || 4;
-    ctx.globalAlpha = 0.75;
-    ctx.shadowColor = 'rgba(100,160,255,0.4)';
-    ctx.shadowBlur = 4;
-  } else {
-    ctx.strokeStyle = rt.color;
-    ctx.lineWidth = road.width || rt.width;
-    if (rt.id === 'dirt') ctx.setLineDash([4, 4]);
-  }
+  ctx.strokeStyle = rt.color;
+  ctx.lineWidth = road.width || rt.width;
+  if (rt.id === 'dirt') ctx.setLineDash([4, 4]);
 
   strokePath();
 
@@ -3126,56 +3117,9 @@ const PEAK_NAMES = [
   'Ulr Ridge','The Ulr Crag','The Ulr Peak','Ulr Heights','The High Ulr Summit',
   'Ulr Pinnacle','The Crag Maw','Mount Crag Crest','Crag Spire','The Crag Reach'
 ];
-const RIVER_NAMES = [
-  'The Silverrun','Greywater','Amberflow','The Mistwash','Stonebrook River',
-  'The Ashreed','Coldcurrent','The Whisperflow','Duskwater River','The Glassrun',
-  'Foxmere Run','The Brightcourse','Thornwash','The Driftwater','Mournbrook River',
-  'Ash Wash River','The Ash Glide','The Ash Mere','Ash Reed River','The Ash Tide',
-  'The Ash Bourne','Ash Channel River','The Ash Ford','The Ash Rush','Ash Spring River',
-  'The Ash Brook','The Ash Race','Ash Stream River','The Ash Rill','The Ash Current',
-  'Ash Run River','The Ash Course','The Ash Flow','Ash Water River','The Ash Wend',
-  'The Echo Wash','Echo Glide River','The Echo Mere','The Echo Reed','Echo Tide River',
-  'The Echo Bourne','The Echo Channel','Echo Ford River','The Echo Rush','The Echo Spring',
-  'Echo Brook River','The Echo Race','The Echo Stream','Echo Rill River','The Echo Current',
-  'The Echo Run','Echo Course River','The Echo Flow','The Echo Water','Echo Wend River',
-  'The Salt Wash','The Salt Glide','Salt Mere River','The Salt Reed','The Salt Tide',
-  'Salt Bourne River','The Salt Channel','The Salt Ford','Salt Rush River','The Salt Spring',
-  'The Salt Brook','Salt Race River','The Salt Stream','The Salt Rill','Salt Current River',
-  'The Salt Run','The Salt Course','Salt Flow River','The Salt Water','The Salt Wend',
-  'Storm Wash River','The Storm Glide','The Storm Mere','Storm Reed River','The Storm Tide',
-  'The Storm Bourne','Storm Channel River','The Storm Ford','The Storm Rush','Storm Spring River',
-  'The Storm Brook','The Storm Race','Storm Stream River','The Storm Rill','The Storm Current',
-  'Storm Run River','The Storm Course','The Storm Flow','Storm Water River','The Storm Wend',
-  'The Stone Wash','Stone Glide River','The Stone Mere','The Stone Reed','Stone Tide River',
-  'The Stone Bourne','The Stone Channel','Stone Ford River','The Stone Rush','The Stone Spring',
-  'Stone Brook River','The Stone Race','The Stone Stream','Stone Rill River','The Stone Current',
-  'The Stone Run','Stone Course River','The Stone Flow','The Stone Water','Stone Wend River',
-  'The Amber Wash','The Amber Glide','Amber Mere River','The Amber Reed','The Amber Tide',
-  'Amber Bourne River','The Amber Channel','The Amber Ford','Amber Rush River','The Amber Spring',
-  'The Amber Brook','Amber Race River','The Amber Stream','The Amber Rill','Amber Current River',
-  'The Amber Run','The Amber Course','Amber Flow River','The Amber Water','The Amber Wend',
-  'Star Wash River','The Star Glide','The Star Mere','Star Reed River','The Star Tide',
-  'The Star Bourne','Star Channel River','The Star Ford','The Star Rush','Star Spring River',
-  'The Star Brook','The Star Race','Star Stream River','The Star Rill','The Star Current',
-  'Star Run River','The Star Course','The Star Flow','Star Water River','The Star Wend',
-  'The Clear Wash','Clear Glide River','The Clear Mere','The Clear Reed','Clear Tide River',
-  'The Clear Bourne','The Clear Channel','Clear Ford River','The Clear Rush','The Clear Spring',
-  'Clear Brook River','The Clear Race','The Clear Stream','Clear Rill River','The Clear Current',
-  'The Clear Run','Clear Course River','The Clear Flow','The Clear Water','Clear Wend River',
-  'The Mourn Wash','The Mourn Glide','Mourn Mere River','The Mourn Reed','The Mourn Tide',
-  'Mourn Bourne River','The Mourn Channel','The Mourn Ford','Mourn Rush River','The Mourn Spring',
-  'The Mourn Brook','Mourn Race River','The Mourn Stream','The Mourn Rill','Mourn Current River',
-  'The Mourn Run','The Mourn Course','Mourn Flow River','The Mourn Water','The Mourn Wend',
-  'Frost Wash River','The Frost Glide','The Frost Mere','Frost Reed River','The Frost Tide',
-  'The Frost Bourne','Frost Channel River','The Frost Ford','The Frost Rush','Frost Spring River',
-  'The Frost Brook','The Frost Race','Frost Stream River','The Frost Rill','The Frost Current',
-  'Frost Run River','The Frost Course','The Frost Flow','Frost Water River','The Frost Wend'
-];
-
 // Names for water-body labels placed by placeWaterLabels — sea/ocean bodies
 // (large, connected to the map's edge) draw from SEA_NAMES; small enclosed
-// inland bodies draw from LAKE_NAMES. Both flat arrays, consumed the same
-// exhaustion-safe way (via makeNamePicker) as RIVER_NAMES above.
+// inland bodies draw from LAKE_NAMES.
 const SEA_NAMES = [
   'Sea of Whisper','The Crystal Sea','The Azuremark','The Wind-swept Sea','The Whispering Deep',
   'The Moonlit Sea','Sea of Ember','The Iron Expanse','The Wraith Sea','The Misty Sea',
@@ -3593,7 +3537,7 @@ function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot)
   }
 }
 
-// Runs the content-placement pipeline (stamps → zones → town roads → rivers →
+// Runs the content-placement pipeline (stamps → zones → town roads →
 // water-body labels → biome labels) against the current `genParams`. Every
 // layer is always generated — order matters: town roads need stamps'
 // `cityPositions` to connect, and the label-only stages (water bodies, biomes)
@@ -3607,7 +3551,6 @@ function generateContent() {
   placeStamps(seed1, seed2, seaLevel, mtThresh, snowThresh, cityPositions);
   placeZones(seed1, seed2, seaLevel);
   if (cityPositions.length >= 2) placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh);
-  placeRivers(seed1, seed2, seaLevel, mtThresh);
   placeWaterLabels(seed1, seed2, seaLevel);
   placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot);
   resolveLabelOverlaps();
@@ -4238,100 +4181,6 @@ function placeTownRoads(seed1, seed2, cityPositions, seaLevel, mtThresh) {
 // (0.06 vs the old 0.015) further breaks the tendency to beeline straight down
 // a slope. Only rivers that actually reach sea level are kept; those that stall
 // at an inland basin are discarded.
-function placeRivers(seed1, seed2, seaLevel, mtThresh) {
-  const W = state.canvasW, H = state.canvasH;
-  const step = 15;
-  const pickRiverName = makeNamePicker(RIVER_NAMES);
-
-  const numRivers = 3 + (valueNoise(1, 1, seed1 + 11111) * 3 | 0); // 3–5 rivers (was 2–3)
-  // Keep the original source threshold (mtThresh * 0.94) — rivers below this have
-  // insufficient gradient to reliably overcome the noise term (0.06) and produce loops.
-  const sourceFloor = mtThresh * 0.94;
-
-  for (let r = 0; r < numRivers; r++) {
-    let sx = null, sy = null;
-    for (let a = 0; a < 500; a++) {
-      const tx = valueNoise(r * 17 + a, 1, seed1 + r * 500) * W;
-      const ty = valueNoise(r * 17 + a, 2, seed1 + r * 500) * H;
-      if (probeH(tx, ty) > sourceFloor) { sx = tx; sy = ty; break; }
-    }
-    if (sx === null) continue;
-
-    let headingAng = 0;
-    let initBestH = probeH(sx, sy);
-    for (let d = 0; d < 16; d++) {
-      const a = (d / 16) * Math.PI * 2;
-      const nh = probeH(sx + Math.cos(a) * step, sy + Math.sin(a) * step);
-      if (nh < initBestH) { initBestH = nh; headingAng = a; }
-    }
-
-    const pts = [{x:sx, y:sy}];
-    let cx = sx, cy = sy, curH = probeH(cx, cy);
-    let reachedSea = false;
-
-    for (let s = 0; s < 600; s++) {
-      let bestScore = Infinity, bx = cx, by = cy;
-      for (let d = 0; d < 14; d++) {
-        const relAng = ((d / 13) - 0.5) * (Math.PI * 4 / 3); // ±120° cone
-        const jitter = (valueNoise(s * 0.09 + d * 0.7, r * 4 + 0.3, seed1 + r * 300) - 0.5) * 0.9;
-        const ang = headingAng + relAng + jitter;
-        const nx = cx + Math.cos(ang) * step;
-        const ny = cy + Math.sin(ang) * step;
-        if (nx < 5 || nx >= W - 5 || ny < 5 || ny >= H - 5) continue;
-        const nh = probeH(nx, ny) + valueNoise(nx * 0.018, ny * 0.018, seed2 + r * 77) * 0.06;
-        if (nh < bestScore) { bestScore = nh; bx = nx; by = ny; }
-      }
-      if (bx === cx && by === cy) break;
-
-      const bestH = probeH(bx, by);
-      if (bestH < seaLevel) {
-        const t = (curH - seaLevel) / ((curH - bestH) || 1e-6);
-        pts.push({x: cx + (bx - cx) * t, y: cy + (by - cy) * t});
-        reachedSea = true;
-        break;
-      }
-      headingAng = Math.atan2(by - cy, bx - cx);
-      cx = bx; cy = by; curH = bestH;
-      const lp = pts[pts.length - 1];
-      if (Math.hypot(cx - lp.x, cy - lp.y) > 8) pts.push({x:cx, y:cy});
-    }
-
-    if (!reachedSea || pts.length < 8) continue;
-
-    // Discard rivers that looped during pathfinding (noise overcame gradient).
-    // Natural rivers have sinuosity < 4; anything > 5 indicates a spiral path.
-    let rawLen = 0;
-    for (let j = 1; j < pts.length; j++) rawLen += Math.hypot(pts[j].x - pts[j-1].x, pts[j].y - pts[j-1].y);
-    const rawDisp = Math.hypot(pts[pts.length-1].x - pts[0].x, pts[pts.length-1].y - pts[0].y);
-    if (rawLen / Math.max(rawDisp, 1) > 5) continue;
-
-    // Post-process: sinusoidal lateral displacement adds dramatic S-bends.
-    // Amplitude is capped at rawDisp/4 to prevent self-crossing on curved base paths.
-    const mFreq  = 1.5 + valueNoise(r, 4, seed1 + 3333) * 1.5; // 1.5–3 cycles
-    const mPhase = valueNoise(r * 3, 1, seed1 + 9999) * Math.PI * 2;
-    const mAmp   = Math.min(rawDisp / 4, Math.min(80, Math.max(15, pts.length * 1.5)));
-    const meanPts = pts.map((p, i) => {
-      const t = i / (pts.length - 1);
-      const env = Math.sin(t * Math.PI); // zero at source/mouth, peaks in middle
-      const off = Math.sin(t * Math.PI * 2 * mFreq + mPhase) * mAmp * env;
-      const i1 = Math.min(i + 2, pts.length - 1), i0 = Math.max(i - 2, 0);
-      const dx = pts[i1].x - pts[i0].x, dy = pts[i1].y - pts[i0].y;
-      const len = Math.hypot(dx, dy) || 1;
-      const nx = p.x + (-dy / len) * off, ny = p.y + (dx / len) * off;
-      if (nx < 5 || nx >= W - 5 || ny < 5 || ny >= H - 5) return p;
-      if (probeH(nx, ny) < seaLevel - 0.01) return p;
-      return { x: nx, y: ny };
-    });
-
-    state.roads.push({type:'river', width: 2.5 + valueNoise(r, 1, seed2 + 222) * 2.5, points:meanPts});
-    const name = pickRiverName(r * 7 + (seed1 + seed2));
-    if (name) {
-      const mid = meanPts[Math.floor(meanPts.length / 2)];
-      state.labels.push({text:name, x:mid.x, y:mid.y - 8, size:9, color:'#1a3a5a', style:'italic'});
-    }
-  }
-}
-
 // ── Water bodies (sea/ocean vs lake) ──────────────────────────────────────────
 // Unlike land biomes, a water tile can't be classified as "sea" or "lake" from
 // a single probeH/probeM sample — that distinction is about CONNECTIVITY and
@@ -4443,9 +4292,7 @@ function findWaterBodies(seaLevel) {
 
 // Names the water bodies findWaterBodies discovers — large/edge-connected seas
 // get a prominent label (sized between a capital and a regular settlement, in
-// a deep ocean-blue), small enclosed lakes get a subtler one closer to a
-// river's. Mirrors placeRivers' label-shape ({text,x,y,size,color,style}) and
-// makeNamePicker usage so a generation never repeats a sea or lake name.
+// a deep ocean-blue), small enclosed lakes get a subtler label.
 function placeWaterLabels(seed1, seed2, seaLevel) {
   const pickSeaName  = makeNamePicker(SEA_NAMES);
   const pickLakeName = makeNamePicker(LAKE_NAMES);
