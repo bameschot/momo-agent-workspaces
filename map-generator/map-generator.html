@@ -3808,7 +3808,7 @@ function makeNamePicker(list, sharedUsed) {
 // common forest region (separation is tracked per biome type, not globally).
 function placeBiomeLabels(seed1, seed2, seaLevel, mtThresh, snowThresh, coldHot) {
   const W = state.canvasW, H = state.canvasH;
-  const cellW = 120, cellH = 100; // sampling-grid cell size — smaller = more candidate label spots
+  const cellW = 240, cellH = 200; // sampling-grid cell size — smaller = more candidate label spots
   const cols = Math.floor(W / cellW), rows = Math.floor(H / cellH);
   const placedByBiome = {};        // biome -> [{x,y}, ...] already-placed label positions, for the per-biome separation check
   const minSep = 220;              // minimum px distance between two labels of the SAME biome
