@@ -202,6 +202,10 @@ body {
 /* ── SUB PANELS ──────────────────────────────────────────── */
 .sub-panel { display: none; }
 .sub-panel.active { display: block; }
+.legend-arrow { font-size: 9px; transition: transform 0.2s; }
+details[open] > summary .legend-arrow { transform: rotate(180deg); }
+details > summary { list-style: none; cursor: pointer; }
+details > summary::-webkit-details-marker { display: none; }
 
 /* Road types */
 .road-list, .zone-type-list {
@@ -642,8 +646,8 @@ details[open] .legend-arrow { transform: rotate(180deg); }
     </div>
 
     <!-- Biome Painter Panel -->
-    <div class="panel sub-panel" id="panel-biome">
-      <div class="panel-title">Biome Painter</div>
+    <details class="panel sub-panel" id="panel-biome" open>
+      <summary class="panel-title" style="list-style:none;cursor:pointer;display:flex;align-items:center;margin-bottom:0;"><span style="flex:1;">Biome Painter</span><span class="legend-arrow">&#x25BC;</span></summary>
       <div class="terrain-grid" id="biome-picker"></div>
       <div class="range-row">
         <label>Size:</label>
@@ -654,22 +658,22 @@ details[open] .legend-arrow { transform: rotate(180deg); }
         <button class="radio-btn" id="btn-biome-reroll" style="width:100%;text-align:center;">&#x1F3B2; Reroll Pattern</button>
       </div>
       <div class="gen-desc" style="margin-top:6px;line-height:1.4;">Paints a procedurally-generated patch in the same noise style &amp; resolution as Generate Map. Requires a generated map.</div>
-    </div>
+    </details>
 
     <!-- Roads Panel -->
-    <div class="panel sub-panel" id="panel-road">
-      <div class="panel-title">Road Type</div>
+    <details class="panel sub-panel" id="panel-road" open>
+      <summary class="panel-title" style="list-style:none;cursor:pointer;display:flex;align-items:center;margin-bottom:0;"><span style="flex:1;">Road Type</span><span class="legend-arrow">&#x25BC;</span></summary>
       <div class="road-list" id="road-list"></div>
       <div class="range-row">
         <label>Width:</label>
         <input type="range" id="road-width" min="1" max="20" value="3">
         <span class="range-val" id="road-width-val">3</span>
       </div>
-    </div>
+    </details>
 
     <!-- Stamps Panel -->
-    <div class="panel sub-panel" id="panel-stamp">
-      <div class="panel-title">Stamps</div>
+    <details class="panel sub-panel" id="panel-stamp" open>
+      <summary class="panel-title" style="list-style:none;cursor:pointer;display:flex;align-items:center;margin-bottom:0;"><span style="flex:1;">Stamps</span><span class="legend-arrow">&#x25BC;</span></summary>
       <div id="stamp-picker"></div>
       <div class="range-row">
         <label>Size:</label>
@@ -679,8 +683,8 @@ details[open] .legend-arrow { transform: rotate(180deg); }
     </div>
 
     <!-- Zone Panel -->
-    <div class="panel sub-panel" id="panel-zone">
-      <div class="panel-title">Zone Config</div>
+    <details class="panel sub-panel" id="panel-zone" open>
+      <summary class="panel-title" style="list-style:none;cursor:pointer;display:flex;align-items:center;margin-bottom:0;"><span style="flex:1;">Zone Config</span><span class="legend-arrow">&#x25BC;</span></summary>
       <div class="zone-config">
         <div class="config-row">
           <label>Name:</label>
@@ -704,11 +708,11 @@ details[open] .legend-arrow { transform: rotate(180deg); }
         </div>
         <button class="radio-btn" id="btn-cancel-zone" style="width:100%;text-align:center;margin-top:4px;">&#x2715; Cancel Zone</button>
       </div>
-    </div>
+    </details>
 
     <!-- Label Panel -->
-    <div class="panel sub-panel" id="panel-label">
-      <div class="panel-title">Label Config</div>
+    <details class="panel sub-panel" id="panel-label" open>
+      <summary class="panel-title" style="list-style:none;cursor:pointer;display:flex;align-items:center;margin-bottom:0;"><span style="flex:1;">Label Config</span><span class="legend-arrow">&#x25BC;</span></summary>
       <div class="label-config">
         <div class="config-row">
           <label>Font size:</label>
@@ -723,11 +727,11 @@ details[open] .legend-arrow { transform: rotate(180deg); }
           Click on canvas to place label.
         </div>
       </div>
-    </div>
+    </details>
 
     <!-- Select Panel -->
-    <div class="panel sub-panel active" id="panel-select">
-      <div class="panel-title">Select / Pan</div>
+    <details class="panel sub-panel active" id="panel-select" open>
+      <summary class="panel-title" style="list-style:none;cursor:pointer;display:flex;align-items:center;margin-bottom:0;"><span style="flex:1;">Select / Pan</span><span class="legend-arrow">&#x25BC;</span></summary>
       <div style="font-size:10px;color:#5a3010;line-height:1.6;">
         &#x2022; Click to select items<br>
         &#x2022; Drag selected to move<br>
@@ -735,7 +739,7 @@ details[open] .legend-arrow { transform: rotate(180deg); }
         &#x2022; Right-click for options<br>
         &#x2022; Del/Backspace to delete
       </div>
-    </div>
+    </details>
 
     <!-- Generate Panel (always visible) -->
     <div class="panel" id="panel-generate">
@@ -1464,7 +1468,6 @@ const state = {
   // biome painter
   biomeType: 'grass',
   biomeSize: 90,
-  biomeStrength: 0.70,
   biomeSeed: (Math.random() * 99999) | 0,
 
   // road
@@ -1974,9 +1977,6 @@ function paintBiomeAt(cx, cy) {
   const d    = imgData.data;
   const seed = state.biomeSeed;
 
-  // Jungle/tundra classification depends on climate (coldHot) as well as moisture, but a
-  // painted patch should always read as the chosen biome regardless of the map's overall
-  // climate — so override the temperature used for classification to match the preset.
   let paintTemp = gp.coldHot;
   if      (state.biomeType === 'jungle') paintTemp = 0.85;
   else if (state.biomeType === 'tundra') paintTemp = 0.15;
@@ -2002,7 +2002,6 @@ function paintBiomeAt(cx, cy) {
       if (rim < 2) alpha = rim / 2;
       if (alpha <= 0.01) continue;
 
-      // Same fbm noise family as Generate Map, offset by a per-stroke seed
       const n1 = fbm(px * gp.scale * 1.4,  py * gp.scale * 1.4,  seed,        4);
       const n2 = fbm(px * gp.scale * 0.85, py * gp.scale * 0.85, seed + 7777, 4);
       const { hv, mv } = sampleBiomeHV(state.biomeType, n1, n2, gp);
@@ -2776,7 +2775,7 @@ document.querySelectorAll('.tool-btn').forEach(btn=>{
     // Show correct sub-panel
     document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));
     const panel = document.getElementById('panel-'+tool);
-    if(panel) panel.classList.add('active');
+    if(panel) { panel.classList.add('active'); if(panel.tagName==='DETAILS') panel.open = true; }
     // Cursor
     container.className = '';
     if(tool==='select') container.classList.add('select-mode');
