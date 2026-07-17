@@ -1058,10 +1058,66 @@ function anchorRangeOfElements(els){
   return {startAnchor: min===null?0:min, endAnchor: max===null?0:max};
 }
 
-/* Splits a chapter's top-level block elements into pages that each fit within
-   one page box at the current font size/viewport. Elements are never split
-   mid-element — a single element taller than a page is simply allowed to
-   overflow its own page alone. */
+/* Finds the text-node/offset boundary, walking word-by-word through el's
+   text content, beyond which el's own rendered content (measured from el's
+   own top) would exceed maxHeightFromTop. Returns null if even the first
+   word doesn't fit. Used to split a single element that is taller than a
+   whole page — real book paragraphs routinely are. */
+function findTextCutOffset(el, maxHeightFromTop){
+  const walker=document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const boundaries=[];
+  let node;
+  while(node=walker.nextNode()){
+    const text=node.nodeValue;
+    const re=/\S+\s*/g;
+    let m;
+    while((m=re.exec(text))){
+      boundaries.push({node, offset: m.index+m[0].length});
+    }
+  }
+  if(boundaries.length===0) return null;
+
+  const range=document.createRange();
+  const elTop=el.getBoundingClientRect().top;
+  function fitsUpTo(idx){
+    range.setStart(el, 0);
+    range.setEnd(boundaries[idx].node, boundaries[idx].offset);
+    return (range.getBoundingClientRect().bottom - elTop) <= maxHeightFromTop;
+  }
+
+  let lo=0, hi=boundaries.length-1, best=-1;
+  while(lo<=hi){
+    const mid=(lo+hi)>>1;
+    if(fitsUpTo(mid)){ best=mid; lo=mid+1; } else { hi=mid-1; }
+  }
+  return best===-1 ? null : boundaries[best];
+}
+
+/* Splits el into two clones (same tag/attributes) at the given text
+   boundary: everything before it, and everything from it onward. Both
+   clones inherit el's data-anchor, since there is no finer position marker
+   within a single paragraph — jumping to that anchor will always land on
+   the first of the resulting pieces. */
+function splitElementAt(el, boundary){
+  const before=el.cloneNode(false);
+  const after=el.cloneNode(false);
+  const beforeRange=document.createRange();
+  beforeRange.setStart(el, 0);
+  beforeRange.setEnd(boundary.node, boundary.offset);
+  before.appendChild(beforeRange.cloneContents());
+  const afterRange=document.createRange();
+  afterRange.setStart(boundary.node, boundary.offset);
+  afterRange.setEnd(el, el.childNodes.length);
+  after.appendChild(afterRange.cloneContents());
+  return [before, after];
+}
+
+/* Splits a chapter's top-level block elements into pages that each fit
+   within one page box at the current font size/viewport. Elements are kept
+   whole wherever possible; an element taller than a whole page on its own
+   (a long novel paragraph is routinely taller than one screen) is split at
+   word boundaries across as many pages as it needs, rather than being
+   placed alone and clipped by the container's overflow:hidden. */
 function paginateChapter(chapterIndex){
   const chapter=state.currentBook.chapters[chapterIndex];
   const m=getPageMetrics();
@@ -1102,15 +1158,50 @@ function paginateChapter(chapterIndex){
     measure.innerHTML='';
   }
 
+  /* el alone already exceeds fitLimit (measured with measure.innerHTML
+     containing only el). Repeatedly cut it at the last word that fits,
+     emitting one page per piece, until the remainder fits on its own. */
+  function splitOversizedElement(el){
+    const range=anchorRangeOfElements([el]);
+    let remaining=el;
+    while(true){
+      measure.innerHTML='';
+      measure.appendChild(remaining);
+      if(measure.scrollHeight <= fitLimit){
+        pages.push({startAnchor: range.startAnchor, endAnchor: range.endAnchor, html: remaining.outerHTML});
+        break;
+      }
+      const boundary=findTextCutOffset(remaining, fitLimit);
+      if(!boundary){
+        // No word-level cut point found (e.g. a lone oversized image) — nothing more we can do; accept as-is.
+        pages.push({startAnchor: range.startAnchor, endAnchor: range.endAnchor, html: remaining.outerHTML});
+        break;
+      }
+      const [before, after]=splitElementAt(remaining, boundary);
+      pages.push({startAnchor: range.startAnchor, endAnchor: range.endAnchor, html: before.outerHTML});
+      remaining=after;
+    }
+    measure.innerHTML='';
+  }
+
   for(const child of children){
     measure.appendChild(child);
     pageEls.push(child);
-    if(measure.scrollHeight > fitLimit && pageEls.length>1){
-      measure.removeChild(child);
-      pageEls.pop();
-      flush();
-      pageEls=[child];
-      measure.appendChild(child);
+    if(measure.scrollHeight > fitLimit){
+      if(pageEls.length>1){
+        measure.removeChild(child);
+        pageEls.pop();
+        flush();
+        pageEls=[child];
+        measure.appendChild(child);
+        if(measure.scrollHeight > fitLimit){
+          pageEls=[];
+          splitOversizedElement(child);
+        }
+      }else{
+        pageEls=[];
+        splitOversizedElement(child);
+      }
     }
   }
   flush();
