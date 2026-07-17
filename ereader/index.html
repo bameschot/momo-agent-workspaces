@@ -103,17 +103,19 @@ h1,h2,h3{margin:0;}
 .reader-chrome-hidden .reader-bottombar{transform:translateY(100%); opacity:0; pointer-events:none;}
 #readerViewport{
   flex:1; position:relative; overflow:hidden; user-select:text;
+  padding:2.5rem 1.5rem;
 }
-#chapterContainer{
-  position:absolute; top:0; left:0; height:100%;
-  column-gap:0; column-fill:auto; will-change:transform;
-  padding:2.5rem 1.5rem; line-height:1.6;
+/* Shared by #chapterContainer and the hidden pagination-measuring element so
+   both measure/render text identically at the current font size. */
+.reader-page{
+  line-height:1.6;
   font-family:Georgia,'Times New Roman',serif;
   font-size:calc(1.05rem * var(--font-scale));
 }
-#chapterContainer p{margin:0 0 1em;}
-#chapterContainer img{max-width:100%; height:auto;}
-#chapterContainer mark.highlight{border-radius:.15em; padding:0 .05em;}
+.reader-page p{margin:0 0 1em;}
+.reader-page img{max-width:100%; height:auto;}
+.reader-page mark.highlight{border-radius:.15em; padding:0 .05em;}
+#chapterContainer{position:absolute; overflow:hidden;}
 .reader-edge{position:absolute; top:0; bottom:0; width:22%; z-index:2;}
 .reader-edge.left{left:0;} .reader-edge.right{right:0;}
 .reader-bottombar{
@@ -187,7 +189,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
 .visually-hidden{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap;}
 
 @media (min-width:640px){
-  #chapterContainer{padding:2.5rem 4rem;}
+  #readerViewport{padding:2.5rem 4rem;}
 }
 </style>
 </head>
@@ -232,7 +234,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
       <button id="settingsBtn" aria-label="Settings">Aa</button>
     </div>
     <div id="readerViewport">
-      <div id="chapterContainer"></div>
+      <div id="chapterContainer" class="reader-page"></div>
       <div class="reader-edge left" id="edgePrev" aria-hidden="true"></div>
       <div class="reader-edge right" id="edgeNext" aria-hidden="true"></div>
       <div id="loadingIndicator">Loading…</div>
@@ -987,34 +989,142 @@ function parseTxt(text, filename){
 
 /* === SECTION: PAGINATION === */
 
-function getViewport(){
-  const el=document.getElementById('readerViewport');
-  return {width: el.clientWidth, height: el.clientHeight};
+/* Pagination is computed explicitly by measuring real content against the
+   current page box, rather than relying on CSS to auto-flow it (a prior CSS
+   multi-column approach proved fragile — see git history). Each page is a
+   fully independent, pre-serialized HTML snapshot: rendering a page replaces
+   #chapterContainer's entire content with just that page's markup, so it is
+   structurally impossible for two pages to be visible at once, and turning a
+   page is a plain synchronous swap with no transition/animation involved. */
+
+function getPageMetrics(){
+  const viewport=document.getElementById('readerViewport');
+  const cs=getComputedStyle(viewport);
+  const padLeft=parseFloat(cs.paddingLeft)||0;
+  const padRight=parseFloat(cs.paddingRight)||0;
+  const padTop=parseFloat(cs.paddingTop)||0;
+  const padBottom=parseFloat(cs.paddingBottom)||0;
+  return {
+    left: padLeft,
+    top: padTop,
+    width: viewport.clientWidth - padLeft - padRight,
+    height: viewport.clientHeight - padTop - padBottom
+  };
 }
 
-function renderChapterIntoContainer(chapterIndex){
+function positionChapterContainer(m){
   const container=document.getElementById('chapterContainer');
+  container.style.left=m.left+'px';
+  container.style.top=m.top+'px';
+  container.style.width=m.width+'px';
+  container.style.height=m.height+'px';
+}
+
+let measureEl=null;
+function getMeasureEl(){
+  if(measureEl) return measureEl;
+  measureEl=document.createElement('div');
+  measureEl.id='paginationMeasure';
+  measureEl.className='reader-page';
+  measureEl.style.cssText='position:absolute; top:0; left:-99999px; visibility:hidden; height:auto; overflow:visible;';
+  document.body.appendChild(measureEl);
+  return measureEl;
+}
+
+function anchorRangeOfElements(els){
+  let min=null, max=null;
+  els.forEach(el=>{
+    const list=el.hasAttribute('data-anchor') ? [el] : [];
+    el.querySelectorAll('[data-anchor]').forEach(d=>list.push(d));
+    list.forEach(a=>{
+      const n=Number(a.getAttribute('data-anchor'));
+      if(min===null || n<min) min=n;
+      if(max===null || n>max) max=n;
+    });
+  });
+  return {startAnchor: min===null?0:min, endAnchor: max===null?0:max};
+}
+
+/* Splits a chapter's top-level block elements into pages that each fit within
+   one page box at the current font size/viewport. Elements are never split
+   mid-element — a single element taller than a page is simply allowed to
+   overflow its own page alone. */
+function paginateChapter(chapterIndex){
   const chapter=state.currentBook.chapters[chapterIndex];
-  container.innerHTML=chapter.html;
-  const vp=getViewport();
-  container.style.width=vp.width+'px';
-  container.style.height=vp.height+'px';
-  container.style.columnWidth=vp.width+'px';
-  const totalPages=Math.max(1, Math.round(container.scrollWidth / vp.width));
-  state.totalPagesInChapter=totalPages;
-  container.style.transform='translateX(0px)';
-  return totalPages;
+  const m=getPageMetrics();
+  const measure=getMeasureEl();
+  measure.style.width=m.width+'px';
+  measure.innerHTML='';
+
+  const source=document.createElement('div');
+  source.innerHTML=chapter.html;
+  const children=Array.from(source.children);
+
+  if(children.length===0){
+    return [{startAnchor:0, endAnchor:0, html: chapter.html}];
+  }
+
+  const pages=[];
+  let pageEls=[];
+
+  function flush(){
+    if(pageEls.length===0) return;
+    const range=anchorRangeOfElements(pageEls);
+    pages.push({startAnchor: range.startAnchor, endAnchor: range.endAnchor, html: pageEls.map(el=>el.outerHTML).join('')});
+    pageEls=[];
+    measure.innerHTML='';
+  }
+
+  for(const child of children){
+    measure.appendChild(child);
+    pageEls.push(child);
+    if(measure.scrollHeight > m.height && pageEls.length>1){
+      measure.removeChild(child);
+      pageEls.pop();
+      flush();
+      pageEls=[child];
+      measure.appendChild(child);
+    }
+  }
+  flush();
+
+  return pages.length ? pages : [{startAnchor:0, endAnchor:0, html:''}];
 }
 
-function goToPage(pageIndex){
-  const vp=getViewport();
-  const container=document.getElementById('chapterContainer');
-  const clamped=Math.max(0, Math.min(pageIndex, state.totalPagesInChapter-1));
+let pagesCache={bookId:null, chapterIndex:null, cacheKey:null, pages:null};
+
+function pagesCacheKey(){
+  const m=getPageMetrics();
+  return state.fontScale+'|'+Math.round(m.width)+'|'+Math.round(m.height);
+}
+
+function ensurePages(chapterIndex){
+  const book=state.currentBook;
+  const key=pagesCacheKey();
+  if(pagesCache.bookId===book.id && pagesCache.chapterIndex===chapterIndex && pagesCache.cacheKey===key){
+    return pagesCache.pages;
+  }
+  const pages=paginateChapter(chapterIndex);
+  pagesCache={bookId: book.id, chapterIndex, cacheKey: key, pages};
+  return pages;
+}
+
+function displayPage(chapterIndex, pageIndex){
+  const pages=ensurePages(chapterIndex);
+  const clamped=Math.max(0, Math.min(pageIndex, pages.length-1));
+  state.currentChapterIndex=chapterIndex;
   state.currentPageIndex=clamped;
-  container.style.transform='translateX(-'+(clamped*vp.width)+'px)';
+  state.totalPagesInChapter=pages.length;
+  positionChapterContainer(getPageMetrics());
+  document.getElementById('chapterContainer').innerHTML=pages[clamped].html;
+  reapplyHighlightsForCurrentChapter();
   updateBottomBar();
   updateBookmarkButtonState();
   savePositionDebounced();
+}
+
+function goToPage(pageIndex){
+  displayPage(state.currentChapterIndex, pageIndex);
 }
 
 function nextPage(){
@@ -1032,53 +1142,51 @@ function prevPage(){
 function goToChapter(chapterIndex, pageOrAnchor){
   if(!state.currentBook) return;
   if(chapterIndex<0 || chapterIndex>=state.currentBook.chapters.length) return;
-  state.currentChapterIndex=chapterIndex;
-  const totalPages=renderChapterIntoContainer(chapterIndex);
+  const pages=ensurePages(chapterIndex);
   let targetPage=0;
-  if(pageOrAnchor==='last') targetPage=totalPages-1;
+  if(pageOrAnchor==='last') targetPage=pages.length-1;
   else if(typeof pageOrAnchor==='number') targetPage=pageOrAnchor;
-  goToPage(targetPage);
-  reapplyHighlightsForCurrentChapter();
+  displayPage(chapterIndex, targetPage);
   updateTocHighlight();
   updateReaderTitle();
 }
 
-function findAnchorPage(anchorId){
-  const vp=getViewport();
-  const el=document.querySelector('#chapterContainer [data-anchor="'+anchorId+'"]');
-  if(!el) return 0;
-  return Math.max(0, Math.min(Math.floor(el.offsetLeft / vp.width), state.totalPagesInChapter-1));
+function findPageForAnchor(chapterIndex, anchorId){
+  const pages=ensurePages(chapterIndex);
+  if(anchorId==null) return 0;
+  for(let i=0;i<pages.length;i++){
+    if(anchorId>=pages[i].startAnchor && anchorId<=pages[i].endAnchor) return i;
+  }
+  return anchorId < pages[0].startAnchor ? 0 : pages.length-1;
 }
 
 function goToChapterAnchor(chapterIndex, anchorId){
-  goToChapter(chapterIndex, 0);
-  const page = (anchorId!=null) ? findAnchorPage(anchorId) : 0;
-  goToPage(page);
+  if(!state.currentBook) return;
+  if(chapterIndex<0 || chapterIndex>=state.currentBook.chapters.length) return;
+  const page = (anchorId!=null) ? findPageForAnchor(chapterIndex, anchorId) : 0;
+  displayPage(chapterIndex, page);
+  updateTocHighlight();
+  updateReaderTitle();
 }
 
+/* The saved/bookmarked position is simply the first anchor on the current
+   page — no geometry math needed, since pages are pre-computed ranges. */
 function getTopAnchorOfCurrentPage(){
-  const vp=getViewport();
-  const pageLeft=state.currentPageIndex*vp.width;
-  const pageRight=pageLeft+vp.width;
-  const nodes=document.querySelectorAll('#chapterContainer [data-anchor]');
-  let inPage=null, before=null;
-  for(const el of nodes){
-    const left=el.offsetLeft;
-    if(left>=pageLeft && left<pageRight){ inPage=el; break; }
-    if(left<pageLeft) before=el;
-  }
-  const chosen=inPage||before;
-  return chosen ? Number(chosen.getAttribute('data-anchor')) : null;
+  if(!state.currentBook) return null;
+  const pages=ensurePages(state.currentChapterIndex);
+  const p=pages[state.currentPageIndex];
+  return p ? p.startAnchor : null;
 }
 
+/* Re-derives pagination for the current font size/viewport (the pages cache
+   invalidates itself automatically whenever those change, since they're part
+   of its cache key) and relocates to the same anchor — this is what makes
+   resuming correct regardless of what font size is active when a book is
+   reopened, or when the font size is changed mid-read. */
 function repaginateKeepingPosition(){
   if(!state.currentBook) return;
   const anchorId=getTopAnchorOfCurrentPage();
-  const chapterIndex=state.currentChapterIndex;
-  const totalPages=renderChapterIntoContainer(chapterIndex);
-  const page = (anchorId!=null) ? findAnchorPage(anchorId) : Math.min(state.currentPageIndex, totalPages-1);
-  goToPage(page);
-  reapplyHighlightsForCurrentChapter();
+  goToChapterAnchor(state.currentChapterIndex, anchorId);
 }
 
 function updateBottomBar(){
@@ -1099,9 +1207,16 @@ window.addEventListener('resize', debounce(()=>{
 
 /* === SECTION: BOOKMARKS/HIGHLIGHTS/SEARCH === */
 
-const persistCurrentBook=debounce(async function(){
-  if(state.currentBook) await dbPut(state.currentBook);
-}, 300);
+/* Captures the book reference at call time (as an argument) rather than
+   re-reading state.currentBook when the debounce fires — closeReader() nulls
+   state.currentBook immediately, so a version that read it lazily at fire
+   time would silently drop the pending save. */
+const persistCurrentBook=(function(){
+  const flush=debounce(async function(book){
+    if(book) await dbPut(book);
+  }, 300);
+  return function(){ flush(state.currentBook); };
+})();
 
 function saveCurrentPosition(){
   if(!state.currentBook) return;
@@ -1232,9 +1347,6 @@ function reapplyHighlightsForCurrentChapter(){
   if(!state.currentBook) return;
   const hls=(state.currentBook.highlights||[]).filter(h=>h.chapterIndex===state.currentChapterIndex);
   hls.forEach(applyHighlightToDom);
-  const vp=getViewport();
-  const container=document.getElementById('chapterContainer');
-  state.totalPagesInChapter=Math.max(1, Math.round(container.scrollWidth / vp.width));
 }
 
 function addHighlightFromSelection(color){
@@ -1462,8 +1574,14 @@ function updateReaderTitle(){
   el.textContent=state.currentBook ? state.currentBook.title : '';
 }
 
-function closeReader(){
-  if(state.currentBook) saveCurrentPosition();
+async function closeReader(){
+  if(state.currentBook){
+    saveCurrentPosition();
+    /* Flush immediately rather than relying on persistCurrentBook's debounce —
+       reopening the same book right away could otherwise read a stale record
+       from IndexedDB before the debounced write has had a chance to land. */
+    await dbPut(state.currentBook);
+  }
   state.currentBook=null;
   showScreen('library');
   refreshLibraryFromDb();
