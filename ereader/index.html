@@ -1080,15 +1080,19 @@ function paginateChapter(chapterIndex){
   const pages=[];
   let pageEls=[];
 
-  /* Leave a small safety margin below the hard page-height limit — a page
+  /* Reserve a full line of slack below the hard page-height limit — a page
      boundary computed by the hidden measuring element should never pack
-     content right up against the real container's `overflow:hidden` edge,
-     since any sub-pixel/line-height rounding difference between the two
-     would otherwise slice through the bottom line rather than moving it
-     to the next page. Scales with the current line-height so it stays
-     proportional at every font size. */
+     content right up against the real container's `overflow:hidden` edge.
+     A half-line margin still wasn't enough in practice (font-substitution
+     differences on some devices — e.g. Android has no Georgia/Times New
+     Roman, so it falls back to a different serif with slightly different
+     metrics — can shift the real rendered height by close to a full line
+     versus what was measured), so one whole page-line is now sacrificed
+     on every page rather than risk slicing through the bottom line.
+     Scales with the current line-height so it stays proportional at every
+     font size. */
   const lineHeightPx=parseFloat(getComputedStyle(measure).lineHeight) || 24;
-  const fitLimit=m.height - lineHeightPx*0.5;
+  const fitLimit=m.height - lineHeightPx;
 
   function flush(){
     if(pageEls.length===0) return;
