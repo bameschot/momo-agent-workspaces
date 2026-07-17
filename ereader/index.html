@@ -110,9 +110,7 @@ h1,h2,h3{margin:0;}
   padding:2.5rem 1.5rem; line-height:1.6;
   font-family:Georgia,'Times New Roman',serif;
   font-size:calc(1.05rem * var(--font-scale));
-  transition:transform .25s ease;
 }
-#chapterContainer.no-anim{transition:none;}
 #chapterContainer p{margin:0 0 1em;}
 #chapterContainer img{max-width:100%; height:auto;}
 #chapterContainer mark.highlight{border-radius:.15em; padding:0 .05em;}
@@ -997,7 +995,6 @@ function getViewport(){
 function renderChapterIntoContainer(chapterIndex){
   const container=document.getElementById('chapterContainer');
   const chapter=state.currentBook.chapters[chapterIndex];
-  container.classList.add('no-anim');
   container.innerHTML=chapter.html;
   const vp=getViewport();
   container.style.width=vp.width+'px';
@@ -1006,18 +1003,15 @@ function renderChapterIntoContainer(chapterIndex){
   const totalPages=Math.max(1, Math.round(container.scrollWidth / vp.width));
   state.totalPagesInChapter=totalPages;
   container.style.transform='translateX(0px)';
-  requestAnimationFrame(()=>container.classList.remove('no-anim'));
   return totalPages;
 }
 
-function goToPage(pageIndex, animate){
+function goToPage(pageIndex){
   const vp=getViewport();
   const container=document.getElementById('chapterContainer');
   const clamped=Math.max(0, Math.min(pageIndex, state.totalPagesInChapter-1));
   state.currentPageIndex=clamped;
-  if(animate===false) container.classList.add('no-anim');
   container.style.transform='translateX(-'+(clamped*vp.width)+'px)';
-  if(animate===false) requestAnimationFrame(()=>container.classList.remove('no-anim'));
   updateBottomBar();
   updateBookmarkButtonState();
   savePositionDebounced();
@@ -1025,13 +1019,13 @@ function goToPage(pageIndex, animate){
 
 function nextPage(){
   if(!state.currentBook) return;
-  if(state.currentPageIndex < state.totalPagesInChapter-1) goToPage(state.currentPageIndex+1, true);
+  if(state.currentPageIndex < state.totalPagesInChapter-1) goToPage(state.currentPageIndex+1);
   else goToChapter(state.currentChapterIndex+1, 0);
 }
 
 function prevPage(){
   if(!state.currentBook) return;
-  if(state.currentPageIndex>0) goToPage(state.currentPageIndex-1, true);
+  if(state.currentPageIndex>0) goToPage(state.currentPageIndex-1);
   else if(state.currentChapterIndex>0) goToChapter(state.currentChapterIndex-1, 'last');
 }
 
@@ -1043,7 +1037,7 @@ function goToChapter(chapterIndex, pageOrAnchor){
   let targetPage=0;
   if(pageOrAnchor==='last') targetPage=totalPages-1;
   else if(typeof pageOrAnchor==='number') targetPage=pageOrAnchor;
-  goToPage(targetPage, false);
+  goToPage(targetPage);
   reapplyHighlightsForCurrentChapter();
   updateTocHighlight();
   updateReaderTitle();
@@ -1059,7 +1053,7 @@ function findAnchorPage(anchorId){
 function goToChapterAnchor(chapterIndex, anchorId){
   goToChapter(chapterIndex, 0);
   const page = (anchorId!=null) ? findAnchorPage(anchorId) : 0;
-  goToPage(page, false);
+  goToPage(page);
 }
 
 function getTopAnchorOfCurrentPage(){
@@ -1083,7 +1077,7 @@ function repaginateKeepingPosition(){
   const chapterIndex=state.currentChapterIndex;
   const totalPages=renderChapterIntoContainer(chapterIndex);
   const page = (anchorId!=null) ? findAnchorPage(anchorId) : Math.min(state.currentPageIndex, totalPages-1);
-  goToPage(page, false);
+  goToPage(page);
   reapplyHighlightsForCurrentChapter();
 }
 
