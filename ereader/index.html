@@ -1080,6 +1080,16 @@ function paginateChapter(chapterIndex){
   const pages=[];
   let pageEls=[];
 
+  /* Leave a small safety margin below the hard page-height limit — a page
+     boundary computed by the hidden measuring element should never pack
+     content right up against the real container's `overflow:hidden` edge,
+     since any sub-pixel/line-height rounding difference between the two
+     would otherwise slice through the bottom line rather than moving it
+     to the next page. Scales with the current line-height so it stays
+     proportional at every font size. */
+  const lineHeightPx=parseFloat(getComputedStyle(measure).lineHeight) || 24;
+  const fitLimit=m.height - lineHeightPx*0.5;
+
   function flush(){
     if(pageEls.length===0) return;
     const range=anchorRangeOfElements(pageEls);
@@ -1091,7 +1101,7 @@ function paginateChapter(chapterIndex){
   for(const child of children){
     measure.appendChild(child);
     pageEls.push(child);
-    if(measure.scrollHeight > m.height && pageEls.length>1){
+    if(measure.scrollHeight > fitLimit && pageEls.length>1){
       measure.removeChild(child);
       pageEls.pop();
       flush();
@@ -1214,9 +1224,18 @@ function updateBottomBar(){
   fill.style.width=Math.round(((state.currentPageIndex+1)/state.totalPagesInChapter)*100)+'%';
 }
 
-window.addEventListener('resize', debounce(()=>{
+const handleViewportChange=debounce(()=>{
   if(state.screen==='reader' && state.currentBook) repaginateKeepingPosition();
-}, 200));
+}, 200);
+window.addEventListener('resize', handleViewportChange);
+/* Mobile browsers can resize their own chrome (address bar / bottom toolbar
+   collapsing or expanding on scroll) without reliably firing a window resize
+   event — visualViewport.resize is the event actually designed to catch that,
+   and is what keeps a currently-open page from ending up sized for a taller
+   viewport than is genuinely visible. */
+if(window.visualViewport){
+  window.visualViewport.addEventListener('resize', handleViewportChange);
+}
 
 /* === SECTION: BOOKMARKS/HIGHLIGHTS/SEARCH === */
 
