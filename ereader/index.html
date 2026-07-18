@@ -84,11 +84,33 @@ h1,h2,h3{margin:0;}
   display:flex; gap:.85rem; overflow-x:auto; padding-bottom:.35rem; margin:0 -1rem; padding-left:1rem; padding-right:1rem;
 }
 .recent-row .book-tile{flex:0 0 6.75rem;}
-.library-group{margin-bottom:1.75rem;}
-.library-group h2{font-size:.95rem; margin-bottom:.6rem; color:var(--muted); font-weight:600;}
-.library-grid{
-  display:grid; grid-template-columns:repeat(auto-fill,minmax(7.5rem,1fr)); gap:1rem;
+
+/* Author index: alphabetical list of authors; each expands to a plain list
+   of that author's books to pick from. */
+.author-entry{border-bottom:1px solid var(--border);}
+.author-entry summary{
+  display:flex; align-items:center; justify-content:space-between; gap:.5rem;
+  padding:.85rem .2rem; cursor:pointer; font-weight:600; list-style:none;
 }
+.author-entry summary::-webkit-details-marker{display:none;}
+.author-entry summary::before{content:'▸'; color:var(--muted); transition:transform .15s; flex:none;}
+.author-entry[open] summary::before{transform:rotate(90deg);}
+.author-entry summary .count{color:var(--muted); font-weight:400; font-size:.85rem; margin-left:auto;}
+.author-books{padding:.1rem 0 .6rem;}
+.book-row{
+  display:flex; align-items:center; gap:.75rem; width:100%; text-align:left;
+  padding:.5rem .25rem; border-radius:.5rem; background:none;
+}
+.book-row .cover-mini{
+  width:2.25rem; height:3.1rem; flex:none; border-radius:.25rem; overflow:hidden;
+  background:var(--accent); color:#fff; font-weight:700; font-size:.85rem;
+  display:flex; align-items:center; justify-content:center;
+}
+.book-row .cover-mini img{width:100%; height:100%; object-fit:cover; display:block;}
+.book-row .info{flex:1; min-width:0;}
+.book-row .info .rt{display:block; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.book-row .info .rp{display:block; font-size:.8rem; color:var(--muted);}
+.book-row .del{flex:none; color:var(--danger); font-size:.85rem; padding:.4rem .6rem;}
 .book-tile{background:none; text-align:left; padding:0; border-radius:.6rem; position:relative;}
 .book-tile .cover{
   width:100%; aspect-ratio:2/3; border-radius:.5rem; overflow:hidden; position:relative;
@@ -1660,6 +1682,26 @@ function authorGroupKey(author){
   return author.trim();
 }
 
+function renderBookRow(book){
+  const row=document.createElement('button');
+  row.type='button'; row.className='book-row';
+  const pct=bookProgressPercent(book);
+  row.innerHTML=
+    '<span class="cover-mini">'+
+      (book.coverDataUrl ? '<img src="'+book.coverDataUrl+'" alt="">' : escapeHtml((book.title||'?')[0].toUpperCase()))+
+    '</span>'+
+    '<span class="info"><span class="rt">'+escapeHtml(book.title)+'</span><span class="rp">'+(book.lastOpenedAt ? pct+'% read' : 'Not started')+'</span></span>'+
+    '<span class="del" aria-label="Book options">⋮</span>';
+  if(!book.coverDataUrl) row.querySelector('.cover-mini').style.background=placeholderColor(book.title);
+  row.querySelector('.del').addEventListener('click', async (e)=>{
+    e.stopPropagation();
+    const ok=await confirmDialog('Remove "'+book.title+'"?', 'This removes it from your library, including its bookmarks and highlights. The original file on your device is not affected.');
+    if(ok){ await dbDelete(book.id); await refreshLibraryFromDb(); showToast('Removed from library'); }
+  });
+  row.addEventListener('click', ()=>openBook(book.id));
+  return row;
+}
+
 function renderLibrary(){
   const recentRow=document.getElementById('recentRow');
   const groupsEl=document.getElementById('libraryGroups');
@@ -1685,6 +1727,8 @@ function renderLibrary(){
     recentRow.classList.remove('show');
   }
 
+  /* Author index: a plain alphabetical list of authors (Unknown pinned last);
+     tapping one expands to a simple list of their books to pick from. */
   const groups=new Map();
   state.library.forEach(book=>{
     const key=authorGroupKey(book.author);
@@ -1698,16 +1742,16 @@ function renderLibrary(){
   });
   groupNames.forEach(name=>{
     const books=groups.get(name).sort((a,b)=>a.title.localeCompare(b.title, undefined, {sensitivity:'base'}));
-    const section=document.createElement('div');
-    section.className='library-group';
-    const heading=document.createElement('h2');
-    heading.textContent=name;
-    const grid=document.createElement('div');
-    grid.className='library-grid';
-    books.forEach(book=>grid.appendChild(renderBookTile(book)));
-    section.appendChild(heading);
-    section.appendChild(grid);
-    groupsEl.appendChild(section);
+    const details=document.createElement('details');
+    details.className='author-entry';
+    const summary=document.createElement('summary');
+    summary.innerHTML='<span>'+escapeHtml(name)+'</span><span class="count">'+books.length+'</span>';
+    const bookList=document.createElement('div');
+    bookList.className='author-books';
+    books.forEach(book=>bookList.appendChild(renderBookRow(book)));
+    details.appendChild(summary);
+    details.appendChild(bookList);
+    groupsEl.appendChild(details);
   });
 }
 
@@ -1786,38 +1830,54 @@ async function handleFileUpload(file){
    opening any of them. Books added this way are not marked lastOpenedAt, so
    they don't show up in the "Continue Reading" row until actually opened. */
 async function handleFolderImport(fileList){
+  const totalScanned=fileList.length;
   const files=Array.from(fileList).filter(f=>/\.(epub|txt)$/i.test(f.name));
-  if(files.length===0){ showToast('No .epub or .txt files found in that folder'); return; }
+  if(files.length===0){
+    showToast(totalScanned===0
+      ? 'That folder appears to be empty'
+      : 'Found '+totalScanned+' file'+(totalScanned===1?'':'s')+' but none were .epub or .txt');
+    return;
+  }
 
   showLoading(true);
-  const existing=await dbGetAll();
-  const seenKeys=new Set(existing.map(b=>(b.title+'|'+b.author).toLowerCase()));
   let imported=0, skipped=0, failed=0;
+  try{
+    const existing=await dbGetAll();
+    const seenKeys=new Set(existing.map(b=>(b.title+'|'+b.author).toLowerCase()));
 
-  for(const file of files){
-    try{
-      const parsed=await parseFileToBookData(file);
-      const key=(parsed.title+'|'+parsed.author).toLowerCase();
-      if(seenKeys.has(key)){
-        skipped++;
-      }else{
-        const book={
-          id:uid(), title:parsed.title, author:parsed.author, coverDataUrl:parsed.coverDataUrl,
-          chapters:parsed.chapters, toc:parsed.toc,
-          addedAt:Date.now(),
-          position:{chapterIndex:0, anchorId:0},
-          settings:{fontScale: state.fontScale},
-          bookmarks:[], highlights:[]
-        };
-        await dbPut(book);
-        seenKeys.add(key);
-        imported++;
+    for(const file of files){
+      try{
+        const parsed=await parseFileToBookData(file);
+        const key=(parsed.title+'|'+parsed.author).toLowerCase();
+        if(seenKeys.has(key)){
+          skipped++;
+        }else{
+          const book={
+            id:uid(), title:parsed.title, author:parsed.author, coverDataUrl:parsed.coverDataUrl,
+            chapters:parsed.chapters, toc:parsed.toc,
+            addedAt:Date.now(),
+            position:{chapterIndex:0, anchorId:0},
+            settings:{fontScale: state.fontScale},
+            bookmarks:[], highlights:[]
+          };
+          await dbPut(book);
+          seenKeys.add(key);
+          imported++;
+        }
+      }catch(err){
+        console.error('Failed to import', file.name, err);
+        failed++;
       }
-    }catch(err){
-      console.error('Failed to import', file.name, err);
-      failed++;
+      await new Promise(r=>requestAnimationFrame(r));
     }
-    await new Promise(r=>requestAnimationFrame(r));
+  }catch(err){
+    /* Anything unexpected here (e.g. reading the existing library failed)
+       must still surface to the user instead of leaving the loading
+       overlay stuck forever with no explanation. */
+    console.error('Folder import failed', err);
+    showLoading(false);
+    showToast('Folder import failed: '+(err && err.message ? err.message : 'unknown error'));
+    return;
   }
 
   showLoading(false);
@@ -2088,6 +2148,7 @@ function wireEvents(){
   document.getElementById('folderInput').addEventListener('change', (e)=>{
     const files=e.target.files; e.target.value='';
     if(files && files.length) handleFolderImport(files);
+    else showToast('No folder was selected');
   });
   document.getElementById('backupExportBtn').addEventListener('click', exportLibraryBackup);
   document.getElementById('backupImportBtn').addEventListener('click', ()=>document.getElementById('restoreInput').click());
