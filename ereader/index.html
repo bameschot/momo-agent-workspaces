@@ -1915,8 +1915,14 @@ async function handleFolderImport(fileList){
   showLoading(true, 'Importing 0 of '+files.length+'…');
   let imported=0, skipped=0, failed=0;
   try{
-    const existing=await dbGetAll();
-    const seenKeys=new Set(existing.map(b=>(b.title+'|'+b.author).toLowerCase()));
+    /* Only the title+author of each existing book is needed for the dedup
+       key set below — not the array of full book objects returned by
+       dbGetAll() (each of which carries its complete chapter HTML and any
+       embedded cover/image data). Building the Set inline lets that array be
+       collected immediately instead of holding every existing book's full
+       content in memory for the entire, potentially very long, import loop
+       (a real problem once a library has hundreds of books). */
+    const seenKeys=new Set((await dbGetAll()).map(b=>(b.title+'|'+b.author).toLowerCase()));
 
     for(let i=0;i<files.length;i++){
       const file=files[i];
@@ -1940,10 +1946,25 @@ async function handleFolderImport(fileList){
           imported++;
         }
       }catch(err){
+        if(err && err.name==='QuotaExceededError'){
+          /* Once storage is full, every remaining dbPut will fail the same
+             way — looping through the rest of a large batch would just burn
+             time reporting hundreds of confusing "failed" imports instead of
+             the real, actionable reason. Stop here and say so plainly. */
+          console.error('Storage quota exceeded during folder import', err);
+          showLoading(false);
+          await refreshLibraryFromDb();
+          showToast('Storage is full — imported '+imported+' of '+files.length+' book'+(imported===1?'':'s')+' before running out of space');
+          return;
+        }
         console.error('Failed to import', file.name, err);
         failed++;
       }
-      await new Promise(r=>requestAnimationFrame(r));
+      /* setTimeout rather than requestAnimationFrame: rAF callbacks can be
+         suspended indefinitely while the tab is backgrounded/hidden (e.g.
+         while a native multi-file picker sheet is up on mobile), which would
+         stall a large import mid-way with no indication anything is wrong. */
+      await new Promise(r=>setTimeout(r, 0));
     }
   }catch(err){
     /* Anything unexpected here (e.g. reading the existing library failed)
