@@ -259,7 +259,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
         <button id="searchLibraryBtn" title="Search library" aria-label="Search library">🔍</button>
         <button id="backupExportBtn" title="Export library backup">⇩ Backup</button>
         <button id="backupImportBtn" title="Import library backup">⇧ Restore</button>
-        <button id="importFolderBtn" title="Select multiple books at once">📁 Import multiple</button>
+        <button id="importFolderBtn" title="Select multiple books at once (on Android, pick a couple hundred at a time — selecting too many at once can silently fail)">📁 Import multiple</button>
         <button id="uploadBtn" class="btn-primary" title="Upload a book">+ Add book</button>
       </div>
     </div>
@@ -486,6 +486,15 @@ function dbOpen(){
     req.onsuccess=()=>resolve(req.result);
     req.onerror=()=>reject(req.error);
   });
+  /* A failed open (e.g. "Internal error opening backing store" — commonly
+     tied to low device storage, or a browser storage layer momentarily
+     stuck) must not be cached forever: every dbOpen() call after this one
+     would otherwise immediately re-reject with the same stale error for the
+     rest of the page's lifetime, even once the underlying condition clears,
+     leaving every DB-touching action (opening a book, uploading, importing)
+     broken until a full page reload. Clearing the cache on rejection lets
+     the next call retry a fresh connection instead. */
+  _dbPromise.catch(()=>{ _dbPromise=null; });
   return _dbPromise;
 }
 
@@ -1660,7 +1669,18 @@ function placeholderColor(title){
 }
 
 async function refreshLibraryFromDb(){
-  state.library=await dbGetAll();
+  try{
+    state.library=await dbGetAll();
+  }catch(err){
+    /* Without this, a rejection here (e.g. IndexedDB itself failing to
+       open) would be an unhandled rejection on every caller — including
+       boot(), where it would silently abort the rest of startup (the
+       library would just never populate, with no indication why) — rather
+       than surfacing something the user can act on. */
+    console.error('Failed to load library from storage', err);
+    showToast('Could not load your library: '+(err && err.message ? err.message : 'unknown error'));
+    return;
+  }
   if(state.screen==='library') renderLibrary();
 }
 
@@ -1800,6 +1820,14 @@ async function openBook(id){
     goToChapterAnchor(pos.chapterIndex||0, pos.anchorId);
     book.lastOpenedAt=Date.now();
     persistCurrentBook();
+  }catch(err){
+    /* Without this, a failure here (e.g. dbGet rejecting because IndexedDB
+       itself failed to open) would be a silent unhandled rejection — the
+       spinner would still get hidden by the finally below, but the user
+       would see nothing at all happen, with no indication anything went
+       wrong. */
+    console.error('Failed to open book', err);
+    showToast('Could not open that book: '+(err && err.message ? err.message : 'unknown error'));
   } finally {
     showLoading(false);
     isOpeningBook=false;
@@ -2242,7 +2270,34 @@ function wireEvents(){
     const file=e.target.files[0]; e.target.value='';
     if(file) handleFileUpload(file);
   });
-  document.getElementById('importFolderBtn').addEventListener('click', ()=>document.getElementById('folderInput').click());
+  document.getElementById('importFolderBtn').addEventListener('click', ()=>{
+    const input=document.getElementById('folderInput');
+    let changeFired=false;
+    const markChanged=()=>{ changeFired=true; };
+    input.addEventListener('change', markChanged, {once:true});
+    input.click();
+    /* On some Android/Chrome versions, selecting a very large number of
+       files at once (several hundred+) hits an OS-level limit on how many
+       file URIs the system document picker can hand back to the browser in
+       one go — the picker just closes and 'change' never fires at all, with
+       no error surfaced anywhere in the page. That leaves the user looking
+       at a screen that appears to have done nothing. Detect it via the
+       window regaining focus (the picker closing, for any reason) without a
+       'change' having fired shortly after, and say what's likely wrong
+       instead of staying silent. A real, well-behaved cancel also lands
+       here, but the existing "No files were selected" toast below already
+       covers that case whenever 'change' does fire with an empty list, so
+       this only ever adds a message where there was none before. */
+    window.addEventListener('focus', function onFocus(){
+      window.removeEventListener('focus', onFocus);
+      setTimeout(()=>{
+        input.removeEventListener('change', markChanged);
+        if(!changeFired){
+          showToast('No files were received — if you selected a large number of files, your device may have failed to hand them all back. Try selecting fewer at a time (a couple hundred or less).');
+        }
+      }, 500);
+    });
+  });
   document.getElementById('folderInput').addEventListener('change', (e)=>{
     /* input.files is a LIVE FileList in some browsers — resetting .value
        right after empties it retroactively, even for a reference captured
