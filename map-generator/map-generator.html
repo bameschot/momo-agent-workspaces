@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1">
 <title>Fantasy Map Generator</title>
+<meta name="theme-color" content="#a8823a" id="themeColorMeta">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Fantasy Map">
+<link rel="icon" id="faviconLink" href="">
+<link rel="apple-touch-icon" id="appleTouchIconLink" href="">
+<link rel="manifest" id="manifestLink" href="">
 <style>
 @font-face {
   font-family: 'FantasyMap';
@@ -19,8 +27,15 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   user-select: none;
+  /* viewport-fit=cover renders edge-to-edge under notches/home-indicator —
+     reserve the safe area so the topbar/statusbar never sit under them. */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
 /* ── TOP BAR ─────────────────────────────────────────────── */
@@ -589,6 +604,7 @@ details[open] .legend-arrow { transform: rotate(180deg); }
   <button class="sidebar-toggle-btn" id="btn-toggle-left"  title="Tools">&#x2630;</button>
   <button class="sidebar-toggle-btn" id="btn-toggle-right" title="Layers">&#x25A6;</button>
   <h1>&#x2606; Fantasy Map</h1>
+  <button class="tb-btn" id="btn-install" title="Install as an app" style="display:none;background:linear-gradient(180deg,#507820,#385810);color:#f0e8c0;border-color:#2a3a10;">&#x2B07; Install</button>
   <div class="tb-sep"></div>
   <span class="tb-label">Zoom:</span>
   <button class="tb-btn" id="btn-zoom-in">+</button>
@@ -5260,6 +5276,68 @@ function init() {
   // Generate a starter map on load
   generateMap();
 }
+
+/* === Installability (PWA) === */
+
+function buildIconDataUrl(size){
+  const canvas=document.createElement('canvas');
+  canvas.width=size; canvas.height=size;
+  const ctx=canvas.getContext('2d');
+  const grad=ctx.createLinearGradient(0,0,0,size);
+  grad.addColorStop(0,'#c8a96e'); grad.addColorStop(0.5,'#b8935a'); grad.addColorStop(1,'#6b4423');
+  ctx.fillStyle=grad;
+  ctx.fillRect(0,0,size,size);
+  ctx.fillStyle='#2a1005';
+  ctx.font='bold '+Math.round(size*0.56)+'px Georgia, serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('M', size/2, size*0.56);
+  return canvas.toDataURL('image/png');
+}
+
+function setupInstallability(){
+  const icon192=buildIconDataUrl(192);
+  const icon512=buildIconDataUrl(512);
+  document.getElementById('faviconLink').setAttribute('href', icon192);
+  document.getElementById('appleTouchIconLink').setAttribute('href', icon192);
+  /* start_url/id/scope are resolved relative to the MANIFEST's own URL, not
+     the document's — a data: URI manifest has no meaningful base to resolve
+     a relative "." against, which Chrome flags as start-url-not-valid and
+     refuses to treat the page as installable. Using the page's own current,
+     absolute location sidesteps that entirely (confirmed working via Chrome
+     DevTools Protocol while building this same fix for the eReader app). */
+  const here=location.href.split('#')[0];
+  const manifest={
+    name:'Fantasy Map Generator', short_name:'Fantasy Map',
+    id: here, start_url: here, scope: here,
+    display:'standalone',
+    background_color:'#2c1810', theme_color:'#a8823a',
+    icons:[{src:icon192, sizes:'192x192', type:'image/png'}, {src:icon512, sizes:'512x512', type:'image/png'}]
+  };
+  document.getElementById('manifestLink').setAttribute('href', 'data:application/manifest+json;base64,'+btoa(JSON.stringify(manifest)));
+}
+
+let deferredInstallPrompt=null;
+window.addEventListener('beforeinstallprompt', (e)=>{
+  e.preventDefault();
+  deferredInstallPrompt=e;
+  const btn=document.getElementById('btn-install');
+  if(btn) btn.style.display='';
+});
+window.addEventListener('appinstalled', ()=>{
+  deferredInstallPrompt=null;
+  const btn=document.getElementById('btn-install');
+  if(btn) btn.style.display='none';
+});
+async function promptInstall(){
+  if(!deferredInstallPrompt) return;
+  const btn=document.getElementById('btn-install');
+  if(btn) btn.style.display='none';
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt=null;
+}
+document.getElementById('btn-install').addEventListener('click', promptInstall);
+setupInstallability();
 
 init();
 </script>
