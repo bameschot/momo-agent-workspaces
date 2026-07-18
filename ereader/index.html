@@ -246,7 +246,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
         <button id="searchLibraryBtn" title="Search library" aria-label="Search library">🔍</button>
         <button id="backupExportBtn" title="Export library backup">⇩ Backup</button>
         <button id="backupImportBtn" title="Import library backup">⇧ Restore</button>
-        <button id="importFolderBtn" title="Import a folder of books">📁 Import folder</button>
+        <button id="importFolderBtn" title="Select multiple books at once">📁 Import multiple</button>
         <button id="uploadBtn" class="btn-primary" title="Upload a book">+ Add book</button>
       </div>
     </div>
@@ -254,11 +254,11 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
       <div id="recentRow" class="recent-row"></div>
       <div id="libraryGroups"></div>
       <div id="libraryEmpty" class="empty-state">
-        <p>Your library is empty.<br>Tap <strong>+ Add book</strong> to upload an EPUB or text file, or <strong>Import folder</strong> to add many at once.</p>
+        <p>Your library is empty.<br>Tap <strong>+ Add book</strong> to upload an EPUB or text file, or <strong>Import multiple</strong> to select several at once.</p>
       </div>
     </div>
     <input type="file" id="fileInput" accept=".epub,.txt,application/epub+zip,text/plain" class="visually-hidden">
-    <input type="file" id="folderInput" webkitdirectory multiple class="visually-hidden">
+    <input type="file" id="folderInput" multiple accept=".epub,.txt,application/epub+zip,text/plain" class="visually-hidden">
     <input type="file" id="restoreInput" accept="application/json,.json" class="visually-hidden">
   </section>
 
@@ -1825,17 +1825,20 @@ async function handleFileUpload(file){
   }
 }
 
-/* Scans a whole folder (via a webkitdirectory file input, which returns every
-   file within it recursively) for .epub/.txt files and adds them all without
-   opening any of them. Books added this way are not marked lastOpenedAt, so
-   they don't show up in the "Continue Reading" row until actually opened. */
+/* Takes a multi-file selection (the user navigates into a folder in the
+   system file picker and selects everything at once — true directory/folder
+   picking via the webkitdirectory attribute turned out to be unreliable on
+   Android and would silently return no files at all, with no change event
+   ever firing), filters to .epub/.txt, and adds them all without opening any
+   of them. Books added this way are not marked lastOpenedAt, so they don't
+   show up in the "Continue Reading" row until actually opened. */
 async function handleFolderImport(fileList){
   const totalScanned=fileList.length;
   const files=Array.from(fileList).filter(f=>/\.(epub|txt)$/i.test(f.name));
   if(files.length===0){
     showToast(totalScanned===0
-      ? 'That folder appears to be empty'
-      : 'Found '+totalScanned+' file'+(totalScanned===1?'':'s')+' but none were .epub or .txt');
+      ? 'No files were selected'
+      : 'Selected '+totalScanned+' file'+(totalScanned===1?'':'s')+' but none were .epub or .txt');
     return;
   }
 
@@ -2146,9 +2149,14 @@ function wireEvents(){
   });
   document.getElementById('importFolderBtn').addEventListener('click', ()=>document.getElementById('folderInput').click());
   document.getElementById('folderInput').addEventListener('change', (e)=>{
-    const files=e.target.files; e.target.value='';
-    if(files && files.length) handleFolderImport(files);
-    else showToast('No folder was selected');
+    /* input.files is a LIVE FileList in some browsers — resetting .value
+       right after empties it retroactively, even for a reference captured
+       beforehand, so it must be copied into a plain array first. (This is
+       what silently broke multi-file import: the "no files" branch fired
+       every time, even when files genuinely were selected.) */
+    const files=Array.from(e.target.files); e.target.value='';
+    if(files.length) handleFolderImport(files);
+    else showToast('No files were selected');
   });
   document.getElementById('backupExportBtn').addEventListener('click', exportLibraryBackup);
   document.getElementById('backupImportBtn').addEventListener('click', ()=>document.getElementById('restoreInput').click());
