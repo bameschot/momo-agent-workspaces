@@ -1156,11 +1156,17 @@ function splitElementAt(el, boundary){
 }
 
 /* Splits a chapter's top-level block elements into pages that each fit
-   within one page box at the current font size/viewport. Elements are kept
-   whole wherever possible; an element taller than a whole page on its own
-   (a long novel paragraph is routinely taller than one screen) is split at
-   word boundaries across as many pages as it needs, rather than being
-   placed alone and clipped by the container's overflow:hidden. */
+   within one page box at the current font size/viewport, via a work queue:
+   elements are appended to the current page whenever they fit as-is: an
+   element that doesn't fit — whether because it alone is taller than a
+   whole page, or because it merely doesn't fit the space left over on an
+   already partly-filled page — is split at the last word boundary that
+   fits the room actually available, the fitting part tops off the current
+   page, and the remainder is requeued to be re-evaluated (and potentially
+   topped off further, or split again) exactly like any other pending
+   element. This tops off every page as much as the content allows, rather
+   than leaving wasted space and pushing a whole element forward whenever
+   it doesn't fit what's left on the current page. */
 function paginateChapter(chapterIndex){
   const chapter=state.currentBook.chapters[chapterIndex];
   const m=getPageMetrics();
@@ -1201,50 +1207,37 @@ function paginateChapter(chapterIndex){
     measure.innerHTML='';
   }
 
-  /* el alone already exceeds fitLimit (measured with measure.innerHTML
-     containing only el). Repeatedly cut it at the last word that fits,
-     emitting one page per piece, until the remainder fits on its own. */
-  function splitOversizedElement(el){
-    const range=anchorRangeOfElements([el]);
-    let remaining=el;
-    while(true){
-      measure.innerHTML='';
-      measure.appendChild(remaining);
-      if(measure.scrollHeight <= fitLimit){
-        pages.push({startAnchor: range.startAnchor, endAnchor: range.endAnchor, html: remaining.outerHTML});
-        break;
-      }
-      const boundary=findTextCutOffset(remaining, fitLimit);
-      if(!boundary){
-        // No word-level cut point found (e.g. a lone oversized image) — nothing more we can do; accept as-is.
-        pages.push({startAnchor: range.startAnchor, endAnchor: range.endAnchor, html: remaining.outerHTML});
-        break;
-      }
-      const [before, after]=splitElementAt(remaining, boundary);
-      pages.push({startAnchor: range.startAnchor, endAnchor: range.endAnchor, html: before.outerHTML});
-      remaining=after;
+  const queue=children.slice();
+  while(queue.length){
+    const el=queue.shift();
+    const priorHeight=measure.scrollHeight;
+    measure.appendChild(el);
+    if(measure.scrollHeight <= fitLimit){
+      pageEls.push(el);
+      continue;
     }
-    measure.innerHTML='';
-  }
 
-  for(const child of children){
-    measure.appendChild(child);
-    pageEls.push(child);
-    if(measure.scrollHeight > fitLimit){
-      if(pageEls.length>1){
-        measure.removeChild(child);
-        pageEls.pop();
-        flush();
-        pageEls=[child];
-        measure.appendChild(child);
-        if(measure.scrollHeight > fitLimit){
-          pageEls=[];
-          splitOversizedElement(child);
-        }
-      }else{
-        pageEls=[];
-        splitOversizedElement(child);
-      }
+    // el overflows — figure out how much room is actually left for it on
+    // the current page (fitLimit itself if the page is still empty) and
+    // try to split it at the last word boundary that fits that room.
+    const remainingBudget=fitLimit - priorHeight;
+    const boundary=findTextCutOffset(el, remainingBudget);
+    if(boundary){
+      const [before, after]=splitElementAt(el, boundary);
+      pageEls.push(before);
+      flush();
+      queue.unshift(after);
+    }else if(pageEls.length){
+      // Not even one word fits the leftover space — flush what's there and
+      // retry el against a fresh, empty page.
+      flush();
+      queue.unshift(el);
+    }else{
+      // Pathological: el doesn't fit even a whole empty page and no
+      // word-level cut point was found (e.g. a lone oversized image).
+      // Accept it whole to guarantee forward progress.
+      pageEls.push(el);
+      flush();
     }
   }
   flush();
