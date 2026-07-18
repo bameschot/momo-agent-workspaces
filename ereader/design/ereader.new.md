@@ -2,7 +2,7 @@
 
 ## Overview
 
-A single, fully self-contained `index.html` file that lets a reader upload EPUB and plain-text books from local storage, keeps a persistent library of them in the browser, and reads them in a paginated, page-turning view with scalable fonts and light/dark themes. No external requests are made — no CDN links, no web fonts, no analytics, no server. The page works when opened directly from `file://` and can be added to a phone's home screen as a standalone app.
+A single, fully self-contained `ereader.html` file that lets a reader upload EPUB and plain-text books from local storage, keeps a persistent library of them in the browser, and reads them in a paginated, page-turning view with scalable fonts and light/dark themes. No external requests are made — no CDN links, no web fonts, no analytics, no server. The page works when opened directly from `file://` and can be added to a phone's home screen as a standalone app.
 
 The primary interaction loop is: **Library → pick or upload a book → Reader (paginated pages, tap/swipe to turn) → close → Library remembers exactly where you left off.**
 
@@ -27,7 +27,7 @@ No build step. No dependencies. The file is the artefact.
 ## Project Structure
 
 ```
-index.html          ← the entire application (HTML + <style> + <script>)
+ereader.html          ← the entire application (HTML + <style> + <script>)
 ```
 
 All CSS lives in a `<style>` block in `<head>`. All JavaScript lives in `<script>` blocks before `</body>`, organized as clearly-commented sections (ZIP/inflate, EPUB parsing, TXT parsing, IndexedDB layer, pagination engine, UI/render, app bootstrap). Nothing is loaded from the network at runtime.
@@ -191,7 +191,7 @@ Purely local, UI-only app. No HTTP endpoints, no external APIs, no inter-page co
 | Requirement | Detail |
 |---|---|
 | **Privacy** | Zero network requests at any point. Uploaded book content and reading position never leave the device (IndexedDB is local to the browser profile). |
-| **Self-contained** | The single `index.html` must work when opened directly from the filesystem (`file://`) — no server required for core reading functionality. |
+| **Self-contained** | The single `ereader.html` must work when opened directly from the filesystem (`file://`) — no server required for core reading functionality. |
 | **Performance** | EPUB ZIP/XML parsing happens once, at upload time; reopening a book is an IndexedDB read only. Pagination recomputation on font-size/rotation change should feel instant (well under 300ms) for typical chapter sizes. |
 | **Accessibility** | WCAG AA colour contrast in both themes; buttons have accessible labels; TOC panel and Settings are keyboard-navigable; page-turn works via arrow keys as well as touch. |
 | **Browser support** | Modern evergreen mobile/desktop browsers (Chrome, Firefox, Safari, Edge — current and one prior major version). |

@@ -1698,6 +1698,13 @@ async function refreshLibraryFromDb(){
   if(state.screen==='library') renderLibrary();
 }
 
+/* Shared by the book-tile's menu button and the book-row's remove control —
+   both trigger the same confirm-then-delete flow for a library entry. */
+async function removeBookWithConfirm(book){
+  const ok=await confirmDialog('Remove "'+book.title+'"?', 'This removes it from your library, including its bookmarks and highlights. The original file on your device is not affected.');
+  if(ok){ await dbDelete(book.id); await refreshLibraryFromDb(); showToast('Removed from library'); }
+}
+
 function renderBookTile(book){
   const tile=document.createElement('button');
   tile.type='button'; tile.className='book-tile'; tile.style.position='relative';
@@ -1715,11 +1722,7 @@ function renderBookTile(book){
   const menuBtn=document.createElement('button');
   menuBtn.type='button'; menuBtn.className='tile-menu-btn'; menuBtn.textContent='⋮';
   menuBtn.setAttribute('aria-label','Book options');
-  menuBtn.addEventListener('click', async (e)=>{
-    e.stopPropagation();
-    const ok=await confirmDialog('Remove "'+book.title+'"?', 'This removes it from your library, including its bookmarks and highlights. The original file on your device is not affected.');
-    if(ok){ await dbDelete(book.id); await refreshLibraryFromDb(); showToast('Removed from library'); }
-  });
+  menuBtn.addEventListener('click', async (e)=>{ e.stopPropagation(); await removeBookWithConfirm(book); });
   tile.appendChild(menuBtn);
   return tile;
 }
@@ -1743,11 +1746,7 @@ function renderBookRow(book){
     '<span class="info"><span class="rt">'+escapeHtml(book.title)+'</span><span class="rp">'+(book.lastOpenedAt ? pct+'% read' : 'Not started')+'</span></span>'+
     '<span class="del" aria-label="Book options">⋮</span>';
   if(!book.coverDataUrl) row.querySelector('.cover-mini').style.background=placeholderColor(book.title);
-  row.querySelector('.del').addEventListener('click', async (e)=>{
-    e.stopPropagation();
-    const ok=await confirmDialog('Remove "'+book.title+'"?', 'This removes it from your library, including its bookmarks and highlights. The original file on your device is not affected.');
-    if(ok){ await dbDelete(book.id); await refreshLibraryFromDb(); showToast('Removed from library'); }
-  });
+  row.querySelector('.del').addEventListener('click', async (e)=>{ e.stopPropagation(); await removeBookWithConfirm(book); });
   row.addEventListener('click', ()=>openBook(book.id));
   return row;
 }
@@ -2279,6 +2278,7 @@ async function promptInstall(){
 /* === SECTION: BOOTSTRAP === */
 
 function wireEvents(){
+  /* -- Library: upload, folder import, backup/restore, search, install -- */
   document.getElementById('uploadBtn').addEventListener('click', ()=>document.getElementById('fileInput').click());
   document.getElementById('fileInput').addEventListener('change', (e)=>{
     const file=e.target.files[0]; e.target.value='';
@@ -2331,6 +2331,7 @@ function wireEvents(){
   document.getElementById('searchLibraryBtn').addEventListener('click', ()=>openSearch('library'));
   document.getElementById('installBtn').addEventListener('click', promptInstall);
 
+  /* -- Library: drag-and-drop upload -- */
   const libraryBody=document.getElementById('libraryBody');
   libraryBody.addEventListener('dragover', e=>{ e.preventDefault(); document.getElementById('libraryScreen').classList.add('dropzone-active'); });
   libraryBody.addEventListener('dragleave', ()=>document.getElementById('libraryScreen').classList.remove('dropzone-active'));
@@ -2341,11 +2342,13 @@ function wireEvents(){
     if(file) handleFileUpload(file);
   });
 
+  /* -- Reader top bar + TOC panel -- */
   document.getElementById('backToLibraryBtn').addEventListener('click', closeReader);
   document.getElementById('tocBtn').addEventListener('click', ()=>{ renderToc(); openPanel('toc'); });
   document.getElementById('tocCloseBtn').addEventListener('click', ()=>closePanel('toc'));
   document.getElementById('tocOverlay').addEventListener('click', ()=>closePanel('toc'));
 
+  /* -- Settings panel (font size + theme) -- */
   document.getElementById('settingsBtn').addEventListener('click', ()=>openPanel('settings'));
   document.getElementById('librarySettingsBtn').addEventListener('click', ()=>openPanel('settings'));
   document.getElementById('settingsCloseBtn').addEventListener('click', ()=>closePanel('settings'));
@@ -2354,15 +2357,18 @@ function wireEvents(){
   document.getElementById('fontDecBtn').addEventListener('click', ()=>stepFontScale(-1));
   document.getElementById('themeCycleBtn').addEventListener('click', cycleTheme);
 
+  /* -- Bookmarks panel -- */
   document.getElementById('bookmarkToggleBtn').addEventListener('click', toggleBookmarkAtCurrentPosition);
   document.getElementById('bookmarksListBtn').addEventListener('click', ()=>{ renderBookmarksList(); openPanel('bookmarks'); });
   document.getElementById('bookmarksCloseBtn').addEventListener('click', ()=>closePanel('bookmarks'));
   document.getElementById('bookmarksOverlay').addEventListener('click', ()=>closePanel('bookmarks'));
 
+  /* -- Highlights panel -- */
   document.getElementById('highlightsBtn').addEventListener('click', ()=>{ renderHighlightsList(); openPanel('highlights'); });
   document.getElementById('highlightsCloseBtn').addEventListener('click', ()=>closePanel('highlights'));
   document.getElementById('highlightsOverlay').addEventListener('click', ()=>closePanel('highlights'));
 
+  /* -- Search panel -- */
   document.getElementById('searchInBookBtn').addEventListener('click', ()=>openSearch('book'));
   document.getElementById('searchCloseBtn').addEventListener('click', ()=>closePanel('search'));
   document.getElementById('searchOverlay').addEventListener('click', ()=>closePanel('search'));
@@ -2375,6 +2381,7 @@ function wireEvents(){
     });
   });
 
+  /* -- Page navigation: edge taps, swipe, tap-to-toggle chrome, keyboard -- */
   document.getElementById('edgeNext').addEventListener('click', nextPage);
   document.getElementById('edgePrev').addEventListener('click', prevPage);
 
@@ -2410,6 +2417,7 @@ function wireEvents(){
     else if(e.key==='Escape') closeReader();
   });
 
+  /* -- Text selection: floating highlight-color toolbar -- */
   document.addEventListener('selectionchange', debounce(()=>{
     if(state.screen!=='reader'){ hideSelectionToolbar(); return; }
     const sel=window.getSelection();
@@ -2430,10 +2438,12 @@ function wireEvents(){
     hideSelectionToolbar();
   });
 
+  /* -- Generic confirm modal: clicking the backdrop cancels -- */
   document.getElementById('confirmOverlay').addEventListener('click', (e)=>{
     if(e.target.id==='confirmOverlay') document.getElementById('confirmCancelBtn').click();
   });
 
+  /* -- Save reading position before the page unloads or is backgrounded -- */
   window.addEventListener('beforeunload', ()=>{ if(state.currentBook) saveCurrentPosition(); });
   document.addEventListener('visibilitychange', ()=>{
     if(document.visibilityState==='hidden' && state.currentBook) saveCurrentPosition();
