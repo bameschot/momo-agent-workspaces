@@ -27,6 +27,12 @@
   --danger:#f87171; --overlay:rgba(0,0,0,.6);
   color-scheme: dark;
 }
+:root[data-theme="sepia"]{
+  --bg:#f4ecd8; --surface:#fbf3e3; --text:#5b4636; --muted:#8a7a63;
+  --accent:#a9752c; --border:#e0d3b5; --progress:#a9752c;
+  --danger:#b3261e; --overlay:rgba(0,0,0,.4);
+  color-scheme: light;
+}
 *{box-sizing:border-box;}
 html,body{height:100vh; height:100dvh; margin:0;}
 body{
@@ -178,9 +184,10 @@ h1,h2,h3{margin:0;}
 .setting-row{display:flex; align-items:center; justify-content:space-between; padding:.85rem .2rem; border-bottom:1px solid var(--border);}
 .stepper{display:flex; align-items:center; gap:.5rem;}
 .stepper button{width:2.2rem; height:2.2rem; border:1px solid var(--border); border-radius:.5rem;}
-.theme-switch{display:flex; gap:.4rem;}
-.theme-switch button{border:1px solid var(--border); border-radius:.5rem; padding:.4rem .8rem; font-size:.85rem;}
-.theme-switch button.active{border-color:var(--accent); color:var(--accent);}
+.theme-cycle-btn{
+  border:1px solid var(--border); border-radius:.5rem; padding:.4rem 1rem;
+  font-size:.85rem; min-width:5.5rem; text-align:center; color:var(--accent);
+}
 
 #searchPanel .panel-body{padding-top:0;}
 #searchInput{width:100%; margin:.5rem 0;}
@@ -289,10 +296,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
       </div>
       <div class="setting-row">
         <span>Theme</span>
-        <div class="theme-switch">
-          <button data-theme-choice="light" id="themeLightBtn">Light</button>
-          <button data-theme-choice="dark" id="themeDarkBtn">Dark</button>
-        </div>
+        <button type="button" class="theme-cycle-btn" id="themeCycleBtn" aria-label="Switch theme (light, dark, sepia)">Light</button>
       </div>
     </div>
   </div>
@@ -1877,12 +1881,15 @@ function toggleReaderChrome(){
 
 /* === SECTION: THEME/FONT/INSTALL === */
 
+const THEME_ORDER=['light','dark','sepia'];
+const THEME_COLORS={light:'#f7f5f0', dark:'#121212', sepia:'#f4ecd8'};
+
 function applyTheme(theme){
   state.theme=theme;
   document.documentElement.setAttribute('data-theme', theme);
-  document.getElementById('themeColorMeta').setAttribute('content', theme==='dark' ? '#121212' : '#f7f5f0');
-  document.getElementById('themeLightBtn').classList.toggle('active', theme==='light');
-  document.getElementById('themeDarkBtn').classList.toggle('active', theme==='dark');
+  document.getElementById('themeColorMeta').setAttribute('content', THEME_COLORS[theme] || THEME_COLORS.light);
+  const btn=document.getElementById('themeCycleBtn');
+  if(btn) btn.textContent=theme.charAt(0).toUpperCase()+theme.slice(1);
 }
 
 function setManualTheme(theme){
@@ -1891,9 +1898,15 @@ function setManualTheme(theme){
   applyTheme(theme);
 }
 
+function cycleTheme(){
+  const idx=THEME_ORDER.indexOf(state.theme);
+  const next=THEME_ORDER[(idx+1) % THEME_ORDER.length];
+  setManualTheme(next);
+}
+
 function initTheme(){
   const stored=localStorage.getItem('ereader-theme');
-  if(stored){
+  if(stored && THEME_ORDER.includes(stored)){
     state.themeManualOverride=true;
     applyTheme(stored);
   }else{
@@ -2025,8 +2038,7 @@ function wireEvents(){
   document.getElementById('settingsOverlay').addEventListener('click', ()=>closePanel('settings'));
   document.getElementById('fontIncBtn').addEventListener('click', ()=>stepFontScale(1));
   document.getElementById('fontDecBtn').addEventListener('click', ()=>stepFontScale(-1));
-  document.getElementById('themeLightBtn').addEventListener('click', ()=>setManualTheme('light'));
-  document.getElementById('themeDarkBtn').addEventListener('click', ()=>setManualTheme('dark'));
+  document.getElementById('themeCycleBtn').addEventListener('click', cycleTheme);
 
   document.getElementById('bookmarkToggleBtn').addEventListener('click', toggleBookmarkAtCurrentPosition);
   document.getElementById('bookmarksListBtn').addEventListener('click', ()=>{ renderBookmarksList(); openPanel('bookmarks'); });
