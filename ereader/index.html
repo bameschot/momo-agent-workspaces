@@ -237,6 +237,19 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
 .modal h3{margin-bottom:.5rem;}
 .modal p{color:var(--muted); font-size:.9rem;}
 .modal .modal-actions{display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem;}
+
+/* ---------- Toast ---------- */
+#toast{
+  position:fixed; left:50%; bottom:calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  transform:translate(-50%, .5rem);
+  max-width:calc(100vw - 2rem);
+  background:var(--text); color:var(--bg);
+  padding:.6rem 1.1rem; border-radius:2rem; font-size:.85rem; text-align:center;
+  box-shadow:0 4px 14px rgba(0,0,0,.25);
+  z-index:70; opacity:0; pointer-events:none;
+  transition:opacity .25s ease, transform .25s ease;
+}
+#toast.show{opacity:1; transform:translate(-50%, 0);}
 .btn-primary{background:var(--accent); color:#fff;}
 .btn-danger{background:var(--danger); color:#fff;}
 
@@ -256,6 +269,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
       <h1>My Books</h1>
       <div class="iconbar">
         <button id="installBtn" class="btn-primary" title="Install as an app" style="display:none;">⬇ Install</button>
+        <button id="librarySettingsBtn" title="Display settings" aria-label="Display settings">Aa</button>
         <button id="searchLibraryBtn" title="Search library" aria-label="Search library">🔍</button>
         <button id="backupExportBtn" title="Export library backup">⇩ Backup</button>
         <button id="backupImportBtn" title="Import library backup">⇧ Restore</button>
@@ -434,7 +448,7 @@ function showToast(msg){
   el.textContent=msg;
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer=setTimeout(()=>el.classList.remove('show'), 2400);
+  toastTimer=setTimeout(()=>el.classList.remove('show'), 30000);
 }
 
 function confirmDialog(title, body){
@@ -2333,6 +2347,7 @@ function wireEvents(){
   document.getElementById('tocOverlay').addEventListener('click', ()=>closePanel('toc'));
 
   document.getElementById('settingsBtn').addEventListener('click', ()=>openPanel('settings'));
+  document.getElementById('librarySettingsBtn').addEventListener('click', ()=>openPanel('settings'));
   document.getElementById('settingsCloseBtn').addEventListener('click', ()=>closePanel('settings'));
   document.getElementById('settingsOverlay').addEventListener('click', ()=>closePanel('settings'));
   document.getElementById('fontIncBtn').addEventListener('click', ()=>stepFontScale(1));
