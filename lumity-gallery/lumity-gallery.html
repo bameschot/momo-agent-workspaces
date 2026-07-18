@@ -397,7 +397,7 @@
 <header>
   <h1>✨ Lumity Gallery ✨</h1>
   <p>Luz &amp; Amity — The Owl House fan art collection</p>
-  <div id="source-badge">📁 Local folder — 682 images</div>
+  <div id="source-badge">📁 No folder loaded — 0 images</div>
 </header>
 
 <div class="controls" id="controls">
@@ -573,7 +573,12 @@ function extMime(filename) {
 }
 
 // Active image list — starts with folder images, replaced when JSON is loaded
-let ALL_IMAGES = FOLDER_IMAGES.slice();
+/* FOLDER_IMAGES points at relative paths under a local "lumity/" folder that
+   sits next to this file on the machine it was generated on — it is kept
+   here only as the original export's manifest, not loaded automatically,
+   since those files aren't necessarily present wherever this page is
+   opened/hosted. Use "Open Folder" or "Load JSON" to actually load images. */
+let ALL_IMAGES = [];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 const PAGE_SIZE = 60;
