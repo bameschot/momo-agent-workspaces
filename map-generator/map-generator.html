@@ -5331,10 +5331,23 @@ window.addEventListener('appinstalled', ()=>{
 async function promptInstall(){
   if(!deferredInstallPrompt) return;
   const btn=document.getElementById('btn-install');
-  if(btn) btn.style.display='none';
-  deferredInstallPrompt.prompt();
-  await deferredInstallPrompt.userChoice;
+  const promptEvent=deferredInstallPrompt;
+  // Claimed up front (not just on success) so a failed attempt below can't
+  // be retried against an event that's already been consumed by Chrome.
   deferredInstallPrompt=null;
+  try{
+    promptEvent.prompt();
+    await promptEvent.userChoice;
+  }catch(err){
+    // A deferred install prompt can go stale (e.g. left sitting unused for a
+    // while) and then silently no-op instead of throwing in some Chrome
+    // versions — surfacing this beats leaving the click looking like it did
+    // nothing at all.
+    console.error('Install prompt failed', err);
+    alert('Install didn’t go through. Try reloading the page and clicking Install again right away.');
+  } finally {
+    if(btn) btn.style.display='none';
+  }
 }
 document.getElementById('btn-install').addEventListener('click', promptInstall);
 setupInstallability();
