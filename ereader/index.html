@@ -1771,20 +1771,39 @@ function renderLibrary(){
   });
 }
 
+/* Guards against a fast double-tap/double-click on a library tile firing
+   openBook twice concurrently — the second call is simply ignored while the
+   first is still in flight, rather than both redundantly re-paginating and
+   re-rendering the reader screen. */
+let isOpeningBook=false;
+
 async function openBook(id){
-  const book=await dbGet(id);
-  if(!book){ showToast('Could not find that book'); return; }
-  book.bookmarks=book.bookmarks||[];
-  book.highlights=book.highlights||[];
-  book.settings=book.settings||{fontScale: state.fontScale};
-  state.currentBook=book;
-  applyFontScale(book.settings.fontScale || state.fontScale, false);
-  showScreen('reader');
-  updateReaderTitle();
-  const pos=book.position || {chapterIndex:0, anchorId:0};
-  goToChapterAnchor(pos.chapterIndex||0, pos.anchorId);
-  book.lastOpenedAt=Date.now();
-  persistCurrentBook();
+  if(isOpeningBook) return;
+  isOpeningBook=true;
+  showLoading(true, 'Opening book…');
+  try{
+    const book=await dbGet(id);
+    if(!book){ showToast('Could not find that book'); return; }
+    book.bookmarks=book.bookmarks||[];
+    book.highlights=book.highlights||[];
+    book.settings=book.settings||{fontScale: state.fontScale};
+    /* Let the overlay actually paint before the potentially slow synchronous
+       pagination work below — without yielding to the browser here, the
+       show/hide of the CSS class would happen within the same frame and the
+       spinner would never be visible. */
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    state.currentBook=book;
+    applyFontScale(book.settings.fontScale || state.fontScale, false);
+    showScreen('reader');
+    updateReaderTitle();
+    const pos=book.position || {chapterIndex:0, anchorId:0};
+    goToChapterAnchor(pos.chapterIndex||0, pos.anchorId);
+    book.lastOpenedAt=Date.now();
+    persistCurrentBook();
+  } finally {
+    showLoading(false);
+    isOpeningBook=false;
+  }
 }
 
 function updateReaderTitle(){
@@ -1820,10 +1839,29 @@ async function parseFileToBookData(file){
   return parseTxt(text, file.name);
 }
 
+/* Shared by handleFileUpload and handleFolderImport — both mutate the same
+   IndexedDB books store and neither should run concurrently with the other,
+   e.g. dropping/selecting the same file twice in quick succession before the
+   first parse finishes would otherwise create two separate library entries
+   for the same book. */
+let libraryImportInProgress=false;
+
 async function handleFileUpload(file){
+  if(libraryImportInProgress){
+    showToast('Already importing a book — please wait');
+    return;
+  }
+  libraryImportInProgress=true;
   showLoading(true, 'Opening book…');
   try{
     const parsed=await parseFileToBookData(file);
+    const key=(parsed.title+'|'+parsed.author).toLowerCase();
+    const existing=state.library.find(b=>(b.title+'|'+b.author).toLowerCase()===key);
+    if(existing){
+      showToast('"'+parsed.title+'" is already in your library');
+      openBook(existing.id);
+      return;
+    }
     const book={
       id:uid(), title:parsed.title, author:parsed.author, coverDataUrl:parsed.coverDataUrl,
       chapters:parsed.chapters, toc:parsed.toc,
@@ -1834,12 +1872,21 @@ async function handleFileUpload(file){
     };
     await dbPut(book);
     await refreshLibraryFromDb();
-    showLoading(false);
     openBook(book.id);
   }catch(err){
+    /* openBook is never reached on this path, so we're still responsible
+       for hiding the overlay ourselves here. */
     showLoading(false);
     console.error(err);
     showToast('Could not open that file: '+(err && err.message ? err.message : 'unknown error'));
+  } finally {
+    /* On the success/dedup paths above, openBook (fire-and-forget, not
+       awaited) is already in flight and owns the overlay from here on — it
+       shows its own "Opening book…" state and hides it in its own finally.
+       Hiding it here too would race openBook's still-pending dbGet and
+       flicker the overlay off and back on, so we deliberately do NOT call
+       showLoading(false) unconditionally in this finally. */
+    libraryImportInProgress=false;
   }
 }
 
@@ -1859,6 +1906,11 @@ async function handleFolderImport(fileList){
       : 'Selected '+totalScanned+' file'+(totalScanned===1?'':'s')+' but none were .epub or .txt');
     return;
   }
+  if(libraryImportInProgress){
+    showToast('Already importing a book — please wait');
+    return;
+  }
+  libraryImportInProgress=true;
 
   showLoading(true, 'Importing 0 of '+files.length+'…');
   let imported=0, skipped=0, failed=0;
@@ -1901,6 +1953,8 @@ async function handleFolderImport(fileList){
     showLoading(false);
     showToast('Folder import failed: '+(err && err.message ? err.message : 'unknown error'));
     return;
+  } finally {
+    libraryImportInProgress=false;
   }
 
   showLoading(false);
