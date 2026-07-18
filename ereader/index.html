@@ -1254,7 +1254,13 @@ function paginateChapter(chapterIndex){
   return pages.length ? pages : [{startAnchor:0, endAnchor:0, html:''}];
 }
 
-let pagesCache={bookId:null, chapterIndex:null, cacheKey:null, pages:null};
+/* Caches every chapter's pagination computed so far for the current
+   (book, cacheKey) combination, rather than evicting the previous chapter
+   whenever a different one is viewed — both so revisiting a chapter doesn't
+   re-run paginateChapter needlessly, and so a whole-book page-count total
+   (ensureBookPageCounts, below) can be built up out of what's already
+   cached instead of redoing it. */
+let pagesCache={bookId:null, cacheKey:null, chapters:{}};
 
 function pagesCacheKey(){
   const m=getPageMetrics();
@@ -1264,12 +1270,44 @@ function pagesCacheKey(){
 function ensurePages(chapterIndex){
   const book=state.currentBook;
   const key=pagesCacheKey();
-  if(pagesCache.bookId===book.id && pagesCache.chapterIndex===chapterIndex && pagesCache.cacheKey===key){
-    return pagesCache.pages;
+  if(pagesCache.bookId!==book.id || pagesCache.cacheKey!==key){
+    pagesCache={bookId: book.id, cacheKey: key, chapters:{}};
   }
+  if(pagesCache.chapters[chapterIndex]) return pagesCache.chapters[chapterIndex];
   const pages=paginateChapter(chapterIndex);
-  pagesCache={bookId: book.id, chapterIndex, cacheKey: key, pages};
+  pagesCache.chapters[chapterIndex]=pages;
   return pages;
+}
+
+/* Whole-book page totals, for the reader's bottom bar. Only feasible because
+   this is for a single, currently-open book — computing this for every book
+   in a long library list (bookProgressPercent, above) would be far too
+   expensive. Runs as a yielding background pass (one chapter per tick) so it
+   never blocks page-turn responsiveness, even for long books, and bails out
+   the moment the book or cache key it was computing for goes stale. */
+let bookPageCounts={bookId:null, cacheKey:null, counts:null, computing:false};
+
+async function ensureBookPageCounts(){
+  const book=state.currentBook;
+  if(!book) return;
+  const key=pagesCacheKey();
+  if(bookPageCounts.bookId===book.id && bookPageCounts.cacheKey===key){
+    return; // already computed, or already being computed, for this book/key
+  }
+  bookPageCounts={bookId: book.id, cacheKey: key, counts:null, computing:true};
+  const counts=[];
+  for(let i=0;i<book.chapters.length;i++){
+    // Bail if a newer request (different book, or a font-scale/viewport
+    // change) superseded this one while we were mid-loop.
+    if(bookPageCounts.bookId!==book.id || bookPageCounts.cacheKey!==key) return;
+    counts.push(ensurePages(i).length);
+    await new Promise(r=>setTimeout(r,0));
+  }
+  if(bookPageCounts.bookId===book.id && bookPageCounts.cacheKey===key){
+    bookPageCounts.counts=counts;
+    bookPageCounts.computing=false;
+    updateBottomBar();
+  }
 }
 
 function displayPage(chapterIndex, pageIndex){
@@ -1284,6 +1322,7 @@ function displayPage(chapterIndex, pageIndex){
   updateBottomBar();
   updateBookmarkButtonState();
   savePositionDebounced();
+  ensureBookPageCounts(); // fire-and-forget; no-ops once already computed for this book/cache key
 }
 
 function goToPage(pageIndex){
@@ -1357,11 +1396,29 @@ function updateBottomBar(){
   const percentIndicator=document.getElementById('percentIndicator');
   const fill=document.getElementById('chapterProgressFill');
   if(!state.currentBook) return;
-  pageIndicator.textContent=(state.currentPageIndex+1)+' / '+state.totalPagesInChapter;
-  const chapterCount=state.currentBook.chapters.length;
-  const overall=((state.currentChapterIndex + (state.currentPageIndex+1)/state.totalPagesInChapter) / chapterCount)*100;
-  percentIndicator.textContent=Math.round(overall)+'%';
-  fill.style.width=Math.round(((state.currentPageIndex+1)/state.totalPagesInChapter)*100)+'%';
+  const key=pagesCacheKey();
+  const countsReady=bookPageCounts.bookId===state.currentBook.id && bookPageCounts.cacheKey===key && bookPageCounts.counts;
+
+  if(countsReady){
+    const counts=bookPageCounts.counts;
+    let overallPage=state.currentPageIndex+1;
+    for(let i=0;i<state.currentChapterIndex;i++) overallPage+=counts[i];
+    const totalBookPages=counts.reduce((a,b)=>a+b,0);
+    pageIndicator.textContent='Page '+overallPage+' of '+totalBookPages;
+    const overallPct=(overallPage/totalBookPages)*100;
+    percentIndicator.textContent=Math.round(overallPct)+'%';
+    fill.style.width=Math.round(overallPct)+'%';
+  }else{
+    /* Whole-book totals aren't ready yet (ensureBookPageCounts is still
+       working through the book in the background, e.g. right after opening
+       a long one) — fall back to a chapter-relative display rather than
+       showing nothing while it catches up. */
+    pageIndicator.textContent=(state.currentPageIndex+1)+' / '+state.totalPagesInChapter;
+    const chapterCount=state.currentBook.chapters.length;
+    const overall=((state.currentChapterIndex + (state.currentPageIndex+1)/state.totalPagesInChapter) / chapterCount)*100;
+    percentIndicator.textContent=Math.round(overall)+'%';
+    fill.style.width=Math.round(((state.currentPageIndex+1)/state.totalPagesInChapter)*100)+'%';
+  }
 }
 
 const handleViewportChange=debounce(()=>{
@@ -1656,10 +1713,32 @@ function showScreen(name){
   document.getElementById(name+'Screen').classList.add('active');
 }
 
+/* A cheap proportional estimate, not real pagination — this runs for every
+   book in the library list on every render, so it can't afford to actually
+   paginate anything. Anchors are sequential data-anchor ids already stamped
+   on each chapter's stored HTML at parse time, so the highest one in the
+   current chapter is a reasonable stand-in for "how many paragraphs this
+   chapter has" — not pixel-exact (paragraphs vary in rendered height), but a
+   large improvement over ignoring within-chapter position entirely (which
+   pinned single-chapter books at 100% from the very first page). */
 function bookProgressPercent(book){
   if(!book.chapters || book.chapters.length===0) return 0;
+  const chapterCount=book.chapters.length;
   const idx=(book.position && typeof book.position.chapterIndex==='number') ? book.position.chapterIndex : 0;
-  return Math.round(((idx+1)/book.chapters.length)*100);
+  const anchorId=(book.position && typeof book.position.anchorId==='number') ? book.position.anchorId : 0;
+  let chapterFraction=0;
+  const chapter=book.chapters[idx];
+  if(chapter && chapter.html){
+    let maxAnchor=0;
+    const re=/data-anchor="(\d+)"/g;
+    let m;
+    while((m=re.exec(chapter.html))){
+      const n=Number(m[1]);
+      if(n>maxAnchor) maxAnchor=n;
+    }
+    if(maxAnchor>0) chapterFraction=Math.min(1, anchorId/maxAnchor);
+  }
+  return Math.round(((idx+chapterFraction)/chapterCount)*100);
 }
 
 function placeholderColor(title){
