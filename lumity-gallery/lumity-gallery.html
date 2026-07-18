@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lumity Gallery ✨</title>
+  <style>
+    :root {
+      --bg: #0d0010;
+      --surface: #1a0028;
+      --surface2: #2a0040;
+      --accent: #9b59b6;
+      --accent2: #c39bd3;
+      --glow: #7d3c98;
+      --text: #e8d5f5;
+      --text-muted: #a076b8;
+      --border: #4a1a6e;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+    }
+
+    header {
+      text-align: center;
+      padding: 2rem 1rem 1rem;
+      background: linear-gradient(180deg, #1a0028 0%, transparent 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    header h1 {
+      font-size: clamp(1.8rem, 5vw, 3rem);
+      background: linear-gradient(135deg, #c39bd3, #9b59b6, #7d3c98);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.4rem;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    /* ── SOURCE BADGE ── */
+    #source-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-top: 0.5rem;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.78rem;
+    }
+    #source-badge.json-mode {
+      border-color: var(--accent);
+      color: var(--accent2);
+    }
+
+    /* ── CONTROLS ── */
+    .controls {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .controls-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.45rem 1rem;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      user-select: none;
+      transition: color 0.15s;
+    }
+    .controls-toggle:hover { color: var(--accent2); }
+    .controls-toggle .chevron {
+      display: inline-block;
+      transition: transform 0.25s ease;
+    }
+    .controls.collapsed .chevron { transform: rotate(-180deg); }
+    .controls-body {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      padding: 0.75rem 1rem 1rem;
+      overflow: hidden;
+      max-height: 300px;
+      transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.25s ease;
+      opacity: 1;
+    }
+    .controls.collapsed .controls-body {
+      max-height: 0;
+      padding-top: 0;
+      padding-bottom: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .controls input[type="text"] {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.45rem 0.85rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      width: 220px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .controls input[type="text"]:focus { border-color: var(--accent); }
+
+    .controls label {
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .controls select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.4rem 0.6rem;
+      border-radius: 8px;
+      font-size: 0.83rem;
+      outline: none;
+    }
+
+    .count-badge {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--accent2);
+      padding: 0.3rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.8rem;
+    }
+
+    /* ── TOOLBAR BUTTONS ── */
+    #download-btn, #download-json-btn, #folder-btn, #json-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--accent2);
+      padding: 0.4rem 0.9rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.82rem;
+      transition: background 0.15s, border-color 0.15s;
+      white-space: nowrap;
+    }
+    #download-btn:hover, #download-json-btn:hover, #folder-btn:hover, #json-btn:hover { background: var(--glow); border-color: var(--accent); color: #fff; }
+    #download-btn:disabled, #download-json-btn:disabled { opacity: 0.5; cursor: default; }
+    #folder-file-input, #json-file-input { display: none; }
+
+    /* ── DRAG-OVER OVERLAY ── */
+    #drop-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 500;
+      background: rgba(13, 0, 16, 0.88);
+      border: 4px dashed var(--accent);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 1rem;
+      backdrop-filter: blur(4px);
+      pointer-events: none;
+    }
+    #drop-overlay.active { display: flex; }
+    #drop-overlay .drop-icon { font-size: 4rem; }
+    #drop-overlay p {
+      font-size: 1.4rem;
+      color: var(--accent2);
+      font-weight: 600;
+    }
+    #drop-overlay small {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    /* ── GRID ── */
+    #gallery {
+      padding: 1rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(var(--col-size, 180px), 1fr));
+      gap: 10px;
+    }
+
+    .thumb {
+      position: relative;
+      aspect-ratio: 1;
+      overflow: hidden;
+      border-radius: 10px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+    }
+    .thumb:hover {
+      transform: scale(1.03);
+      box-shadow: 0 0 16px rgba(155, 89, 182, 0.5);
+      border-color: var(--accent);
+      z-index: 2;
+    }
+    .thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      transition: opacity 0.3s;
+    }
+    .thumb img.loading { opacity: 0; }
+    .thumb .overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(0deg, rgba(13,0,16,0.8) 0%, transparent 50%);
+      opacity: 0;
+      transition: opacity 0.2s;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: flex-end;
+      padding: 6px;
+      gap: 2px;
+    }
+    .thumb:hover .overlay { opacity: 1; }
+    .thumb .overlay span {
+      font-size: 0.65rem;
+      color: var(--accent2);
+      line-height: 1.2;
+      word-break: break-all;
+    }
+    .thumb .overlay .overlay-dim {
+      font-size: 0.7rem;
+      color: #fff;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── LIGHTBOX ── */
+    #lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.92);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 0.75rem;
+      backdrop-filter: blur(6px);
+    }
+    #lightbox.open { display: flex; }
+
+    #lightbox img {
+      max-width: 92vw;
+      max-height: 82vh;
+      border-radius: 12px;
+      border: 2px solid var(--accent);
+      box-shadow: 0 0 40px rgba(155,89,182,0.4);
+      object-fit: contain;
+    }
+
+    #lb-caption {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      max-width: 80vw;
+      text-align: center;
+      word-break: break-all;
+    }
+    #lb-dim {
+      color: var(--accent2);
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      min-height: 1.2em;
+    }
+
+    #lb-counter { color: var(--accent2); font-size: 0.85rem; }
+
+    .lb-nav {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    .lb-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--accent2);
+      padding: 0.5rem 1.2rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1.1rem;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .lb-btn:hover { background: var(--glow); border-color: var(--accent); color: #fff; }
+
+    #lb-close {
+      position: fixed;
+      top: 1rem;
+      right: 1.25rem;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 2rem;
+      cursor: pointer;
+      line-height: 1;
+      transition: color 0.15s;
+    }
+    #lb-close:hover { color: #fff; }
+
+    /* ── SLIDESHOW ── */
+    .ss-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--accent2);
+      padding: 0.35rem 0.9rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      transition: background 0.15s;
+    }
+    .ss-btn:hover, .ss-btn.active { background: var(--glow); color: #fff; border-color: var(--accent); }
+
+    /* ── LOAD MORE ── */
+    #load-more {
+      display: block;
+      margin: 1.5rem auto;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--accent2);
+      padding: 0.6rem 2rem;
+      border-radius: 24px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    #load-more:hover { background: var(--glow); border-color: var(--accent); color: #fff; }
+    #load-more:disabled { opacity: 0.4; cursor: default; }
+
+    /* ── TOAST ── */
+    #toast {
+      position: fixed;
+      bottom: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(4rem);
+      background: var(--surface2);
+      border: 1px solid var(--accent);
+      color: var(--accent2);
+      padding: 0.6rem 1.4rem;
+      border-radius: 24px;
+      font-size: 0.85rem;
+      z-index: 2000;
+      transition: transform 0.3s ease;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      border-top: 1px solid var(--border);
+      margin-top: 1rem;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Drag-over overlay -->
+<div id="drop-overlay" aria-hidden="true">
+  <div class="drop-icon">📂</div>
+  <p>Drop your JSON file here</p>
+  <small>Generated by folder_to_base64.py</small>
+</div>
+
+<header>
+  <h1>✨ Lumity Gallery ✨</h1>
+  <p>Luz &amp; Amity — The Owl House fan art collection</p>
+  <div id="source-badge">📁 Local folder — 682 images</div>
+</header>
+
+<div class="controls" id="controls">
+  <div class="controls-toggle" id="controls-toggle">
+    <span>Menu</span><span class="chevron">▲</span>
+  </div>
+  <div class="controls-body">
+  <input type="text" id="search" placeholder="Search images…" />
+  <label>
+    Size
+    <select id="size-select">
+      <option value="80">X-Small</option>
+      <option value="140">Small</option>
+      <option value="180" selected>Medium</option>
+      <option value="240">Large</option>
+      <option value="320">X-Large</option>
+    </select>
+  </label>
+  <div style="display:flex;gap:0.5rem;align-items:center;">
+    <button class="ss-btn" id="ss-toggle">▶ Slideshow</button>
+    <select id="ss-speed" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:0.3rem 0.5rem;border-radius:6px;font-size:0.78rem;">
+      <option value="2000">2s</option>
+      <option value="3500" selected>3.5s</option>
+      <option value="6000">6s</option>
+    </select>
+  </div>
+  <button id="download-btn">⬇ Download ZIP</button>
+  <button id="download-json-btn">⬇ Download JSON</button>
+<button id="sort-dim-btn" class="ss-btn">⇅ Dimensions</button>
+  <button id="shuffle-btn" class="ss-btn">🔀 Shuffle</button>
+  <button id="folder-btn">📁 Open Folder</button>
+  <input type="file" id="folder-file-input" webkitdirectory multiple />
+  <button id="json-btn">📥 Load JSON</button>
+  <input type="file" id="json-file-input" accept=".json,application/json" />
+  <span class="count-badge" id="count-badge">— images</span>
+  </div>
+</div>
+
+<div id="gallery"></div>
+<button id="load-more">Load more</button>
+
+<!-- Lightbox -->
+<div id="lightbox" role="dialog" aria-modal="true">
+  <button id="lb-close" aria-label="Close">×</button>
+  <img id="lb-img" src="" alt="" />
+  <div id="lb-caption"></div>
+  <div id="lb-dim"></div>
+  <div class="lb-nav">
+    <button class="lb-btn" id="lb-prev">◀</button>
+    <span id="lb-counter"></span>
+    <button class="lb-btn" id="lb-next">▶</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<footer>💜 Lumity forever</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+// ── DATA ──────────────────────────────────────────────────────────────────────
+const FOLDER_IMAGES = [{"name": "#theowlhouse #amity #luz #lumity #cute (1).jpeg", "url": "lumity/%23theowlhouse%20%23amity%20%23luz%20%23lumity%20%23cute%20%281%29.jpeg"}, {"name": "#theowlhouse #amity #luz #lumity #cute.jpeg", "url": "lumity/%23theowlhouse%20%23amity%20%23luz%20%23lumity%20%23cute.jpeg"}, {"name": "#theowlhouse #luz #amity #lumity #cute(1).jpeg", "url": "lumity/%23theowlhouse%20%23luz%20%23amity%20%23lumity%20%23cute%281%29.jpeg"}, {"name": "#theowlhouse #luz #amity #lumity #cute.jpeg", "url": "lumity/%23theowlhouse%20%23luz%20%23amity%20%23lumity%20%23cute.jpeg"}, {"name": "00b7edbe-dc1d-4175-a74d-f9ec7a34e231.jpeg", "url": "lumity/00b7edbe-dc1d-4175-a74d-f9ec7a34e231.jpeg"}, {"name": "017667a3-4c12-4f11-b1e4-ae5b4e06ea70.jpeg", "url": "lumity/017667a3-4c12-4f11-b1e4-ae5b4e06ea70.jpeg"}, {"name": "017fbf05-ee3d-46f2-ac2a-684aec64e5c3(1).jpeg", "url": "lumity/017fbf05-ee3d-46f2-ac2a-684aec64e5c3%281%29.jpeg"}, {"name": "017fbf05-ee3d-46f2-ac2a-684aec64e5c3.jpeg", "url": "lumity/017fbf05-ee3d-46f2-ac2a-684aec64e5c3.jpeg"}, {"name": "01ada8f1-11bb-4c0c-9365-bb3f9a5d72d6.jpeg", "url": "lumity/01ada8f1-11bb-4c0c-9365-bb3f9a5d72d6.jpeg"}, {"name": "0246a612-f352-41ef-9894-fde9f4475776(1).jpeg", "url": "lumity/0246a612-f352-41ef-9894-fde9f4475776%281%29.jpeg"}, {"name": "0246a612-f352-41ef-9894-fde9f4475776.jpeg", "url": "lumity/0246a612-f352-41ef-9894-fde9f4475776.jpeg"}, {"name": "02488f57-f9be-4b52-830f-47ef653776be.jpeg", "url": "lumity/02488f57-f9be-4b52-830f-47ef653776be.jpeg"}, {"name": "029205ca-69df-4172-90e8-4289305cc22d(1).jpeg", "url": "lumity/029205ca-69df-4172-90e8-4289305cc22d%281%29.jpeg"}, {"name": "029205ca-69df-4172-90e8-4289305cc22d.jpeg", "url": "lumity/029205ca-69df-4172-90e8-4289305cc22d.jpeg"}, {"name": "02f94457-4072-4ddb-b4f5-41dffc99cd3b.jpeg", "url": "lumity/02f94457-4072-4ddb-b4f5-41dffc99cd3b.jpeg"}, {"name": "03220afd-7b8b-4140-8fd1-29bc913f17f8.jpeg", "url": "lumity/03220afd-7b8b-4140-8fd1-29bc913f17f8.jpeg"}, {"name": "033f244f-8ee9-48bb-b7cd-8e1355983d07.jpeg", "url": "lumity/033f244f-8ee9-48bb-b7cd-8e1355983d07.jpeg"}, {"name": "03b26efc-80cb-4640-b2e7-489dc1f9d4ac.jpeg", "url": "lumity/03b26efc-80cb-4640-b2e7-489dc1f9d4ac.jpeg"}, {"name": "04707466-cc70-445d-8492-438839125279.jpeg", "url": "lumity/04707466-cc70-445d-8492-438839125279.jpeg"}, {"name": "050b3272-b2dd-4ae4-aa4e-d3e0d7d69784.jpeg", "url": "lumity/050b3272-b2dd-4ae4-aa4e-d3e0d7d69784.jpeg"}, {"name": "050c14bd-e871-40be-8310-4dae7cab2ee1.jpeg", "url": "lumity/050c14bd-e871-40be-8310-4dae7cab2ee1.jpeg"}, {"name": "068618e3-9ff1-4aa8-95d5-1047c5ce7708(1).jpeg", "url": "lumity/068618e3-9ff1-4aa8-95d5-1047c5ce7708%281%29.jpeg"}, {"name": "068618e3-9ff1-4aa8-95d5-1047c5ce7708.jpeg", "url": "lumity/068618e3-9ff1-4aa8-95d5-1047c5ce7708.jpeg"}, {"name": "06e6bc8e-af0e-4742-b80a-bcbc25953bdd.jpeg", "url": "lumity/06e6bc8e-af0e-4742-b80a-bcbc25953bdd.jpeg"}, {"name": "0744e8c7-3ea2-4f62-94aa-15b4093ce694.jpeg", "url": "lumity/0744e8c7-3ea2-4f62-94aa-15b4093ce694.jpeg"}, {"name": "0acf23d3-8ff2-4a5d-bf3f-57376550bf64.jpeg", "url": "lumity/0acf23d3-8ff2-4a5d-bf3f-57376550bf64.jpeg"}, {"name": "0b06d06c-6067-48d5-8aea-bdb2d50d6456.jpeg", "url": "lumity/0b06d06c-6067-48d5-8aea-bdb2d50d6456.jpeg"}, {"name": "0cf84906-b163-471b-beb2-9066d7d75efc(1).jpeg", "url": "lumity/0cf84906-b163-471b-beb2-9066d7d75efc%281%29.jpeg"}, {"name": "0cf84906-b163-471b-beb2-9066d7d75efc.jpeg", "url": "lumity/0cf84906-b163-471b-beb2-9066d7d75efc.jpeg"}, {"name": "0d7ef3fc-5a6e-4732-8605-437685c5ea5f.jpeg", "url": "lumity/0d7ef3fc-5a6e-4732-8605-437685c5ea5f.jpeg"}, {"name": "0d911c6f-c65c-443e-aaf9-ccfceca6ff40.jpeg", "url": "lumity/0d911c6f-c65c-443e-aaf9-ccfceca6ff40.jpeg"}, {"name": "0e26de58-bfee-491d-87a5-765e245625a9.jpeg", "url": "lumity/0e26de58-bfee-491d-87a5-765e245625a9.jpeg"}, {"name": "110f97c9-a1b7-4a2c-ab8d-17112912de43.jpeg", "url": "lumity/110f97c9-a1b7-4a2c-ab8d-17112912de43.jpeg"}, {"name": "11febcc6-dc4a-49fa-8edd-7f90f5265293.jpeg", "url": "lumity/11febcc6-dc4a-49fa-8edd-7f90f5265293.jpeg"}, {"name": "128f8886-d50b-417e-aa8d-4bbc0448bbe4.jpeg", "url": "lumity/128f8886-d50b-417e-aa8d-4bbc0448bbe4.jpeg"}, {"name": "12fe8395-4153-4872-97a4-b457f725f455.jpeg", "url": "lumity/12fe8395-4153-4872-97a4-b457f725f455.jpeg"}, {"name": "1547f2c4-90de-40c0-b624-4c3095535a93.jpeg", "url": "lumity/1547f2c4-90de-40c0-b624-4c3095535a93.jpeg"}, {"name": "15625c1f-2a0c-4a9f-ac12-aa862a7ab038(1).jpeg", "url": "lumity/15625c1f-2a0c-4a9f-ac12-aa862a7ab038%281%29.jpeg"}, {"name": "15625c1f-2a0c-4a9f-ac12-aa862a7ab038.jpeg", "url": "lumity/15625c1f-2a0c-4a9f-ac12-aa862a7ab038.jpeg"}, {"name": "16fec4cd-96df-42a0-bb8b-209a8944c069.jpeg", "url": "lumity/16fec4cd-96df-42a0-bb8b-209a8944c069.jpeg"}, {"name": "176088ee-2846-4bca-bc9e-171643e40d4e.jpeg", "url": "lumity/176088ee-2846-4bca-bc9e-171643e40d4e.jpeg"}, {"name": "198f29db-d43a-42de-8abb-ff8d060f172e.jpeg", "url": "lumity/198f29db-d43a-42de-8abb-ff8d060f172e.jpeg"}, {"name": "1a2f7493-622e-4834-87b9-1bbc6bbe5fcc.jpeg", "url": "lumity/1a2f7493-622e-4834-87b9-1bbc6bbe5fcc.jpeg"}, {"name": "1a35ee8b-d9e5-48c0-9a30-2763df9d3c8d.jpeg", "url": "lumity/1a35ee8b-d9e5-48c0-9a30-2763df9d3c8d.jpeg"}, {"name": "1d329a51-f648-445c-925d-78588d6e9e63.jpeg", "url": "lumity/1d329a51-f648-445c-925d-78588d6e9e63.jpeg"}, {"name": "1f405a45-c1f1-4e06-887e-9133227f971f(1).jpeg", "url": "lumity/1f405a45-c1f1-4e06-887e-9133227f971f%281%29.jpeg"}, {"name": "1f405a45-c1f1-4e06-887e-9133227f971f(2).jpeg", "url": "lumity/1f405a45-c1f1-4e06-887e-9133227f971f%282%29.jpeg"}, {"name": "1f405a45-c1f1-4e06-887e-9133227f971f.jpeg", "url": "lumity/1f405a45-c1f1-4e06-887e-9133227f971f.jpeg"}, {"name": "1f57a698-cb5f-465e-82f0-3576ad00fac9.jpeg", "url": "lumity/1f57a698-cb5f-465e-82f0-3576ad00fac9.jpeg"}, {"name": "203d1507-de74-4e88-80b2-6730eab45193.jpeg", "url": "lumity/203d1507-de74-4e88-80b2-6730eab45193.jpeg"}, {"name": "229f2007-dd76-4f6d-af14-8c1edbb0bbdb.jpeg", "url": "lumity/229f2007-dd76-4f6d-af14-8c1edbb0bbdb.jpeg"}, {"name": "232ddb6d-105e-4e34-b6db-abd3f1ab914c(1).jpeg", "url": "lumity/232ddb6d-105e-4e34-b6db-abd3f1ab914c%281%29.jpeg"}, {"name": "232ddb6d-105e-4e34-b6db-abd3f1ab914c.jpeg", "url": "lumity/232ddb6d-105e-4e34-b6db-abd3f1ab914c.jpeg"}, {"name": "2333c6c8-7656-4a0b-a05d-89c54fd27f74(1).jpeg", "url": "lumity/2333c6c8-7656-4a0b-a05d-89c54fd27f74%281%29.jpeg"}, {"name": "2333c6c8-7656-4a0b-a05d-89c54fd27f74.jpeg", "url": "lumity/2333c6c8-7656-4a0b-a05d-89c54fd27f74.jpeg"}, {"name": "245b9bbc-3e77-4071-931d-df5ca2cf0a72.jpeg", "url": "lumity/245b9bbc-3e77-4071-931d-df5ca2cf0a72.jpeg"}, {"name": "24c8eabc-72f4-42b8-a0e0-bac560fd7a4e.jpeg", "url": "lumity/24c8eabc-72f4-42b8-a0e0-bac560fd7a4e.jpeg"}, {"name": "2502ab6d-cbda-4f23-9707-f367876e0c49.jpeg", "url": "lumity/2502ab6d-cbda-4f23-9707-f367876e0c49.jpeg"}, {"name": "26a839de-ef3d-4f20-97f1-c86d7bd34682.jpeg", "url": "lumity/26a839de-ef3d-4f20-97f1-c86d7bd34682.jpeg"}, {"name": "27b43be2-e651-4f88-ba0c-0874aaef4130.jpeg", "url": "lumity/27b43be2-e651-4f88-ba0c-0874aaef4130.jpeg"}, {"name": "27e5a497-96a4-4cef-b2fd-6794bbd1a027.jpeg", "url": "lumity/27e5a497-96a4-4cef-b2fd-6794bbd1a027.jpeg"}, {"name": "28335f6b-851a-41e7-9b76-7fd16fe5461e.jpeg", "url": "lumity/28335f6b-851a-41e7-9b76-7fd16fe5461e.jpeg"}, {"name": "284ead4c-eeef-4177-bf1d-4976d9ee6c4d.jpeg", "url": "lumity/284ead4c-eeef-4177-bf1d-4976d9ee6c4d.jpeg"}, {"name": "2886bca6-94cb-443f-b6af-8ea82fb3b77f.jpeg", "url": "lumity/2886bca6-94cb-443f-b6af-8ea82fb3b77f.jpeg"}, {"name": "29122ab4-706f-4cb7-aaa7-04728517c7a6.jpeg", "url": "lumity/29122ab4-706f-4cb7-aaa7-04728517c7a6.jpeg"}, {"name": "29990397-c9d9-4c53-8977-7b27a0551291.jpeg", "url": "lumity/29990397-c9d9-4c53-8977-7b27a0551291.jpeg"}, {"name": "29c0ac4e-43b7-4cac-b09d-953e027fe01d.jpeg", "url": "lumity/29c0ac4e-43b7-4cac-b09d-953e027fe01d.jpeg"}, {"name": "2b8ef4ea-bed5-4ab0-bf19-addcc4640a58(1).jpeg", "url": "lumity/2b8ef4ea-bed5-4ab0-bf19-addcc4640a58%281%29.jpeg"}, {"name": "2b8ef4ea-bed5-4ab0-bf19-addcc4640a58.jpeg", "url": "lumity/2b8ef4ea-bed5-4ab0-bf19-addcc4640a58.jpeg"}, {"name": "2d3fa005-a7bb-49ef-88ed-1ade11dc5e75.jpeg", "url": "lumity/2d3fa005-a7bb-49ef-88ed-1ade11dc5e75.jpeg"}, {"name": "2f54933a-d424-44ac-8a15-8a3fed040f77.jpeg", "url": "lumity/2f54933a-d424-44ac-8a15-8a3fed040f77.jpeg"}, {"name": "30a36be4-de8f-4c06-837d-2520858a274e(1).jpeg", "url": "lumity/30a36be4-de8f-4c06-837d-2520858a274e%281%29.jpeg"}, {"name": "30a36be4-de8f-4c06-837d-2520858a274e(2).jpeg", "url": "lumity/30a36be4-de8f-4c06-837d-2520858a274e%282%29.jpeg"}, {"name": "30a36be4-de8f-4c06-837d-2520858a274e.jpeg", "url": "lumity/30a36be4-de8f-4c06-837d-2520858a274e.jpeg"}, {"name": "310ece82-1f6a-473b-b03d-418dafc4a39b.jpeg", "url": "lumity/310ece82-1f6a-473b-b03d-418dafc4a39b.jpeg"}, {"name": "32bb508b-a387-4c56-ab94-3a571e971a48.jpeg", "url": "lumity/32bb508b-a387-4c56-ab94-3a571e971a48.jpeg"}, {"name": "32fac3c9-3a79-4183-a184-1d3496d67ab5.jpeg", "url": "lumity/32fac3c9-3a79-4183-a184-1d3496d67ab5.jpeg"}, {"name": "333c4bea-ffb7-46c4-8184-97d17f881a1c.jpeg", "url": "lumity/333c4bea-ffb7-46c4-8184-97d17f881a1c.jpeg"}, {"name": "353d193d-2b34-4e2b-b390-eebb349045f1.jpeg", "url": "lumity/353d193d-2b34-4e2b-b390-eebb349045f1.jpeg"}, {"name": "360660a3-36c7-47da-b90b-dc9cc9d8ed7f.jpeg", "url": "lumity/360660a3-36c7-47da-b90b-dc9cc9d8ed7f.jpeg"}, {"name": "363846f8-4bf7-4e4f-b4b5-b0349112d5ea.jpeg", "url": "lumity/363846f8-4bf7-4e4f-b4b5-b0349112d5ea.jpeg"}, {"name": "36a5bb3f-ba9b-4335-9b3e-2361cb724d81.jpeg", "url": "lumity/36a5bb3f-ba9b-4335-9b3e-2361cb724d81.jpeg"}, {"name": "36febf46-2dd6-4d3c-a25a-a45a5d2ba7ed.jpeg", "url": "lumity/36febf46-2dd6-4d3c-a25a-a45a5d2ba7ed.jpeg"}, {"name": "3779895c-8d4a-40dd-8809-41aca174a5da.jpeg", "url": "lumity/3779895c-8d4a-40dd-8809-41aca174a5da.jpeg"}, {"name": "38aeffe0-ea09-4113-9725-711bcaf070d7.jpeg", "url": "lumity/38aeffe0-ea09-4113-9725-711bcaf070d7.jpeg"}, {"name": "38c09916-80c6-496a-8e73-aea0e29a2f3d.jpeg", "url": "lumity/38c09916-80c6-496a-8e73-aea0e29a2f3d.jpeg"}, {"name": "38e7c3bc-0143-4175-83a3-d2ab3c6e818c.jpeg", "url": "lumity/38e7c3bc-0143-4175-83a3-d2ab3c6e818c.jpeg"}, {"name": "392cb7cc-4b76-4b8a-8277-6bce1e3bba27.jpeg", "url": "lumity/392cb7cc-4b76-4b8a-8277-6bce1e3bba27.jpeg"}, {"name": "3a61f2fc-c6ad-4f13-8fc0-7dabe03ea2d6.jpeg", "url": "lumity/3a61f2fc-c6ad-4f13-8fc0-7dabe03ea2d6.jpeg"}, {"name": "3aa56fbe-211b-4035-96df-58c8f7bd29aa.jpeg", "url": "lumity/3aa56fbe-211b-4035-96df-58c8f7bd29aa.jpeg"}, {"name": "3afd91ca-fc2c-438b-a101-9284feca1eaf.jpeg", "url": "lumity/3afd91ca-fc2c-438b-a101-9284feca1eaf.jpeg"}, {"name": "3b903c6d-e5bc-4cc5-a3c4-f18a53771432.jpeg", "url": "lumity/3b903c6d-e5bc-4cc5-a3c4-f18a53771432.jpeg"}, {"name": "3bcddacb-8555-440e-a56f-be21af2680c8.jpeg", "url": "lumity/3bcddacb-8555-440e-a56f-be21af2680c8.jpeg"}, {"name": "3d90398f-28fe-45a8-8d65-ca3afe4535aa.jpeg", "url": "lumity/3d90398f-28fe-45a8-8d65-ca3afe4535aa.jpeg"}, {"name": "3e20762d-c764-4e45-90a9-211943725326.jpeg", "url": "lumity/3e20762d-c764-4e45-90a9-211943725326.jpeg"}, {"name": "3e850c9d-7fbc-4fa1-bd2b-97eb5bcff47f.jpeg", "url": "lumity/3e850c9d-7fbc-4fa1-bd2b-97eb5bcff47f.jpeg"}, {"name": "3f451280-c060-4baf-8a4e-5fc63c3c982f.jpeg", "url": "lumity/3f451280-c060-4baf-8a4e-5fc63c3c982f.jpeg"}, {"name": "3fcbade2-4504-4c3e-9e91-32e6bbda1c74(1).jpeg", "url": "lumity/3fcbade2-4504-4c3e-9e91-32e6bbda1c74%281%29.jpeg"}, {"name": "3fcbade2-4504-4c3e-9e91-32e6bbda1c74(2).jpeg", "url": "lumity/3fcbade2-4504-4c3e-9e91-32e6bbda1c74%282%29.jpeg"}, {"name": "3fcbade2-4504-4c3e-9e91-32e6bbda1c74.jpeg", "url": "lumity/3fcbade2-4504-4c3e-9e91-32e6bbda1c74.jpeg"}, {"name": "40af17f9-b6f4-4d39-a457-5d9c43689c92.jpeg", "url": "lumity/40af17f9-b6f4-4d39-a457-5d9c43689c92.jpeg"}, {"name": "4153adfe-46f9-419b-9cd4-e52869e5039e.jpeg", "url": "lumity/4153adfe-46f9-419b-9cd4-e52869e5039e.jpeg"}, {"name": "41f31560-91ef-40b1-b3a7-afed8444637c.jpeg", "url": "lumity/41f31560-91ef-40b1-b3a7-afed8444637c.jpeg"}, {"name": "4382f104-7468-4043-9e41-75b45af4642e.jpeg", "url": "lumity/4382f104-7468-4043-9e41-75b45af4642e.jpeg"}, {"name": "43aed8e9-5fc2-4774-972a-9f4fa0167acd.jpeg", "url": "lumity/43aed8e9-5fc2-4774-972a-9f4fa0167acd.jpeg"}, {"name": "43b4dd78-df9c-4459-a761-a1db37fbd798.jpeg", "url": "lumity/43b4dd78-df9c-4459-a761-a1db37fbd798.jpeg"}, {"name": "44147e91-0360-48bf-a1e0-914e1c250dce.jpeg", "url": "lumity/44147e91-0360-48bf-a1e0-914e1c250dce.jpeg"}, {"name": "45e34b6e-ae29-4430-88ac-b54d96206397.jpeg", "url": "lumity/45e34b6e-ae29-4430-88ac-b54d96206397.jpeg"}, {"name": "46b0b760-1c12-487d-bf21-ed0824a314a5.jpeg", "url": "lumity/46b0b760-1c12-487d-bf21-ed0824a314a5.jpeg"}, {"name": "47b681f4-5130-4383-baf0-fdcc239bb0d3.jpeg", "url": "lumity/47b681f4-5130-4383-baf0-fdcc239bb0d3.jpeg"}, {"name": "483caef4-733c-4571-8ff9-b8b197faf5f1.jpeg", "url": "lumity/483caef4-733c-4571-8ff9-b8b197faf5f1.jpeg"}, {"name": "48aa8f04-9d10-489f-8d12-6206218841a1(1).jpeg", "url": "lumity/48aa8f04-9d10-489f-8d12-6206218841a1%281%29.jpeg"}, {"name": "48aa8f04-9d10-489f-8d12-6206218841a1(2).jpeg", "url": "lumity/48aa8f04-9d10-489f-8d12-6206218841a1%282%29.jpeg"}, {"name": "48aa8f04-9d10-489f-8d12-6206218841a1.jpeg", "url": "lumity/48aa8f04-9d10-489f-8d12-6206218841a1.jpeg"}, {"name": "49828c84-aa20-468d-b22c-1ec014c2b090(1).jpeg", "url": "lumity/49828c84-aa20-468d-b22c-1ec014c2b090%281%29.jpeg"}, {"name": "49828c84-aa20-468d-b22c-1ec014c2b090(2).jpeg", "url": "lumity/49828c84-aa20-468d-b22c-1ec014c2b090%282%29.jpeg"}, {"name": "49828c84-aa20-468d-b22c-1ec014c2b090.jpeg", "url": "lumity/49828c84-aa20-468d-b22c-1ec014c2b090.jpeg"}, {"name": "4a1bfb07-7627-4d81-a9a3-8f88e3d83bfc.jpeg", "url": "lumity/4a1bfb07-7627-4d81-a9a3-8f88e3d83bfc.jpeg"}, {"name": "4aeb4c81-10ef-4f31-8355-17348ccfef92.jpeg", "url": "lumity/4aeb4c81-10ef-4f31-8355-17348ccfef92.jpeg"}, {"name": "4b3f7292-3669-445a-9d64-5eb2459e0831.jpeg", "url": "lumity/4b3f7292-3669-445a-9d64-5eb2459e0831.jpeg"}, {"name": "4cc465a2-f037-4177-8536-a719d16386d5.jpeg", "url": "lumity/4cc465a2-f037-4177-8536-a719d16386d5.jpeg"}, {"name": "4cccca0f-b525-43cb-bbf0-b92b8bd84487.jpeg", "url": "lumity/4cccca0f-b525-43cb-bbf0-b92b8bd84487.jpeg"}, {"name": "4d13fced-77f1-4e1d-b4b9-9d2e0e9b2d92.jpeg", "url": "lumity/4d13fced-77f1-4e1d-b4b9-9d2e0e9b2d92.jpeg"}, {"name": "4d856f1f-5098-4aff-be81-b61f3cbddd8a.jpeg", "url": "lumity/4d856f1f-5098-4aff-be81-b61f3cbddd8a.jpeg"}, {"name": "4d990fc4-5734-43d1-8342-ae1372068db1.jpeg", "url": "lumity/4d990fc4-5734-43d1-8342-ae1372068db1.jpeg"}, {"name": "4eaed843-2038-48b8-b6e7-246e8d40f274.jpeg", "url": "lumity/4eaed843-2038-48b8-b6e7-246e8d40f274.jpeg"}, {"name": "51c94070-209e-4812-b7b2-9247e5634140(1).jpeg", "url": "lumity/51c94070-209e-4812-b7b2-9247e5634140%281%29.jpeg"}, {"name": "51c94070-209e-4812-b7b2-9247e5634140.jpeg", "url": "lumity/51c94070-209e-4812-b7b2-9247e5634140.jpeg"}, {"name": "53b1cbf5-708f-46bd-83cc-feef88714cd5.jpeg", "url": "lumity/53b1cbf5-708f-46bd-83cc-feef88714cd5.jpeg"}, {"name": "547d0801-ee01-44b5-95b9-1d4e040b24ba.jpeg", "url": "lumity/547d0801-ee01-44b5-95b9-1d4e040b24ba.jpeg"}, {"name": "580cb8c8-91f8-42b3-bb31-305614cfcc34.jpeg", "url": "lumity/580cb8c8-91f8-42b3-bb31-305614cfcc34.jpeg"}, {"name": "585aaebb-defb-4e2d-b4a6-f05c7d1cf973.jpeg", "url": "lumity/585aaebb-defb-4e2d-b4a6-f05c7d1cf973.jpeg"}, {"name": "5861ac50-5e93-4da6-bfaf-69f08a61e36d.jpeg", "url": "lumity/5861ac50-5e93-4da6-bfaf-69f08a61e36d.jpeg"}, {"name": "58bc0fe2-2cae-4aa9-9f66-f8ead2da9b40.jpeg", "url": "lumity/58bc0fe2-2cae-4aa9-9f66-f8ead2da9b40.jpeg"}, {"name": "59aecf7f-bc24-4176-aced-e57cc3b1d433(1).jpeg", "url": "lumity/59aecf7f-bc24-4176-aced-e57cc3b1d433%281%29.jpeg"}, {"name": "59aecf7f-bc24-4176-aced-e57cc3b1d433.jpeg", "url": "lumity/59aecf7f-bc24-4176-aced-e57cc3b1d433.jpeg"}, {"name": "5a59b9ed-c5f4-4572-ae63-a5530658bb3c.jpeg", "url": "lumity/5a59b9ed-c5f4-4572-ae63-a5530658bb3c.jpeg"}, {"name": "5b83f42a-7434-4e1e-9807-aa091bc6b6f0.jpeg", "url": "lumity/5b83f42a-7434-4e1e-9807-aa091bc6b6f0.jpeg"}, {"name": "5ca4df18-2945-4109-af70-0f2d7123f994(1).jpeg", "url": "lumity/5ca4df18-2945-4109-af70-0f2d7123f994%281%29.jpeg"}, {"name": "5ca4df18-2945-4109-af70-0f2d7123f994.jpeg", "url": "lumity/5ca4df18-2945-4109-af70-0f2d7123f994.jpeg"}, {"name": "5e97283a-b63a-42f5-bdc4-ef3cf29e1037.jpeg", "url": "lumity/5e97283a-b63a-42f5-bdc4-ef3cf29e1037.jpeg"}, {"name": "5f9fb418-ee0e-41d5-94a4-0ada15ce3b38(1).jpeg", "url": "lumity/5f9fb418-ee0e-41d5-94a4-0ada15ce3b38%281%29.jpeg"}, {"name": "5f9fb418-ee0e-41d5-94a4-0ada15ce3b38(2).jpeg", "url": "lumity/5f9fb418-ee0e-41d5-94a4-0ada15ce3b38%282%29.jpeg"}, {"name": "5f9fb418-ee0e-41d5-94a4-0ada15ce3b38.jpeg", "url": "lumity/5f9fb418-ee0e-41d5-94a4-0ada15ce3b38.jpeg"}, {"name": "60b4e7da-53d4-4955-8377-0b83158f2489.jpeg", "url": "lumity/60b4e7da-53d4-4955-8377-0b83158f2489.jpeg"}, {"name": "6135c2f2-6f5b-4e78-9ec7-23f5d889fe6b.jpeg", "url": "lumity/6135c2f2-6f5b-4e78-9ec7-23f5d889fe6b.jpeg"}, {"name": "614003f2-2813-47d0-b966-fb4f20d34b10.jpeg", "url": "lumity/614003f2-2813-47d0-b966-fb4f20d34b10.jpeg"}, {"name": "634e4043-0360-45b0-aaa9-9a95325dcf93.jpeg", "url": "lumity/634e4043-0360-45b0-aaa9-9a95325dcf93.jpeg"}, {"name": "635ca8b6-c98c-4e9c-8514-98b37e9760ab.jpeg", "url": "lumity/635ca8b6-c98c-4e9c-8514-98b37e9760ab.jpeg"}, {"name": "63b99d78-9e7f-4ee6-9bec-1eb853ba31be.jpeg", "url": "lumity/63b99d78-9e7f-4ee6-9bec-1eb853ba31be.jpeg"}, {"name": "63cc9472-5b39-419a-86fe-2295d20d5db7.jpeg", "url": "lumity/63cc9472-5b39-419a-86fe-2295d20d5db7.jpeg"}, {"name": "64639b9f-dfd8-4abe-a400-f9cf3b0acb0d.jpeg", "url": "lumity/64639b9f-dfd8-4abe-a400-f9cf3b0acb0d.jpeg"}, {"name": "646f28a6-0ceb-49e1-a9fc-dd50fe918a62.jpeg", "url": "lumity/646f28a6-0ceb-49e1-a9fc-dd50fe918a62.jpeg"}, {"name": "64db8f77-ff65-4384-b021-dea7b172eaa9.jpeg", "url": "lumity/64db8f77-ff65-4384-b021-dea7b172eaa9.jpeg"}, {"name": "65161328-f05b-4ef9-bf96-2e6ee8528f78.jpeg", "url": "lumity/65161328-f05b-4ef9-bf96-2e6ee8528f78.jpeg"}, {"name": "68058671-680f-4a22-b403-97746d926ca1.jpeg", "url": "lumity/68058671-680f-4a22-b403-97746d926ca1.jpeg"}, {"name": "684a98c4-6de0-496c-ac12-b73bd4557138.jpeg", "url": "lumity/684a98c4-6de0-496c-ac12-b73bd4557138.jpeg"}, {"name": "68dc0369-b0a2-401b-a3ec-859ea279cb58(1).jpeg", "url": "lumity/68dc0369-b0a2-401b-a3ec-859ea279cb58%281%29.jpeg"}, {"name": "68dc0369-b0a2-401b-a3ec-859ea279cb58.jpeg", "url": "lumity/68dc0369-b0a2-401b-a3ec-859ea279cb58.jpeg"}, {"name": "69ad63d1-381d-4664-b14b-b13b87d9285e.jpeg", "url": "lumity/69ad63d1-381d-4664-b14b-b13b87d9285e.jpeg"}, {"name": "69f40560-a478-4dad-83a1-d65bdb52ec3d.jpeg", "url": "lumity/69f40560-a478-4dad-83a1-d65bdb52ec3d.jpeg"}, {"name": "6a9a9b4c-cc65-405f-9685-0e1721ecc952.jpeg", "url": "lumity/6a9a9b4c-cc65-405f-9685-0e1721ecc952.jpeg"}, {"name": "6acc8abc-d5d9-4d47-bdb4-9546106e8be3.jpeg", "url": "lumity/6acc8abc-d5d9-4d47-bdb4-9546106e8be3.jpeg"}, {"name": "6b1bcdb9-2af1-4a98-997f-a1578cbab3d4.jpeg", "url": "lumity/6b1bcdb9-2af1-4a98-997f-a1578cbab3d4.jpeg"}, {"name": "6c4b8974-9eb1-4b65-bacc-c7402ef02025.jpeg", "url": "lumity/6c4b8974-9eb1-4b65-bacc-c7402ef02025.jpeg"}, {"name": "6c7b3b89-96f5-42cc-932e-2ea88779076f.jpeg", "url": "lumity/6c7b3b89-96f5-42cc-932e-2ea88779076f.jpeg"}, {"name": "6c9e8f9b-f659-4570-b814-38032a586c85(1).jpeg", "url": "lumity/6c9e8f9b-f659-4570-b814-38032a586c85%281%29.jpeg"}, {"name": "6c9e8f9b-f659-4570-b814-38032a586c85.jpeg", "url": "lumity/6c9e8f9b-f659-4570-b814-38032a586c85.jpeg"}, {"name": "6cf57096-2d5a-4fb3-b856-defbf2befb2a.jpeg", "url": "lumity/6cf57096-2d5a-4fb3-b856-defbf2befb2a.jpeg"}, {"name": "6d079adc-3dbf-46d6-a17b-3ca1b3efc9d5.jpeg", "url": "lumity/6d079adc-3dbf-46d6-a17b-3ca1b3efc9d5.jpeg"}, {"name": "6d33573f-c8aa-40cc-94a0-6d3553e283d7.jpeg", "url": "lumity/6d33573f-c8aa-40cc-94a0-6d3553e283d7.jpeg"}, {"name": "6de1caa9-907d-47df-a456-2c6382239208(1).jpeg", "url": "lumity/6de1caa9-907d-47df-a456-2c6382239208%281%29.jpeg"}, {"name": "6de1caa9-907d-47df-a456-2c6382239208(2).jpeg", "url": "lumity/6de1caa9-907d-47df-a456-2c6382239208%282%29.jpeg"}, {"name": "6de1caa9-907d-47df-a456-2c6382239208.jpeg", "url": "lumity/6de1caa9-907d-47df-a456-2c6382239208.jpeg"}, {"name": "6df124ed-78d7-41ee-b241-b2e29529dc4f.jpeg", "url": "lumity/6df124ed-78d7-41ee-b241-b2e29529dc4f.jpeg"}, {"name": "6e2ac589-7b99-4aff-a3a1-f921169f2988.jpeg", "url": "lumity/6e2ac589-7b99-4aff-a3a1-f921169f2988.jpeg"}, {"name": "6eb3bf86-9908-406c-91f4-06f934c9f996.jpeg", "url": "lumity/6eb3bf86-9908-406c-91f4-06f934c9f996.jpeg"}, {"name": "6f1de4a8-d0e6-4cef-aca8-cf5755dbff98.jpeg", "url": "lumity/6f1de4a8-d0e6-4cef-aca8-cf5755dbff98.jpeg"}, {"name": "6f81nq9w3c6d1.jpeg", "url": "lumity/6f81nq9w3c6d1.jpeg"}, {"name": "703917f2-081f-4e09-bd95-0bd9659775a9.jpeg", "url": "lumity/703917f2-081f-4e09-bd95-0bd9659775a9.jpeg"}, {"name": "70f2e52f-9277-4a23-9937-4d330555b673.jpeg", "url": "lumity/70f2e52f-9277-4a23-9937-4d330555b673.jpeg"}, {"name": "7189f9ee-6238-492d-9952-b5359424ed2c(1).jpeg", "url": "lumity/7189f9ee-6238-492d-9952-b5359424ed2c%281%29.jpeg"}, {"name": "7189f9ee-6238-492d-9952-b5359424ed2c.jpeg", "url": "lumity/7189f9ee-6238-492d-9952-b5359424ed2c.jpeg"}, {"name": "71c60f89-811a-4b5c-b6b4-dc85636c8509.jpeg", "url": "lumity/71c60f89-811a-4b5c-b6b4-dc85636c8509.jpeg"}, {"name": "726383ca-90cc-4259-af69-cc8eb99b2a01(1).jpeg", "url": "lumity/726383ca-90cc-4259-af69-cc8eb99b2a01%281%29.jpeg"}, {"name": "726383ca-90cc-4259-af69-cc8eb99b2a01.jpeg", "url": "lumity/726383ca-90cc-4259-af69-cc8eb99b2a01.jpeg"}, {"name": "733d0c32-0aca-41b0-8233-c6103a00931d.jpeg", "url": "lumity/733d0c32-0aca-41b0-8233-c6103a00931d.jpeg"}, {"name": "7343e394-aec6-4e2b-924a-ebb02762591c.jpeg", "url": "lumity/7343e394-aec6-4e2b-924a-ebb02762591c.jpeg"}, {"name": "7487e677-7e4a-4e7a-821f-96fc02bf14e3.jpeg", "url": "lumity/7487e677-7e4a-4e7a-821f-96fc02bf14e3.jpeg"}, {"name": "755ff27d-4077-45a3-a0ad-c7a60593f125(1).jpeg", "url": "lumity/755ff27d-4077-45a3-a0ad-c7a60593f125%281%29.jpeg"}, {"name": "755ff27d-4077-45a3-a0ad-c7a60593f125.jpeg", "url": "lumity/755ff27d-4077-45a3-a0ad-c7a60593f125.jpeg"}, {"name": "759247a4-88b1-4b77-a484-528f5de113d0.jpeg", "url": "lumity/759247a4-88b1-4b77-a484-528f5de113d0.jpeg"}, {"name": "7598f158-ce8a-4ccb-b06f-4382357f95c5.jpeg", "url": "lumity/7598f158-ce8a-4ccb-b06f-4382357f95c5.jpeg"}, {"name": "75a442aa-3fdc-41dc-a11e-57b5fea37161(1).jpeg", "url": "lumity/75a442aa-3fdc-41dc-a11e-57b5fea37161%281%29.jpeg"}, {"name": "75a442aa-3fdc-41dc-a11e-57b5fea37161.jpeg", "url": "lumity/75a442aa-3fdc-41dc-a11e-57b5fea37161.jpeg"}, {"name": "761ae819-4ca0-4f95-84e1-0fdbe94e4fe3.jpeg", "url": "lumity/761ae819-4ca0-4f95-84e1-0fdbe94e4fe3.jpeg"}, {"name": "78fdc7e3-b0f0-4bfe-8ac2-5f9675e6d92f.jpeg", "url": "lumity/78fdc7e3-b0f0-4bfe-8ac2-5f9675e6d92f.jpeg"}, {"name": "79de1160-0317-408c-bbac-064c90d69504.jpeg", "url": "lumity/79de1160-0317-408c-bbac-064c90d69504.jpeg"}, {"name": "7a9449a1-8ec5-4c5d-aec4-ecfeb396a8e4.jpeg", "url": "lumity/7a9449a1-8ec5-4c5d-aec4-ecfeb396a8e4.jpeg"}, {"name": "7aa2990a-e918-4a86-a54c-548e7af525d4.jpeg", "url": "lumity/7aa2990a-e918-4a86-a54c-548e7af525d4.jpeg"}, {"name": "7ae3f96a-0a05-4c04-a888-9236fbe7bd93.jpeg", "url": "lumity/7ae3f96a-0a05-4c04-a888-9236fbe7bd93.jpeg"}, {"name": "7ba32a43-9b64-4561-b6b1-ac284e912f2f.jpeg", "url": "lumity/7ba32a43-9b64-4561-b6b1-ac284e912f2f.jpeg"}, {"name": "7bae7fdb-be00-4e74-84a9-de824178eae4.jpeg", "url": "lumity/7bae7fdb-be00-4e74-84a9-de824178eae4.jpeg"}, {"name": "7de95ef4-5086-4874-bea6-70b01062ed01.jpeg", "url": "lumity/7de95ef4-5086-4874-bea6-70b01062ed01.jpeg"}, {"name": "7e1ba122-46f7-4a63-acb4-99cdac8f02e0.jpeg", "url": "lumity/7e1ba122-46f7-4a63-acb4-99cdac8f02e0.jpeg"}, {"name": "7f6f175c-01b3-4219-989b-9f25f60bb72b.jpeg", "url": "lumity/7f6f175c-01b3-4219-989b-9f25f60bb72b.jpeg"}, {"name": "7f88f649-ffbb-480c-a1a1-b7cc196a6207.jpeg", "url": "lumity/7f88f649-ffbb-480c-a1a1-b7cc196a6207.jpeg"}, {"name": "7f956c8f-9435-41c0-a7d3-f8bb29f1f7a2.jpeg", "url": "lumity/7f956c8f-9435-41c0-a7d3-f8bb29f1f7a2.jpeg"}, {"name": "805211ec-51fa-465f-a7b4-bd14399caafd(1).jpeg", "url": "lumity/805211ec-51fa-465f-a7b4-bd14399caafd%281%29.jpeg"}, {"name": "805211ec-51fa-465f-a7b4-bd14399caafd.jpeg", "url": "lumity/805211ec-51fa-465f-a7b4-bd14399caafd.jpeg"}, {"name": "8098745d-8415-4853-9b15-299fb0f426fa.jpeg", "url": "lumity/8098745d-8415-4853-9b15-299fb0f426fa.jpeg"}, {"name": "8148ac60-2333-43f0-95ff-d5181b734a78.jpeg", "url": "lumity/8148ac60-2333-43f0-95ff-d5181b734a78.jpeg"}, {"name": "8162aa26-07d6-4c24-84a0-d4cde6faee9e.jpeg", "url": "lumity/8162aa26-07d6-4c24-84a0-d4cde6faee9e.jpeg"}, {"name": "8179f430-2171-41eb-8dd7-3079731c1029.jpeg", "url": "lumity/8179f430-2171-41eb-8dd7-3079731c1029.jpeg"}, {"name": "831d550a-f818-478e-b846-49ad22e914ad.jpeg", "url": "lumity/831d550a-f818-478e-b846-49ad22e914ad.jpeg"}, {"name": "83ac19c5-1fd1-4acd-b92a-e8c4ea6ecece.jpeg", "url": "lumity/83ac19c5-1fd1-4acd-b92a-e8c4ea6ecece.jpeg"}, {"name": "83d8d224-858a-4b47-a047-f31cbcf051fc.jpeg", "url": "lumity/83d8d224-858a-4b47-a047-f31cbcf051fc.jpeg"}, {"name": "850459ec-272a-4cff-93ce-d619ef3640da.jpeg", "url": "lumity/850459ec-272a-4cff-93ce-d619ef3640da.jpeg"}, {"name": "8567c2f9-ae96-4e83-bde1-f7292d0b397b.jpeg", "url": "lumity/8567c2f9-ae96-4e83-bde1-f7292d0b397b.jpeg"}, {"name": "85821192-5794-4119-8f60-875991accfa8.jpeg", "url": "lumity/85821192-5794-4119-8f60-875991accfa8.jpeg"}, {"name": "85a75716-0f5d-4957-8ce7-9c5f5266c9f6.jpeg", "url": "lumity/85a75716-0f5d-4957-8ce7-9c5f5266c9f6.jpeg"}, {"name": "85c601ad-8520-4c73-a02d-dd073b779cc4.jpeg", "url": "lumity/85c601ad-8520-4c73-a02d-dd073b779cc4.jpeg"}, {"name": "862de124-fb0f-4955-912a-b80f3e750c17.jpeg", "url": "lumity/862de124-fb0f-4955-912a-b80f3e750c17.jpeg"}, {"name": "87646745-cd4d-432b-9868-dd706801d82c.jpeg", "url": "lumity/87646745-cd4d-432b-9868-dd706801d82c.jpeg"}, {"name": "876c9f00-b824-4612-b08e-bf67e6f74ffa.jpeg", "url": "lumity/876c9f00-b824-4612-b08e-bf67e6f74ffa.jpeg"}, {"name": "88069e81-cf02-45b1-85b6-28870c40a7dd.jpeg", "url": "lumity/88069e81-cf02-45b1-85b6-28870c40a7dd.jpeg"}, {"name": "882235df-14f7-42fb-bdce-10b9c200e817.jpeg", "url": "lumity/882235df-14f7-42fb-bdce-10b9c200e817.jpeg"}, {"name": "882ea306-ebff-431e-95bb-d9b160efd813.jpeg", "url": "lumity/882ea306-ebff-431e-95bb-d9b160efd813.jpeg"}, {"name": "88c1ec44-acab-4b4b-b8a1-3bda27fc1be5.jpeg", "url": "lumity/88c1ec44-acab-4b4b-b8a1-3bda27fc1be5.jpeg"}, {"name": "8a2f52a2-6b16-4e9a-9a76-c29eae699e85.jpeg", "url": "lumity/8a2f52a2-6b16-4e9a-9a76-c29eae699e85.jpeg"}, {"name": "8ada9458-78d1-4556-afa9-d45b6701d362.jpeg", "url": "lumity/8ada9458-78d1-4556-afa9-d45b6701d362.jpeg"}, {"name": "8d67e57d-bf7f-475c-a77f-086a9a55a19e.jpeg", "url": "lumity/8d67e57d-bf7f-475c-a77f-086a9a55a19e.jpeg"}, {"name": "8d7e4862-34b1-4842-8d75-3a0f2199c072.jpeg", "url": "lumity/8d7e4862-34b1-4842-8d75-3a0f2199c072.jpeg"}, {"name": "8dab5d06-4bd0-47b4-b582-336e15cfb6bc.jpeg", "url": "lumity/8dab5d06-4bd0-47b4-b582-336e15cfb6bc.jpeg"}, {"name": "8e28e3ce-4951-4fcd-9f3f-7cd07d5dcc0c.jpeg", "url": "lumity/8e28e3ce-4951-4fcd-9f3f-7cd07d5dcc0c.jpeg"}, {"name": "8e800237-0245-425b-8889-f2f4ebe374ec.jpeg", "url": "lumity/8e800237-0245-425b-8889-f2f4ebe374ec.jpeg"}, {"name": "8f310a12-c112-46d7-ac2b-eae39870adac(1).jpeg", "url": "lumity/8f310a12-c112-46d7-ac2b-eae39870adac%281%29.jpeg"}, {"name": "8f310a12-c112-46d7-ac2b-eae39870adac.jpeg", "url": "lumity/8f310a12-c112-46d7-ac2b-eae39870adac.jpeg"}, {"name": "8fd01a63-a71c-4f57-b7d9-475c2d9af984(1).jpeg", "url": "lumity/8fd01a63-a71c-4f57-b7d9-475c2d9af984%281%29.jpeg"}, {"name": "8fd01a63-a71c-4f57-b7d9-475c2d9af984.jpeg", "url": "lumity/8fd01a63-a71c-4f57-b7d9-475c2d9af984.jpeg"}, {"name": "902b33e9-7cb8-42c1-a8bd-ccc8ca08b590.jpeg", "url": "lumity/902b33e9-7cb8-42c1-a8bd-ccc8ca08b590.jpeg"}, {"name": "903f3b23-0e12-4ed7-9cc2-6efc7c2e9189(1).jpeg", "url": "lumity/903f3b23-0e12-4ed7-9cc2-6efc7c2e9189%281%29.jpeg"}, {"name": "903f3b23-0e12-4ed7-9cc2-6efc7c2e9189.jpeg", "url": "lumity/903f3b23-0e12-4ed7-9cc2-6efc7c2e9189.jpeg"}, {"name": "907b1ac0-2493-4998-ad02-2c6a9961f813.jpeg", "url": "lumity/907b1ac0-2493-4998-ad02-2c6a9961f813.jpeg"}, {"name": "90a80f3f-94f5-44ac-abd6-17c0fd97fba6.jpeg", "url": "lumity/90a80f3f-94f5-44ac-abd6-17c0fd97fba6.jpeg"}, {"name": "90ef13f1-4646-4194-ade3-a73d74c2503c.jpeg", "url": "lumity/90ef13f1-4646-4194-ade3-a73d74c2503c.jpeg"}, {"name": "91312f79-d483-4106-b134-0fbe483a54dc.jpeg", "url": "lumity/91312f79-d483-4106-b134-0fbe483a54dc.jpeg"}, {"name": "9157b779-2148-4a81-a7df-c6edc4fbeb10.jpeg", "url": "lumity/9157b779-2148-4a81-a7df-c6edc4fbeb10.jpeg"}, {"name": "9178971f-c56d-4088-a7ed-e46a13c5b117.jpeg", "url": "lumity/9178971f-c56d-4088-a7ed-e46a13c5b117.jpeg"}, {"name": "923c1a5b-dfda-4de6-9a69-a3a87534fc85.jpeg", "url": "lumity/923c1a5b-dfda-4de6-9a69-a3a87534fc85.jpeg"}, {"name": "94212b86-647f-4763-8558-1943f51f23aa.jpeg", "url": "lumity/94212b86-647f-4763-8558-1943f51f23aa.jpeg"}, {"name": "9497c7c1-d215-4fba-902d-18bf7584f237.jpeg", "url": "lumity/9497c7c1-d215-4fba-902d-18bf7584f237.jpeg"}, {"name": "9507530f-9fe3-4b84-ae22-91ad9b364889.jpeg", "url": "lumity/9507530f-9fe3-4b84-ae22-91ad9b364889.jpeg"}, {"name": "954b273e-2f78-436f-be17-876678faee33.jpeg", "url": "lumity/954b273e-2f78-436f-be17-876678faee33.jpeg"}, {"name": "95f6a1be-5fb1-4908-9c9c-f3f9cfeb1cb1.jpeg", "url": "lumity/95f6a1be-5fb1-4908-9c9c-f3f9cfeb1cb1.jpeg"}, {"name": "971a7da1-f94b-4c50-a0db-1ee45dc4eb88.jpeg", "url": "lumity/971a7da1-f94b-4c50-a0db-1ee45dc4eb88.jpeg"}, {"name": "980ae33d-fc3b-4712-8330-d3fb74b306ef(1).jpeg", "url": "lumity/980ae33d-fc3b-4712-8330-d3fb74b306ef%281%29.jpeg"}, {"name": "980ae33d-fc3b-4712-8330-d3fb74b306ef.jpeg", "url": "lumity/980ae33d-fc3b-4712-8330-d3fb74b306ef.jpeg"}, {"name": "9a0e07ec-41d4-47f3-9d31-e1a48e96c507.jpeg", "url": "lumity/9a0e07ec-41d4-47f3-9d31-e1a48e96c507.jpeg"}, {"name": "9af6f7ee-a254-4727-b9ba-28b0313d911b.jpeg", "url": "lumity/9af6f7ee-a254-4727-b9ba-28b0313d911b.jpeg"}, {"name": "9b065080-c102-4cbc-aecd-74b7e632c0af.jpeg", "url": "lumity/9b065080-c102-4cbc-aecd-74b7e632c0af.jpeg"}, {"name": "9b440e21-3af2-4104-a91e-7e53d4197271.jpeg", "url": "lumity/9b440e21-3af2-4104-a91e-7e53d4197271.jpeg"}, {"name": "9b4ee8ce-c34b-4003-9c92-041fa055d566.jpeg", "url": "lumity/9b4ee8ce-c34b-4003-9c92-041fa055d566.jpeg"}, {"name": "9c3d6794-aa71-496f-9ff3-beb4ffe38e3d.jpeg", "url": "lumity/9c3d6794-aa71-496f-9ff3-beb4ffe38e3d.jpeg"}, {"name": "9c617f4e-0050-4e47-ae22-b270e6441634.jpeg", "url": "lumity/9c617f4e-0050-4e47-ae22-b270e6441634.jpeg"}, {"name": "9ccbb353-57f5-4c9a-b4dc-626b65577d12.jpeg", "url": "lumity/9ccbb353-57f5-4c9a-b4dc-626b65577d12.jpeg"}, {"name": "9ce9637f-3abe-4f99-8fe0-4c831a5d5dc1.jpeg", "url": "lumity/9ce9637f-3abe-4f99-8fe0-4c831a5d5dc1.jpeg"}, {"name": "9ddf2d01-48bd-443b-9c13-3cb14300850c.jpeg", "url": "lumity/9ddf2d01-48bd-443b-9c13-3cb14300850c.jpeg"}, {"name": "9e4a16ff-efa9-469d-9661-a7f59d8ac5a6.jpeg", "url": "lumity/9e4a16ff-efa9-469d-9661-a7f59d8ac5a6.jpeg"}, {"name": "9f7c9d22-0b75-4677-a5e6-443e654b2e8c.jpeg", "url": "lumity/9f7c9d22-0b75-4677-a5e6-443e654b2e8c.jpeg"}, {"name": "9f995482-3654-4e5e-a2a5-49d5aa3fea53.jpeg", "url": "lumity/9f995482-3654-4e5e-a2a5-49d5aa3fea53.jpeg"}, {"name": "9fc93151-5eeb-4e12-b34e-2d88eabb7971.jpeg", "url": "lumity/9fc93151-5eeb-4e12-b34e-2d88eabb7971.jpeg"}, {"name": "9fd43ed5-f465-409f-b53f-26dad5e20050.jpeg", "url": "lumity/9fd43ed5-f465-409f-b53f-26dad5e20050.jpeg"}, {"name": "@alexl1196 on Instagram.jpeg", "url": "lumity/%40alexl1196%20on%20Instagram.jpeg"}, {"name": "@gohak_su on Twitter.jpeg", "url": "lumity/%40gohak_su%20on%20Twitter.jpeg"}, {"name": "AAHHHHHHHHHHHHHHHHHHH IT_S HAPPENING IT_S HAPPENING.jpeg", "url": "lumity/AAHHHHHHHHHHHHHHHHHHH%20IT_S%20HAPPENING%20IT_S%20HAPPENING.jpeg"}, {"name": "AMITY BLIGHT EVOLUTION.jpeg", "url": "lumity/AMITY%20BLIGHT%20EVOLUTION.jpeg"}, {"name": "Amity  💜💖.jpeg", "url": "lumity/Amity%20%20%F0%9F%92%9C%F0%9F%92%96.jpeg"}, {"name": "Amity (2).jpeg", "url": "lumity/Amity%20%282%29.jpeg"}, {"name": "Amity (4).jpeg", "url": "lumity/Amity%20%284%29.jpeg"}, {"name": "Amity - The Owl House.jpeg", "url": "lumity/Amity%20-%20The%20Owl%20House.jpeg"}, {"name": "Amity Blight (2).jpeg", "url": "lumity/Amity%20Blight%20%282%29.jpeg"}, {"name": "Amity Blight (3).jpeg", "url": "lumity/Amity%20Blight%20%283%29.jpeg"}, {"name": "Amity Blight (6).jpeg", "url": "lumity/Amity%20Blight%20%286%29.jpeg"}, {"name": "Amity Blight (8).jpeg", "url": "lumity/Amity%20Blight%20%288%29.jpeg"}, {"name": "Amity Blight Icon (1).jpeg", "url": "lumity/Amity%20Blight%20Icon%20%281%29.jpeg"}, {"name": "Amity Blight Icon~♡.jpeg", "url": "lumity/Amity%20Blight%20Icon~%E2%99%A1.jpeg"}, {"name": "Amity Blight _ The Owl House - PFP_s and Icons.jpeg", "url": "lumity/Amity%20Blight%20_%20The%20Owl%20House%20-%20PFP_s%20and%20Icons.jpeg"}, {"name": "Amity Blight icon (2).jpeg", "url": "lumity/Amity%20Blight%20icon%20%282%29.jpeg"}, {"name": "Amity Blight.jpeg", "url": "lumity/Amity%20Blight.jpeg"}, {"name": "Amity Blught icon.jpeg", "url": "lumity/Amity%20Blught%20icon.jpeg"}, {"name": "Amity Redesign! (1).jpeg", "url": "lumity/Amity%20Redesign%21%20%281%29.jpeg"}, {"name": "Amity Redesign!.jpeg", "url": "lumity/Amity%20Redesign%21.jpeg"}, {"name": "Amity and her cat✨💖😻.jpeg", "url": "lumity/Amity%20and%20her%20cat%E2%9C%A8%F0%9F%92%96%F0%9F%98%BB.jpeg"}, {"name": "Amity and luz enjoy the time together.jpeg", "url": "lumity/Amity%20and%20luz%20enjoy%20the%20time%20together.jpeg"}, {"name": "Amity and luz(1).jpeg", "url": "lumity/Amity%20and%20luz%281%29.jpeg"}, {"name": "Amity and luz.jpeg", "url": "lumity/Amity%20and%20luz.jpeg"}, {"name": "Amity blight (7).jpeg", "url": "lumity/Amity%20blight%20%287%29.jpeg"}, {"name": "Amity in the Boiling Islands.jpeg", "url": "lumity/Amity%20in%20the%20Boiling%20Islands.jpeg"}, {"name": "Amity kisses Luz(1).jpeg", "url": "lumity/Amity%20kisses%20Luz%281%29.jpeg"}, {"name": "Amity kisses Luz.jpeg", "url": "lumity/Amity%20kisses%20Luz.jpeg"}, {"name": "Amity pfp #25(1).jpeg", "url": "lumity/Amity%20pfp%20%2325%281%29.jpeg"}, {"name": "Amity pfp #25.jpeg", "url": "lumity/Amity%20pfp%20%2325.jpeg"}, {"name": "Amity s3_3.jpeg", "url": "lumity/Amity%20s3_3.jpeg"}, {"name": "Amity x luz 🤎💜(1).jpeg", "url": "lumity/Amity%20x%20luz%20%F0%9F%A4%8E%F0%9F%92%9C%281%29.jpeg"}, {"name": "Amity x luz 🤎💜.jpeg", "url": "lumity/Amity%20x%20luz%20%F0%9F%A4%8E%F0%9F%92%9C.jpeg"}, {"name": "Amity ♡.jpeg", "url": "lumity/Amity%20%E2%99%A1.jpeg"}, {"name": "BRO OML IM IN LOVEE(1).jpeg", "url": "lumity/BRO%20OML%20IM%20IN%20LOVEE%281%29.jpeg"}, {"name": "BRO OML IM IN LOVEE(2).jpeg", "url": "lumity/BRO%20OML%20IM%20IN%20LOVEE%282%29.jpeg"}, {"name": "BRO OML IM IN LOVEE.jpeg", "url": "lumity/BRO%20OML%20IM%20IN%20LOVEE.jpeg"}, {"name": "By_ skyblob.jpeg", "url": "lumity/By_%20skyblob.jpeg"}, {"name": "CREDIT_ _Caro_martinez6_ ( Instagram )(1).jpeg", "url": "lumity/CREDIT_%20_Caro_martinez6_%20%28%20Instagram%20%29%281%29.jpeg"}, {"name": "CREDIT_ _Caro_martinez6_ ( Instagram )(2).jpeg", "url": "lumity/CREDIT_%20_Caro_martinez6_%20%28%20Instagram%20%29%282%29.jpeg"}, {"name": "CREDIT_ _Caro_martinez6_ ( Instagram ).jpeg", "url": "lumity/CREDIT_%20_Caro_martinez6_%20%28%20Instagram%20%29.jpeg"}, {"name": "Credit_ raspbi (Instagram).jpeg", "url": "lumity/Credit_%20raspbi%20%28Instagram%29.jpeg"}, {"name": "Cute (1).jpeg", "url": "lumity/Cute%20%281%29.jpeg"}, {"name": "Cute (2).jpeg", "url": "lumity/Cute%20%282%29.jpeg"}, {"name": "Cute Amity.jpeg", "url": "lumity/Cute%20Amity.jpeg"}, {"name": "Cute.jpeg", "url": "lumity/Cute.jpeg"}, {"name": "Fn-d262XkAIJF_w.jpeg", "url": "lumity/Fn-d262XkAIJF_w.jpeg"}, {"name": "Future Amity Vibes.jpeg", "url": "lumity/Future%20Amity%20Vibes.jpeg"}, {"name": "Happy pride every one!!!! Feliz pride a todos!!!.jpeg", "url": "lumity/Happy%20pride%20every%20one%21%21%21%21%20Feliz%20pride%20a%20todos%21%21%21.jpeg"}, {"name": "Hexside😜✌ (1).jpeg", "url": "lumity/Hexside%F0%9F%98%9C%E2%9C%8C%20%281%29.jpeg"}, {"name": "Hexside😜✌.jpeg", "url": "lumity/Hexside%F0%9F%98%9C%E2%9C%8C.jpeg"}, {"name": "I wish love like this was Real because we all need it.jpeg", "url": "lumity/I%20wish%20love%20like%20this%20was%20Real%20because%20we%20all%20need%20it.jpeg"}, {"name": "Icon Amity.jpeg", "url": "lumity/Icon%20Amity.jpeg"}, {"name": "LUMITY SUPREMACY(1).jpeg", "url": "lumity/LUMITY%20SUPREMACY%281%29.jpeg"}, {"name": "LUMITY SUPREMACY.jpeg", "url": "lumity/LUMITY%20SUPREMACY.jpeg"}, {"name": "Lumity (1).jpeg", "url": "lumity/Lumity%20%281%29.jpeg"}, {"name": "Lumity (10).jpeg", "url": "lumity/Lumity%20%2810%29.jpeg"}, {"name": "Lumity (11).jpeg", "url": "lumity/Lumity%20%2811%29.jpeg"}, {"name": "Lumity (12).jpeg", "url": "lumity/Lumity%20%2812%29.jpeg"}, {"name": "Lumity (17).jpeg", "url": "lumity/Lumity%20%2817%29.jpeg"}, {"name": "Lumity (18).jpeg", "url": "lumity/Lumity%20%2818%29.jpeg"}, {"name": "Lumity (19).jpeg", "url": "lumity/Lumity%20%2819%29.jpeg"}, {"name": "Lumity (2).jpeg", "url": "lumity/Lumity%20%282%29.jpeg"}, {"name": "Lumity (20).jpeg", "url": "lumity/Lumity%20%2820%29.jpeg"}, {"name": "Lumity (21).jpeg", "url": "lumity/Lumity%20%2821%29.jpeg"}, {"name": "Lumity (23).jpeg", "url": "lumity/Lumity%20%2823%29.jpeg"}, {"name": "Lumity (27).jpeg", "url": "lumity/Lumity%20%2827%29.jpeg"}, {"name": "Lumity (28).jpeg", "url": "lumity/Lumity%20%2828%29.jpeg"}, {"name": "Lumity (29).jpeg", "url": "lumity/Lumity%20%2829%29.jpeg"}, {"name": "Lumity (3).jpeg", "url": "lumity/Lumity%20%283%29.jpeg"}, {"name": "Lumity (30).jpeg", "url": "lumity/Lumity%20%2830%29.jpeg"}, {"name": "Lumity (31).jpeg", "url": "lumity/Lumity%20%2831%29.jpeg"}, {"name": "Lumity (32).jpeg", "url": "lumity/Lumity%20%2832%29.jpeg"}, {"name": "Lumity (33).jpeg", "url": "lumity/Lumity%20%2833%29.jpeg"}, {"name": "Lumity (34).jpeg", "url": "lumity/Lumity%20%2834%29.jpeg"}, {"name": "Lumity (6).jpeg", "url": "lumity/Lumity%20%286%29.jpeg"}, {"name": "Lumity (8).jpeg", "url": "lumity/Lumity%20%288%29.jpeg"}, {"name": "Lumity (9).jpeg", "url": "lumity/Lumity%20%289%29.jpeg"}, {"name": "Lumity Canon Moment.jpeg", "url": "lumity/Lumity%20Canon%20Moment.jpeg"}, {"name": "Lumity Icon (1).jpeg", "url": "lumity/Lumity%20Icon%20%281%29.jpeg"}, {"name": "Lumity _3.jpeg", "url": "lumity/Lumity%20_3.jpeg"}, {"name": "Lumity hug(1).jpeg", "url": "lumity/Lumity%20hug%281%29.jpeg"}, {"name": "Lumity hug(2).jpeg", "url": "lumity/Lumity%20hug%282%29.jpeg"}, {"name": "Lumity hug.jpeg", "url": "lumity/Lumity%20hug.jpeg"}, {"name": "Lumity icon.jpeg", "url": "lumity/Lumity%20icon.jpeg"}, {"name": "Lumity matching icons(1).jpeg", "url": "lumity/Lumity%20matching%20icons%281%29.jpeg"}, {"name": "Lumity matching icons.jpeg", "url": "lumity/Lumity%20matching%20icons.jpeg"}, {"name": "Lumity wallpaper (1).jpeg", "url": "lumity/Lumity%20wallpaper%20%281%29.jpeg"}, {"name": "Lumity wallpaper(1).jpeg", "url": "lumity/Lumity%20wallpaper%281%29.jpeg"}, {"name": "Lumity wallpaper.jpeg", "url": "lumity/Lumity%20wallpaper.jpeg"}, {"name": "Lumity ~sleep_ (1).jpeg", "url": "lumity/Lumity%20~sleep_%20%281%29.jpeg"}, {"name": "Lumity ~sleep_.jpeg", "url": "lumity/Lumity%20~sleep_.jpeg"}, {"name": "Lumity • The Owl House(1).jpeg", "url": "lumity/Lumity%20%E2%80%A2%20The%20Owl%20House%281%29.jpeg"}, {"name": "Lumity • The Owl House.jpeg", "url": "lumity/Lumity%20%E2%80%A2%20The%20Owl%20House.jpeg"}, {"name": "Lumity ✨ (1).jpeg", "url": "lumity/Lumity%20%E2%9C%A8%20%281%29.jpeg"}, {"name": "Lumity ✨.jpeg", "url": "lumity/Lumity%20%E2%9C%A8.jpeg"}, {"name": "Lumity 😍.jpeg", "url": "lumity/Lumity%20%F0%9F%98%8D.jpeg"}, {"name": "Lumity 🤗🤗 (by moringmark on tumblr!).jpeg", "url": "lumity/Lumity%20%F0%9F%A4%97%F0%9F%A4%97%20%28by%20moringmark%20on%20tumblr%21%29.jpeg"}, {"name": "Lumity.jpeg", "url": "lumity/Lumity.jpeg"}, {"name": "Luz and Amity are dating.jpeg", "url": "lumity/Luz%20and%20Amity%20are%20dating.jpeg"}, {"name": "Luz and Amity fan art from The Owl House Season 2 (credit_ @rain_rouh on IG).jpeg", "url": "lumity/Luz%20and%20Amity%20fan%20art%20from%20The%20Owl%20House%20Season%202%20%28credit_%20%40rain_rouh%20on%20IG%29.jpeg"}, {"name": "Luz and Amity hugging!!💞.jpeg", "url": "lumity/Luz%20and%20Amity%20hugging%21%21%F0%9F%92%9E.jpeg"}, {"name": "Luz and amity.jpeg", "url": "lumity/Luz%20and%20amity.jpeg"}, {"name": "Luz and amity✨😍💘🦉(1).jpeg", "url": "lumity/Luz%20and%20amity%E2%9C%A8%F0%9F%98%8D%F0%9F%92%98%F0%9F%A6%89%281%29.jpeg"}, {"name": "Luz and amity✨😍💘🦉(2).jpeg", "url": "lumity/Luz%20and%20amity%E2%9C%A8%F0%9F%98%8D%F0%9F%92%98%F0%9F%A6%89%282%29.jpeg"}, {"name": "Luz and amity✨😍💘🦉(3).jpeg", "url": "lumity/Luz%20and%20amity%E2%9C%A8%F0%9F%98%8D%F0%9F%92%98%F0%9F%A6%89%283%29.jpeg"}, {"name": "Luz and amity✨😍💘🦉.jpeg", "url": "lumity/Luz%20and%20amity%E2%9C%A8%F0%9F%98%8D%F0%9F%92%98%F0%9F%A6%89.jpeg"}, {"name": "Luz x Amity.jpeg", "url": "lumity/Luz%20x%20Amity.jpeg"}, {"name": "Luz y Amity.jpeg", "url": "lumity/Luz%20y%20Amity.jpeg"}, {"name": "Luz, are you okay__Aha_.jpeg", "url": "lumity/Luz%2C%20are%20you%20okay__Aha_.jpeg"}, {"name": "Mara on Instagram_ _Lumity again✨ Back with more Owl House content_ #drawing #digitalart #procreate #theowlhouse #disney #lumity #luzxamity_(1).jpeg", "url": "lumity/Mara%20on%20Instagram_%20_Lumity%20again%E2%9C%A8%20Back%20with%20more%20Owl%20House%20content_%20%23drawing%20%23digitalart%20%23procreate%20%23theowlhouse%20%23disney%20%23lumity%20%23luzxamity_%281%29.jpeg"}, {"name": "Mara on Instagram_ _Lumity again✨ Back with more Owl House content_ #drawing #digitalart #procreate #theowlhouse #disney #lumity #luzxamity_(2).jpeg", "url": "lumity/Mara%20on%20Instagram_%20_Lumity%20again%E2%9C%A8%20Back%20with%20more%20Owl%20House%20content_%20%23drawing%20%23digitalart%20%23procreate%20%23theowlhouse%20%23disney%20%23lumity%20%23luzxamity_%282%29.jpeg"}, {"name": "Mara on Instagram_ _Lumity again✨ Back with more Owl House content_ #drawing #digitalart #procreate #theowlhouse #disney #lumity #luzxamity_.jpeg", "url": "lumity/Mara%20on%20Instagram_%20_Lumity%20again%E2%9C%A8%20Back%20with%20more%20Owl%20House%20content_%20%23drawing%20%23digitalart%20%23procreate%20%23theowlhouse%20%23disney%20%23lumity%20%23luzxamity_.jpeg"}, {"name": "Not mi.jpeg", "url": "lumity/Not%20mi.jpeg"}, {"name": "Owl House🦉🏠 ❤.jpeg", "url": "lumity/Owl%20House%F0%9F%A6%89%F0%9F%8F%A0%20%E2%9D%A4.jpeg"}, {"name": "Reblog by @incorrectlumityquotes · 1 image(1).jpeg", "url": "lumity/Reblog%20by%20%40incorrectlumityquotes%20%C2%B7%201%20image%281%29.jpeg"}, {"name": "Reblog by @incorrectlumityquotes · 1 image(2).jpeg", "url": "lumity/Reblog%20by%20%40incorrectlumityquotes%20%C2%B7%201%20image%282%29.jpeg"}, {"name": "Reblog by @incorrectlumityquotes · 1 image.jpeg", "url": "lumity/Reblog%20by%20%40incorrectlumityquotes%20%C2%B7%201%20image.jpeg"}, {"name": "Season 2 Promo.jpeg", "url": "lumity/Season%202%20Promo.jpeg"}, {"name": "Short haired Amity by me 🪻.jpeg", "url": "lumity/Short%20haired%20Amity%20by%20me%20%F0%9F%AA%BB.jpeg"}, {"name": "Temporada 1.jpeg", "url": "lumity/Temporada%201.jpeg"}, {"name": "The Owl House (11).jpeg", "url": "lumity/The%20Owl%20House%20%2811%29.jpeg"}, {"name": "The Owl House (12).jpeg", "url": "lumity/The%20Owl%20House%20%2812%29.jpeg"}, {"name": "The Owl House (13).jpeg", "url": "lumity/The%20Owl%20House%20%2813%29.jpeg"}, {"name": "The Owl House (14).jpeg", "url": "lumity/The%20Owl%20House%20%2814%29.jpeg"}, {"name": "The Owl House (15).jpeg", "url": "lumity/The%20Owl%20House%20%2815%29.jpeg"}, {"name": "The Owl House (16).jpeg", "url": "lumity/The%20Owl%20House%20%2816%29.jpeg"}, {"name": "The Owl House (17).jpeg", "url": "lumity/The%20Owl%20House%20%2817%29.jpeg"}, {"name": "The Owl House (18).jpeg", "url": "lumity/The%20Owl%20House%20%2818%29.jpeg"}, {"name": "The Owl House (2)(1).jpeg", "url": "lumity/The%20Owl%20House%20%282%29%281%29.jpeg"}, {"name": "The Owl House (2)(2).jpeg", "url": "lumity/The%20Owl%20House%20%282%29%282%29.jpeg"}, {"name": "The Owl House (2).jpeg", "url": "lumity/The%20Owl%20House%20%282%29.jpeg"}, {"name": "The Owl House (9)(1).jpeg", "url": "lumity/The%20Owl%20House%20%289%29%281%29.jpeg"}, {"name": "The Owl House (9).jpeg", "url": "lumity/The%20Owl%20House%20%289%29.jpeg"}, {"name": "The Owl House Lumity (1).jpeg", "url": "lumity/The%20Owl%20House%20Lumity%20%281%29.jpeg"}, {"name": "The Owl House Lumity.jpeg", "url": "lumity/The%20Owl%20House%20Lumity.jpeg"}, {"name": "The owl house (1)(1).jpeg", "url": "lumity/The%20owl%20house%20%281%29%281%29.jpeg"}, {"name": "The owl house (1)(2).jpeg", "url": "lumity/The%20owl%20house%20%281%29%282%29.jpeg"}, {"name": "The owl house (1).jpeg", "url": "lumity/The%20owl%20house%20%281%29.jpeg"}, {"name": "The owl house (10).jpeg", "url": "lumity/The%20owl%20house%20%2810%29.jpeg"}, {"name": "The owl house (3)(1).jpeg", "url": "lumity/The%20owl%20house%20%283%29%281%29.jpeg"}, {"name": "The owl house (3).jpeg", "url": "lumity/The%20owl%20house%20%283%29.jpeg"}, {"name": "The owl house (4).jpeg", "url": "lumity/The%20owl%20house%20%284%29.jpeg"}, {"name": "The owl house (5).jpeg", "url": "lumity/The%20owl%20house%20%285%29.jpeg"}, {"name": "The owl house (6).jpeg", "url": "lumity/The%20owl%20house%20%286%29.jpeg"}, {"name": "The owl house (7).jpeg", "url": "lumity/The%20owl%20house%20%287%29.jpeg"}, {"name": "The owl house (8).jpeg", "url": "lumity/The%20owl%20house%20%288%29.jpeg"}, {"name": "The owl house limits.jpeg", "url": "lumity/The%20owl%20house%20limits.jpeg"}, {"name": "The owl house lumity wallpaper.jpeg", "url": "lumity/The%20owl%20house%20lumity%20wallpaper.jpeg"}, {"name": "The owl house s2 ep14(1).jpeg", "url": "lumity/The%20owl%20house%20s2%20ep14%281%29.jpeg"}, {"name": "The owl house s2 ep14.jpeg", "url": "lumity/The%20owl%20house%20s2%20ep14.jpeg"}, {"name": "The owl house(1).jpeg", "url": "lumity/The%20owl%20house%281%29.jpeg"}, {"name": "The owl house(2).jpeg", "url": "lumity/The%20owl%20house%282%29.jpeg"}, {"name": "The owl house.jpeg", "url": "lumity/The%20owl%20house.jpeg"}, {"name": "Their so cute togetherrr.jpeg", "url": "lumity/Their%20so%20cute%20togetherrr.jpeg"}, {"name": "Theowlhouse) Lumity.jpeg", "url": "lumity/Theowlhouse%29%20Lumity.jpeg"}, {"name": "Toh _Lumity.jpeg", "url": "lumity/Toh%20_Lumity.jpeg"}, {"name": "Wallpaper Amity Blight and Luz Noceda (2).jpeg", "url": "lumity/Wallpaper%20Amity%20Blight%20and%20Luz%20Noceda%20%282%29.jpeg"}, {"name": "Wallpaper Amity Blight and Luz Noceda(1).jpeg", "url": "lumity/Wallpaper%20Amity%20Blight%20and%20Luz%20Noceda%281%29.jpeg"}, {"name": "Wallpaper Amity Blight and Luz Noceda.jpeg", "url": "lumity/Wallpaper%20Amity%20Blight%20and%20Luz%20Noceda.jpeg"}, {"name": "Where the rain doesn’t burn_(1).jpeg", "url": "lumity/Where%20the%20rain%20doesn%E2%80%99t%20burn_%281%29.jpeg"}, {"name": "Where the rain doesn’t burn_.jpeg", "url": "lumity/Where%20the%20rain%20doesn%E2%80%99t%20burn_.jpeg"}, {"name": "_3 (1).jpeg", "url": "lumity/_3%20%281%29.jpeg"}, {"name": "a1154b1c-1a10-4fea-920c-900c9274b2d2.jpeg", "url": "lumity/a1154b1c-1a10-4fea-920c-900c9274b2d2.jpeg"}, {"name": "a212d85c-1cce-461b-b32e-cf11172ee0c6.jpeg", "url": "lumity/a212d85c-1cce-461b-b32e-cf11172ee0c6.jpeg"}, {"name": "a297619f-6105-4fb6-b2fc-9069fa4290a1.jpeg", "url": "lumity/a297619f-6105-4fb6-b2fc-9069fa4290a1.jpeg"}, {"name": "a5e879c2-9dba-4364-a262-eb3a71ab68b5.jpeg", "url": "lumity/a5e879c2-9dba-4364-a262-eb3a71ab68b5.jpeg"}, {"name": "a754d619-2a9c-4184-a468-664e2a4d47f9.jpeg", "url": "lumity/a754d619-2a9c-4184-a468-664e2a4d47f9.jpeg"}, {"name": "a8314b7d-f743-4278-8186-e7f88b92a940.jpeg", "url": "lumity/a8314b7d-f743-4278-8186-e7f88b92a940.jpeg"}, {"name": "a8f18b1c-c970-47ec-bae9-a5850fa8e4c3.jpeg", "url": "lumity/a8f18b1c-c970-47ec-bae9-a5850fa8e4c3.jpeg"}, {"name": "a9146823-2855-444d-85b7-876c1f848f48.jpeg", "url": "lumity/a9146823-2855-444d-85b7-876c1f848f48.jpeg"}, {"name": "a987cd85-45be-44fa-a694-fe747e7a2f16.jpeg", "url": "lumity/a987cd85-45be-44fa-a694-fe747e7a2f16.jpeg"}, {"name": "acca7b57-26c1-43e6-a58c-1b9653368681.jpeg", "url": "lumity/acca7b57-26c1-43e6-a58c-1b9653368681.jpeg"}, {"name": "acecb7a1-e8e8-447d-8341-95a65f6eb6a3.jpeg", "url": "lumity/acecb7a1-e8e8-447d-8341-95a65f6eb6a3.jpeg"}, {"name": "ad350a29-1f23-45c1-9f66-6ae3fa813220.jpeg", "url": "lumity/ad350a29-1f23-45c1-9f66-6ae3fa813220.jpeg"}, {"name": "ad914276-5a8c-4d4d-9a6b-9e878b46c2a2.jpeg", "url": "lumity/ad914276-5a8c-4d4d-9a6b-9e878b46c2a2.jpeg"}, {"name": "ae9d0fa8-da73-430b-8c59-0fd81ff30b69.jpeg", "url": "lumity/ae9d0fa8-da73-430b-8c59-0fd81ff30b69.jpeg"}, {"name": "af686022-aeba-47c7-972f-f6284f47ebc5.jpeg", "url": "lumity/af686022-aeba-47c7-972f-f6284f47ebc5.jpeg"}, {"name": "af79f9ab-bb55-4a79-93f6-6488198c951f.jpeg", "url": "lumity/af79f9ab-bb55-4a79-93f6-6488198c951f.jpeg"}, {"name": "ahhh they are so cute credits to who made this __3 (1)(1).jpeg", "url": "lumity/ahhh%20they%20are%20so%20cute%20credits%20to%20who%20made%20this%20__3%20%281%29%281%29.jpeg"}, {"name": "ahhh they are so cute credits to who made this __3 (1).jpeg", "url": "lumity/ahhh%20they%20are%20so%20cute%20credits%20to%20who%20made%20this%20__3%20%281%29.jpeg"}, {"name": "ahhh they are so cute credits to who made this __3 (2).jpeg", "url": "lumity/ahhh%20they%20are%20so%20cute%20credits%20to%20who%20made%20this%20__3%20%282%29.jpeg"}, {"name": "ahhh they are so cute credits to who made this __3.jpeg", "url": "lumity/ahhh%20they%20are%20so%20cute%20credits%20to%20who%20made%20this%20__3.jpeg"}, {"name": "amity & luz (1).jpeg", "url": "lumity/amity%20%26%20luz%20%281%29.jpeg"}, {"name": "amity & luz (2).jpeg", "url": "lumity/amity%20%26%20luz%20%282%29.jpeg"}, {"name": "amity & luz.jpeg", "url": "lumity/amity%20%26%20luz.jpeg"}, {"name": "amity (3).jpeg", "url": "lumity/amity%20%283%29.jpeg"}, {"name": "amity (5).jpeg", "url": "lumity/amity%20%285%29.jpeg"}, {"name": "amity angry.jpeg", "url": "lumity/amity%20angry.jpeg"}, {"name": "amity blight (1).jpeg", "url": "lumity/amity%20blight%20%281%29.jpeg"}, {"name": "amity blight (4).jpeg", "url": "lumity/amity%20blight%20%284%29.jpeg"}, {"name": "amity blight (5).jpeg", "url": "lumity/amity%20blight%20%285%29.jpeg"}, {"name": "amity blight the owl house.jpeg", "url": "lumity/amity%20blight%20the%20owl%20house.jpeg"}, {"name": "amity cute (1).jpeg", "url": "lumity/amity%20cute%20%281%29.jpeg"}, {"name": "amity cute.jpeg", "url": "lumity/amity%20cute.jpeg"}, {"name": "amity in garden.jpeg", "url": "lumity/amity%20in%20garden.jpeg"}, {"name": "amity the owl house !.jpeg", "url": "lumity/amity%20the%20owl%20house%20%21.jpeg"}, {"name": "amity the owl house fanart.jpeg", "url": "lumity/amity%20the%20owl%20house%20fanart.jpeg"}, {"name": "amity toh season three ref.jpeg", "url": "lumity/amity%20toh%20season%20three%20ref.jpeg"}, {"name": "amity • the owl house (1).jpeg", "url": "lumity/amity%20%E2%80%A2%20the%20owl%20house%20%281%29.jpeg"}, {"name": "amity • the owl house (2).jpeg", "url": "lumity/amity%20%E2%80%A2%20the%20owl%20house%20%282%29.jpeg"}, {"name": "amity • the owl house.jpeg", "url": "lumity/amity%20%E2%80%A2%20the%20owl%20house.jpeg"}, {"name": "amity.jpeg", "url": "lumity/amity.jpeg"}, {"name": "amity_.! _ toh.jpg", "url": "lumity/amity_.%21%20_%20toh.jpg"}, {"name": "amyndish in twitter.jpeg", "url": "lumity/amyndish%20in%20twitter.jpeg"}, {"name": "b0129402-046f-487b-ba2a-bb1ea6e8f95f.jpeg", "url": "lumity/b0129402-046f-487b-ba2a-bb1ea6e8f95f.jpeg"}, {"name": "b0c91bb1-b814-4852-8a7f-f09ea3b0bf09(1).jpeg", "url": "lumity/b0c91bb1-b814-4852-8a7f-f09ea3b0bf09%281%29.jpeg"}, {"name": "b0c91bb1-b814-4852-8a7f-f09ea3b0bf09.jpeg", "url": "lumity/b0c91bb1-b814-4852-8a7f-f09ea3b0bf09.jpeg"}, {"name": "b0c9c947-9e92-4ec4-b0d0-5df4ae8640cc.jpeg", "url": "lumity/b0c9c947-9e92-4ec4-b0d0-5df4ae8640cc.jpeg"}, {"name": "b0f80608-77ed-4332-9ccf-e46d394bdc31(1).jpeg", "url": "lumity/b0f80608-77ed-4332-9ccf-e46d394bdc31%281%29.jpeg"}, {"name": "b0f80608-77ed-4332-9ccf-e46d394bdc31(2).jpeg", "url": "lumity/b0f80608-77ed-4332-9ccf-e46d394bdc31%282%29.jpeg"}, {"name": "b0f80608-77ed-4332-9ccf-e46d394bdc31.jpeg", "url": "lumity/b0f80608-77ed-4332-9ccf-e46d394bdc31.jpeg"}, {"name": "b28f2cd0-c48e-4690-a689-c71431ce4208.jpeg", "url": "lumity/b28f2cd0-c48e-4690-a689-c71431ce4208.jpeg"}, {"name": "b2a02ca3-bb3f-4ddc-8739-61f71fd2b637.jpeg", "url": "lumity/b2a02ca3-bb3f-4ddc-8739-61f71fd2b637.jpeg"}, {"name": "b31dfdb1-a515-44e7-9e4b-b17338234bba.jpeg", "url": "lumity/b31dfdb1-a515-44e7-9e4b-b17338234bba.jpeg"}, {"name": "b35a67d0-0c77-45d8-a234-33dbe345f43c.jpeg", "url": "lumity/b35a67d0-0c77-45d8-a234-33dbe345f43c.jpeg"}, {"name": "b418065d-2611-4e5c-aa8f-d528258ee869.jpeg", "url": "lumity/b418065d-2611-4e5c-aa8f-d528258ee869.jpeg"}, {"name": "b46c9570-931c-4400-a884-6598c14ec6f3.jpeg", "url": "lumity/b46c9570-931c-4400-a884-6598c14ec6f3.jpeg"}, {"name": "b4a8f7ba-52e3-46ef-b819-6fc915118dc6.jpeg", "url": "lumity/b4a8f7ba-52e3-46ef-b819-6fc915118dc6.jpeg"}, {"name": "b542c49d-a28c-418e-8590-2068afa1e7ba.jpeg", "url": "lumity/b542c49d-a28c-418e-8590-2068afa1e7ba.jpeg"}, {"name": "b56fe3a9-467d-4d08-b5ab-aa1335d66937.jpeg", "url": "lumity/b56fe3a9-467d-4d08-b5ab-aa1335d66937.jpeg"}, {"name": "b593593a-421b-4c8f-8fbf-4246066232b6(1).jpeg", "url": "lumity/b593593a-421b-4c8f-8fbf-4246066232b6%281%29.jpeg"}, {"name": "b593593a-421b-4c8f-8fbf-4246066232b6.jpeg", "url": "lumity/b593593a-421b-4c8f-8fbf-4246066232b6.jpeg"}, {"name": "b5d25952-93f4-4838-91ce-120720d741ec.jpeg", "url": "lumity/b5d25952-93f4-4838-91ce-120720d741ec.jpeg"}, {"name": "b650f306-e5e0-4e61-8255-c34092fd587b.jpeg", "url": "lumity/b650f306-e5e0-4e61-8255-c34092fd587b.jpeg"}, {"name": "b6befc95-a529-487b-b17a-729274bdf536.jpeg", "url": "lumity/b6befc95-a529-487b-b17a-729274bdf536.jpeg"}, {"name": "b85189e1-6dd8-48ca-895d-1c202b38ebf4.jpeg", "url": "lumity/b85189e1-6dd8-48ca-895d-1c202b38ebf4.jpeg"}, {"name": "b9ba3b19-d611-48fb-ba2c-8e25e748f61f.jpeg", "url": "lumity/b9ba3b19-d611-48fb-ba2c-8e25e748f61f.jpeg"}, {"name": "ba69a2bc-792c-4f65-b8f2-9c1eca1e0528.jpeg", "url": "lumity/ba69a2bc-792c-4f65-b8f2-9c1eca1e0528.jpeg"}, {"name": "ba9b9159-0572-4c4a-a953-4104b121bcad.jpeg", "url": "lumity/ba9b9159-0572-4c4a-a953-4104b121bcad.jpeg"}, {"name": "bb72bd8e-8e84-4010-8ff4-02edfbd1dd63.jpeg", "url": "lumity/bb72bd8e-8e84-4010-8ff4-02edfbd1dd63.jpeg"}, {"name": "bc881571-c317-4f6b-83be-13006f049375.jpeg", "url": "lumity/bc881571-c317-4f6b-83be-13006f049375.jpeg"}, {"name": "bf133ce9-3d27-467f-b3a4-4d96fc6f50ca.jpeg", "url": "lumity/bf133ce9-3d27-467f-b3a4-4d96fc6f50ca.jpeg"}, {"name": "bf902419-93de-4bd7-9cd8-8849fac6a1fd(1).jpeg", "url": "lumity/bf902419-93de-4bd7-9cd8-8849fac6a1fd%281%29.jpeg"}, {"name": "bf902419-93de-4bd7-9cd8-8849fac6a1fd(2).jpeg", "url": "lumity/bf902419-93de-4bd7-9cd8-8849fac6a1fd%282%29.jpeg"}, {"name": "bf902419-93de-4bd7-9cd8-8849fac6a1fd.jpeg", "url": "lumity/bf902419-93de-4bd7-9cd8-8849fac6a1fd.jpeg"}, {"name": "blight  AI Art _ PixAI.jpeg", "url": "lumity/blight%20%20AI%20Art%20_%20PixAI.jpeg"}, {"name": "c08e41a1-3744-47f6-8d6c-3afa5dcd7292(1).jpeg", "url": "lumity/c08e41a1-3744-47f6-8d6c-3afa5dcd7292%281%29.jpeg"}, {"name": "c08e41a1-3744-47f6-8d6c-3afa5dcd7292(2).jpeg", "url": "lumity/c08e41a1-3744-47f6-8d6c-3afa5dcd7292%282%29.jpeg"}, {"name": "c08e41a1-3744-47f6-8d6c-3afa5dcd7292.jpeg", "url": "lumity/c08e41a1-3744-47f6-8d6c-3afa5dcd7292.jpeg"}, {"name": "c0e45013-3f93-4e13-9d3a-50b5bfb2dda7.jpeg", "url": "lumity/c0e45013-3f93-4e13-9d3a-50b5bfb2dda7.jpeg"}, {"name": "c0edf3f2-f0cc-4744-bb32-fb3fb15bad94.jpeg", "url": "lumity/c0edf3f2-f0cc-4744-bb32-fb3fb15bad94.jpeg"}, {"name": "c0f387f7-7b55-494f-bdc3-5e2f1f8c47db.jpeg", "url": "lumity/c0f387f7-7b55-494f-bdc3-5e2f1f8c47db.jpeg"}, {"name": "c1d08a71-86fd-4a3c-b88e-c427b93cd7d4.jpeg", "url": "lumity/c1d08a71-86fd-4a3c-b88e-c427b93cd7d4.jpeg"}, {"name": "c35385d2-1e08-4ca3-b66c-994bc2540c90.jpeg", "url": "lumity/c35385d2-1e08-4ca3-b66c-994bc2540c90.jpeg"}, {"name": "c5c78f42-f878-4ce7-b3d2-53a8638042ea.jpeg", "url": "lumity/c5c78f42-f878-4ce7-b3d2-53a8638042ea.jpeg"}, {"name": "c71f6e3c-ee53-49cb-9d42-3fa65b384c91.jpeg", "url": "lumity/c71f6e3c-ee53-49cb-9d42-3fa65b384c91.jpeg"}, {"name": "c7536cd6-76bb-4eda-a0f3-31493f7d8b98.jpeg", "url": "lumity/c7536cd6-76bb-4eda-a0f3-31493f7d8b98.jpeg"}, {"name": "c8491a5c-4309-40d1-8faa-b6a38fb4537d.jpeg", "url": "lumity/c8491a5c-4309-40d1-8faa-b6a38fb4537d.jpeg"}, {"name": "c97d7140-8bf2-4b92-8b62-9f10982e1abb.jpeg", "url": "lumity/c97d7140-8bf2-4b92-8b62-9f10982e1abb.jpeg"}, {"name": "c9ee3da3-8300-484c-9fcd-81c8f6394f9a.jpeg", "url": "lumity/c9ee3da3-8300-484c-9fcd-81c8f6394f9a.jpeg"}, {"name": "canon lumity, the owl house season two Socks(1).jpeg", "url": "lumity/canon%20lumity%2C%20the%20owl%20house%20season%20two%20Socks%281%29.jpeg"}, {"name": "canon lumity, the owl house season two Socks.jpeg", "url": "lumity/canon%20lumity%2C%20the%20owl%20house%20season%20two%20Socks.jpeg"}, {"name": "cc0f63a9-e726-4af0-8550-f462e4611d3d(1).jpeg", "url": "lumity/cc0f63a9-e726-4af0-8550-f462e4611d3d%281%29.jpeg"}, {"name": "cc0f63a9-e726-4af0-8550-f462e4611d3d.jpeg", "url": "lumity/cc0f63a9-e726-4af0-8550-f462e4611d3d.jpeg"}, {"name": "ccb5284e-8bb0-45a7-a008-a632ea6defce.jpeg", "url": "lumity/ccb5284e-8bb0-45a7-a008-a632ea6defce.jpeg"}, {"name": "ccbab8ae-604a-4dfa-b8b5-11b3306fec65.jpeg", "url": "lumity/ccbab8ae-604a-4dfa-b8b5-11b3306fec65.jpeg"}, {"name": "cd2ffdc4-90ad-4c00-9690-4e7eb7e2596d.jpeg", "url": "lumity/cd2ffdc4-90ad-4c00-9690-4e7eb7e2596d.jpeg"}, {"name": "ce863fed-bd88-40f1-81f8-10e2c13ff38a.jpeg", "url": "lumity/ce863fed-bd88-40f1-81f8-10e2c13ff38a.jpeg"}, {"name": "cf4a4bb9-82c6-4568-a6fd-25cb6a2aec2e.jpeg", "url": "lumity/cf4a4bb9-82c6-4568-a6fd-25cb6a2aec2e.jpeg"}, {"name": "cfe50458-2f96-4b6f-81ae-ba53e731b894.jpeg", "url": "lumity/cfe50458-2f96-4b6f-81ae-ba53e731b894.jpeg"}, {"name": "christmas_lumity__the_owl_house__png__by_josephpatrickbrennan_dipjqqi-pre.png", "url": "lumity/christmas_lumity__the_owl_house__png__by_josephpatrickbrennan_dipjqqi-pre.png"}, {"name": "credits_ @dogwhiteE on Twitter(1).jpeg", "url": "lumity/credits_%20%40dogwhiteE%20on%20Twitter%281%29.jpeg"}, {"name": "credits_ @dogwhiteE on Twitter(2).jpeg", "url": "lumity/credits_%20%40dogwhiteE%20on%20Twitter%282%29.jpeg"}, {"name": "credits_ @dogwhiteE on Twitter.jpeg", "url": "lumity/credits_%20%40dogwhiteE%20on%20Twitter.jpeg"}, {"name": "d0a19548-f3e3-4166-9bd2-017cc5b0c8e4(1).jpeg", "url": "lumity/d0a19548-f3e3-4166-9bd2-017cc5b0c8e4%281%29.jpeg"}, {"name": "d0a19548-f3e3-4166-9bd2-017cc5b0c8e4.jpeg", "url": "lumity/d0a19548-f3e3-4166-9bd2-017cc5b0c8e4.jpeg"}, {"name": "d1503363-e55f-4b1c-9639-8e4c34ab70a1.jpeg", "url": "lumity/d1503363-e55f-4b1c-9639-8e4c34ab70a1.jpeg"}, {"name": "d180c9c3-656f-4c8c-87f8-56eb1c341687.jpeg", "url": "lumity/d180c9c3-656f-4c8c-87f8-56eb1c341687.jpeg"}, {"name": "d1b9ded7-b3ce-43cf-bc95-eaf1a2204e19.jpeg", "url": "lumity/d1b9ded7-b3ce-43cf-bc95-eaf1a2204e19.jpeg"}, {"name": "d1e13748-012f-4a86-ae0b-de243d59ad15.jpeg", "url": "lumity/d1e13748-012f-4a86-ae0b-de243d59ad15.jpeg"}, {"name": "d2476986-ee61-4298-b6e5-9d6727ec00f2.jpeg", "url": "lumity/d2476986-ee61-4298-b6e5-9d6727ec00f2.jpeg"}, {"name": "d476cf95-17f1-40ee-bc45-0d9f93d97209(1).jpeg", "url": "lumity/d476cf95-17f1-40ee-bc45-0d9f93d97209%281%29.jpeg"}, {"name": "d476cf95-17f1-40ee-bc45-0d9f93d97209.jpeg", "url": "lumity/d476cf95-17f1-40ee-bc45-0d9f93d97209.jpeg"}, {"name": "d4946972-94df-4d5a-8feb-b6da5804b1d3.jpeg", "url": "lumity/d4946972-94df-4d5a-8feb-b6da5804b1d3.jpeg"}, {"name": "d4fad2e6-73f8-4bc0-83fa-9dcca426dbc7.jpeg", "url": "lumity/d4fad2e6-73f8-4bc0-83fa-9dcca426dbc7.jpeg"}, {"name": "d57a4f80-f672-4f49-8f82-510b7278e5bb.jpeg", "url": "lumity/d57a4f80-f672-4f49-8f82-510b7278e5bb.jpeg"}, {"name": "d6fa7bec-e5c1-415b-9e67-3196d969d204.jpeg", "url": "lumity/d6fa7bec-e5c1-415b-9e67-3196d969d204.jpeg"}, {"name": "d7452211-3bfb-4f4c-8108-f364ff51d876.jpeg", "url": "lumity/d7452211-3bfb-4f4c-8108-f364ff51d876.jpeg"}, {"name": "d7e3f522-223e-4c75-ad91-c9154cf922c6.jpeg", "url": "lumity/d7e3f522-223e-4c75-ad91-c9154cf922c6.jpeg"}, {"name": "d8390629-ee89-46c0-8e6c-df02009abebc.jpeg", "url": "lumity/d8390629-ee89-46c0-8e6c-df02009abebc.jpeg"}, {"name": "d9409e24-821a-4d40-8e6f-a4daf6526d1a.jpeg", "url": "lumity/d9409e24-821a-4d40-8e6f-a4daf6526d1a.jpeg"}, {"name": "d9c76de3-d46e-498d-a6e1-e4820397bb86.jpeg", "url": "lumity/d9c76de3-d46e-498d-a6e1-e4820397bb86.jpeg"}, {"name": "d9e30f92-8354-42e8-9e3a-222276b38c47.jpeg", "url": "lumity/d9e30f92-8354-42e8-9e3a-222276b38c47.jpeg"}, {"name": "da38ddf8-15a7-49b9-baf0-914645ae098b(1).jpeg", "url": "lumity/da38ddf8-15a7-49b9-baf0-914645ae098b%281%29.jpeg"}, {"name": "da38ddf8-15a7-49b9-baf0-914645ae098b.jpeg", "url": "lumity/da38ddf8-15a7-49b9-baf0-914645ae098b.jpeg"}, {"name": "da4c60f6-1589-41ce-93e9-8dbda0a3bd7b.jpeg", "url": "lumity/da4c60f6-1589-41ce-93e9-8dbda0a3bd7b.jpeg"}, {"name": "da9f14cb-c349-462c-bb0f-8b0a8c7f236f.jpeg", "url": "lumity/da9f14cb-c349-462c-bb0f-8b0a8c7f236f.jpeg"}, {"name": "dac634fe-b96e-465a-979a-52d601a4a09a.jpeg", "url": "lumity/dac634fe-b96e-465a-979a-52d601a4a09a.jpeg"}, {"name": "dbe44873-169e-4038-938d-60ca71236ef2(1).jpeg", "url": "lumity/dbe44873-169e-4038-938d-60ca71236ef2%281%29.jpeg"}, {"name": "dbe44873-169e-4038-938d-60ca71236ef2.jpeg", "url": "lumity/dbe44873-169e-4038-938d-60ca71236ef2.jpeg"}, {"name": "de7d07ca-cf3a-4f01-9915-701a1028a331.jpeg", "url": "lumity/de7d07ca-cf3a-4f01-9915-701a1028a331.jpeg"}, {"name": "deizuwu on tumblr(1).jpeg", "url": "lumity/deizuwu%20on%20tumblr%281%29.jpeg"}, {"name": "deizuwu on tumblr(2).jpeg", "url": "lumity/deizuwu%20on%20tumblr%282%29.jpeg"}, {"name": "deizuwu on tumblr.jpeg", "url": "lumity/deizuwu%20on%20tumblr.jpeg"}, {"name": "df3a8085-6bce-4df2-bdb4-6457a891f9f8.jpeg", "url": "lumity/df3a8085-6bce-4df2-bdb4-6457a891f9f8.jpeg"}, {"name": "djaudk9-8f6a99ea-6694-418d-a3b1-2184bc6edfa5.png", "url": "lumity/djaudk9-8f6a99ea-6694-418d-a3b1-2184bc6edfa5.png"}, {"name": "dkjc27b-b76b6d3d-1b88-42f5-9759-3f0ba0eb5704.png", "url": "lumity/dkjc27b-b76b6d3d-1b88-42f5-9759-3f0ba0eb5704.png"}, {"name": "e0555142-90aa-4296-bc3a-e91ecba27f5a.jpeg", "url": "lumity/e0555142-90aa-4296-bc3a-e91ecba27f5a.jpeg"}, {"name": "e090ce9c-7968-41df-b5c8-54e8c297766d.jpeg", "url": "lumity/e090ce9c-7968-41df-b5c8-54e8c297766d.jpeg"}, {"name": "e0cd19a6-dbe8-4eb4-a28e-64f11e9a3792(1).jpeg", "url": "lumity/e0cd19a6-dbe8-4eb4-a28e-64f11e9a3792%281%29.jpeg"}, {"name": "e0cd19a6-dbe8-4eb4-a28e-64f11e9a3792.jpeg", "url": "lumity/e0cd19a6-dbe8-4eb4-a28e-64f11e9a3792.jpeg"}, {"name": "e27967f3-1bdc-4561-b776-b59ea4e5ce97.jpeg", "url": "lumity/e27967f3-1bdc-4561-b776-b59ea4e5ce97.jpeg"}, {"name": "e2d26082-583b-49ea-9dc1-86596f1ad2ca.jpeg", "url": "lumity/e2d26082-583b-49ea-9dc1-86596f1ad2ca.jpeg"}, {"name": "e335235a-0c3e-448b-bca4-39ef5a0f8901.jpeg", "url": "lumity/e335235a-0c3e-448b-bca4-39ef5a0f8901.jpeg"}, {"name": "e380a2d8-a095-4b34-b4e1-2d743a59d56e.jpeg", "url": "lumity/e380a2d8-a095-4b34-b4e1-2d743a59d56e.jpeg"}, {"name": "e3c8a3a0-5974-4199-9cd6-fb535f21aecb.jpeg", "url": "lumity/e3c8a3a0-5974-4199-9cd6-fb535f21aecb.jpeg"}, {"name": "e489d9c1-373e-4b3c-be8a-c01f5af0a990.jpeg", "url": "lumity/e489d9c1-373e-4b3c-be8a-c01f5af0a990.jpeg"}, {"name": "e4d60fef-f5dc-4b30-977f-09cf744c7638.jpeg", "url": "lumity/e4d60fef-f5dc-4b30-977f-09cf744c7638.jpeg"}, {"name": "e517ca05-caf7-4a26-9214-dae59d092da4.jpeg", "url": "lumity/e517ca05-caf7-4a26-9214-dae59d092da4.jpeg"}, {"name": "e70ed8f2-25b1-4b48-8edb-cb85db0322c3.jpeg", "url": "lumity/e70ed8f2-25b1-4b48-8edb-cb85db0322c3.jpeg"}, {"name": "e7ab71cd-02ef-4a86-a6f5-b66c95daca5c.jpeg", "url": "lumity/e7ab71cd-02ef-4a86-a6f5-b66c95daca5c.jpeg"}, {"name": "e9b776b4-babf-4f07-92f9-efdb6248e157.jpeg", "url": "lumity/e9b776b4-babf-4f07-92f9-efdb6248e157.jpeg"}, {"name": "ea6f1b1a-63e0-4afd-8d13-a579314eb37e.jpeg", "url": "lumity/ea6f1b1a-63e0-4afd-8d13-a579314eb37e.jpeg"}, {"name": "ebf5b0dc-4104-4c4f-bfeb-8f74dd1e204b.jpeg", "url": "lumity/ebf5b0dc-4104-4c4f-bfeb-8f74dd1e204b.jpeg"}, {"name": "ec2c9d46-854d-49ee-a58e-2c0f96965515.jpeg", "url": "lumity/ec2c9d46-854d-49ee-a58e-2c0f96965515.jpeg"}, {"name": "ec3ca571-29d9-459b-a92b-26c9608739a8(1).jpeg", "url": "lumity/ec3ca571-29d9-459b-a92b-26c9608739a8%281%29.jpeg"}, {"name": "ec3ca571-29d9-459b-a92b-26c9608739a8(2).jpeg", "url": "lumity/ec3ca571-29d9-459b-a92b-26c9608739a8%282%29.jpeg"}, {"name": "ec3ca571-29d9-459b-a92b-26c9608739a8.jpeg", "url": "lumity/ec3ca571-29d9-459b-a92b-26c9608739a8.jpeg"}, {"name": "ee0fccb5-f089-4539-8f2c-5155c35885cc.jpeg", "url": "lumity/ee0fccb5-f089-4539-8f2c-5155c35885cc.jpeg"}, {"name": "efa56c04-dfa3-4258-9402-9c5e1790aaa5.jpeg", "url": "lumity/efa56c04-dfa3-4258-9402-9c5e1790aaa5.jpeg"}, {"name": "emity💜.jpeg", "url": "lumity/emity%F0%9F%92%9C.jpeg"}, {"name": "f0463b37-9e98-4a93-9540-606a4b1ad441(1).jpeg", "url": "lumity/f0463b37-9e98-4a93-9540-606a4b1ad441%281%29.jpeg"}, {"name": "f0463b37-9e98-4a93-9540-606a4b1ad441.jpeg", "url": "lumity/f0463b37-9e98-4a93-9540-606a4b1ad441.jpeg"}, {"name": "f1c4202b-8eca-49dc-92e3-1346f26c21fb.jpeg", "url": "lumity/f1c4202b-8eca-49dc-92e3-1346f26c21fb.jpeg"}, {"name": "f24a01ac-6901-4ec8-9bd7-0d71e1748c60.jpeg", "url": "lumity/f24a01ac-6901-4ec8-9bd7-0d71e1748c60.jpeg"}, {"name": "f3867edc-0527-442d-b367-570ea7fd1122.jpeg", "url": "lumity/f3867edc-0527-442d-b367-570ea7fd1122.jpeg"}, {"name": "f5095d7b-8ab1-49e6-b4bc-e83fef7b3411.jpeg", "url": "lumity/f5095d7b-8ab1-49e6-b4bc-e83fef7b3411.jpeg"}, {"name": "f5ae6c0b-f400-47b8-9e10-e08683a4f9ab.jpeg", "url": "lumity/f5ae6c0b-f400-47b8-9e10-e08683a4f9ab.jpeg"}, {"name": "f663768a-f532-49ea-84e1-ca59ec3e3ce4.jpeg", "url": "lumity/f663768a-f532-49ea-84e1-ca59ec3e3ce4.jpeg"}, {"name": "f6d5444e-152c-4d14-aafe-c5aaa1af4b8e(1).jpeg", "url": "lumity/f6d5444e-152c-4d14-aafe-c5aaa1af4b8e%281%29.jpeg"}, {"name": "f6d5444e-152c-4d14-aafe-c5aaa1af4b8e.jpeg", "url": "lumity/f6d5444e-152c-4d14-aafe-c5aaa1af4b8e.jpeg"}, {"name": "f9708084-88f8-4784-b3f7-fb20ce60c953.jpeg", "url": "lumity/f9708084-88f8-4784-b3f7-fb20ce60c953.jpeg"}, {"name": "fc73d98c-e7aa-437b-820f-95b64b0e0484.jpeg", "url": "lumity/fc73d98c-e7aa-437b-820f-95b64b0e0484.jpeg"}, {"name": "fd2e80a9-96ff-4207-aa6c-d0cc38d4e536.jpeg", "url": "lumity/fd2e80a9-96ff-4207-aa6c-d0cc38d4e536.jpeg"}, {"name": "fd6aaa5e-8164-4915-a72f-02be8db8a191.jpeg", "url": "lumity/fd6aaa5e-8164-4915-a72f-02be8db8a191.jpeg"}, {"name": "fd6cefca-3c4b-4c71-9cd2-5ec55f2c14ed.jpeg", "url": "lumity/fd6cefca-3c4b-4c71-9cd2-5ec55f2c14ed.jpeg"}, {"name": "fdb6aaca-2684-437e-9a86-53d10a1d10f7(1).jpeg", "url": "lumity/fdb6aaca-2684-437e-9a86-53d10a1d10f7%281%29.jpeg"}, {"name": "fdb6aaca-2684-437e-9a86-53d10a1d10f7.jpeg", "url": "lumity/fdb6aaca-2684-437e-9a86-53d10a1d10f7.jpeg"}, {"name": "fe9ac521-796c-4792-a1a3-551900387365.jpeg", "url": "lumity/fe9ac521-796c-4792-a1a3-551900387365.jpeg"}, {"name": "fef671d5-d9db-4de0-98b8-737e0e9ef3b0.jpeg", "url": "lumity/fef671d5-d9db-4de0-98b8-737e0e9ef3b0.jpeg"}, {"name": "ff935dc8-1a3a-4084-8240-2ac7f2c9194c(1).jpeg", "url": "lumity/ff935dc8-1a3a-4084-8240-2ac7f2c9194c%281%29.jpeg"}, {"name": "ff935dc8-1a3a-4084-8240-2ac7f2c9194c.jpeg", "url": "lumity/ff935dc8-1a3a-4084-8240-2ac7f2c9194c.jpeg"}, {"name": "flat,750x,075,f-pad,750x1000,f8f8f8.jpg", "url": "lumity/flat%2C750x%2C075%2Cf-pad%2C750x1000%2Cf8f8f8.jpg"}, {"name": "lesbian Amity + Bi Luz(1).jpeg", "url": "lumity/lesbian%20Amity%20%2B%20Bi%20Luz%281%29.jpeg"}, {"name": "lesbian Amity + Bi Luz.jpeg", "url": "lumity/lesbian%20Amity%20%2B%20Bi%20Luz.jpeg"}, {"name": "lumity (16).jpeg", "url": "lumity/lumity%20%2816%29.jpeg"}, {"name": "lumity (22).jpeg", "url": "lumity/lumity%20%2822%29.jpeg"}, {"name": "lumity (24).jpeg", "url": "lumity/lumity%20%2824%29.jpeg"}, {"name": "lumity (25).jpeg", "url": "lumity/lumity%20%2825%29.jpeg"}, {"name": "lumity (26).jpeg", "url": "lumity/lumity%20%2826%29.jpeg"}, {"name": "lumity (4).jpeg", "url": "lumity/lumity%20%284%29.jpeg"}, {"name": "lumity (5).jpeg", "url": "lumity/lumity%20%285%29.jpeg"}, {"name": "lumity (7).jpeg", "url": "lumity/lumity%20%287%29.jpeg"}, {"name": "lumity 03X01 (1).jpeg", "url": "lumity/lumity%2003X01%20%281%29.jpeg"}, {"name": "lumity 03X01 (2).jpeg", "url": "lumity/lumity%2003X01%20%282%29.jpeg"}, {"name": "lumity 03X01 (3).jpeg", "url": "lumity/lumity%2003X01%20%283%29.jpeg"}, {"name": "lumity _3 (2).jpeg", "url": "lumity/lumity%20_3%20%282%29.jpeg"}, {"name": "lumity the owl house (1).jpeg", "url": "lumity/lumity%20the%20owl%20house%20%281%29.jpeg"}, {"name": "lumity the owl house (2).jpeg", "url": "lumity/lumity%20the%20owl%20house%20%282%29.jpeg"}, {"name": "lumity the owl house fanart (1).jpeg", "url": "lumity/lumity%20the%20owl%20house%20fanart%20%281%29.jpeg"}, {"name": "lumity the owl house fanart (2).jpeg", "url": "lumity/lumity%20the%20owl%20house%20fanart%20%282%29.jpeg"}, {"name": "lumity the owl house fanart (3).jpeg", "url": "lumity/lumity%20the%20owl%20house%20fanart%20%283%29.jpeg"}, {"name": "lumity the owl house fanart.jpeg", "url": "lumity/lumity%20the%20owl%20house%20fanart.jpeg"}, {"name": "lumity the owl house.jpeg", "url": "lumity/lumity%20the%20owl%20house.jpeg"}, {"name": "lumity theowlhouse SE2.jpeg", "url": "lumity/lumity%20theowlhouse%20SE2.jpeg"}, {"name": "lumity wallpaper (2).jpeg", "url": "lumity/lumity%20wallpaper%20%282%29.jpeg"}, {"name": "lumity 💙💜.jpeg", "url": "lumity/lumity%20%F0%9F%92%99%F0%9F%92%9C.jpeg"}, {"name": "lumity_.! _ toh (1).jpg", "url": "lumity/lumity_.%21%20_%20toh%20%281%29.jpg"}, {"name": "lumity_.! _ toh.jpg", "url": "lumity/lumity_.%21%20_%20toh.jpg"}, {"name": "luz & amity (1).jpeg", "url": "lumity/luz%20%26%20amity%20%281%29.jpeg"}, {"name": "skater girlfriends.jpeg", "url": "lumity/skater%20girlfriends.jpeg"}, {"name": "the ow house.jpeg", "url": "lumity/the%20ow%20house.jpeg"}, {"name": "the owl house - amity and king.jpeg", "url": "lumity/the%20owl%20house%20-%20amity%20and%20king.jpeg"}, {"name": "tumblr_2e27f8b08a6ac5b7a7cb2be30e1a18d8_672e8c66_1280.jpg", "url": "lumity/tumblr_2e27f8b08a6ac5b7a7cb2be30e1a18d8_672e8c66_1280.jpg"}, {"name": "tumblr_97b37eb9d3daabc853df7a5e475289a1_bf01eedc_1280.jpg", "url": "lumity/tumblr_97b37eb9d3daabc853df7a5e475289a1_bf01eedc_1280.jpg"}, {"name": "tumblr_b9177113b6212665ee904e2ff822007d_2eb1920b_1280.png", "url": "lumity/tumblr_b9177113b6212665ee904e2ff822007d_2eb1920b_1280.png"}, {"name": "tumblr_ba1d788f51c4ba8b114ccdd4595a3521_a0006276_1280.jpg", "url": "lumity/tumblr_ba1d788f51c4ba8b114ccdd4595a3521_a0006276_1280.jpg"}, {"name": "tumblr_dc4505fc47e19093e5b1caba2cf2bfcb_5dda8284_1280.png", "url": "lumity/tumblr_dc4505fc47e19093e5b1caba2cf2bfcb_5dda8284_1280.png"}, {"name": "tumblr_p4m41hlOAA1r8xrzao1_1280.jpg", "url": "lumity/tumblr_p4m41hlOAA1r8xrzao1_1280.jpg"}, {"name": "¡Amity! ♡.jpeg", "url": "lumity/%C2%A1Amity%21%20%E2%99%A1.jpeg"}, {"name": "° The owl House °.jpeg", "url": "lumity/%C2%B0%20The%20owl%20House%20%C2%B0.jpeg"}, {"name": "˚ ༘♡ ⋆｡˚AMITY༉‧₊˚_˚ · ._(SPOILERS) S2E2.jpg", "url": "lumity/%CB%9A%20%E0%BC%98%E2%99%A1%20%E2%8B%86%EF%BD%A1%CB%9AAMITY%E0%BC%89%E2%80%A7%E2%82%8A%CB%9A_%CB%9A%20%C2%B7%20._%28SPOILERS%29%20S2E2.jpg"}, {"name": "˚ ༘♡ ⋆｡˚AMITY༉‧₊˚_˚ ·_ (1).jpeg", "url": "lumity/%CB%9A%20%E0%BC%98%E2%99%A1%20%E2%8B%86%EF%BD%A1%CB%9AAMITY%E0%BC%89%E2%80%A7%E2%82%8A%CB%9A_%CB%9A%20%C2%B7_%20%281%29.jpeg"}, {"name": "˚ ༘♡ ⋆｡˚AMITY༉‧₊˚_˚ ·_.jpeg", "url": "lumity/%CB%9A%20%E0%BC%98%E2%99%A1%20%E2%8B%86%EF%BD%A1%CB%9AAMITY%E0%BC%89%E2%80%A7%E2%82%8A%CB%9A_%CB%9A%20%C2%B7_.jpeg"}, {"name": "૮₍ ˃ ⤙ ˂ ₎ა.jpeg", "url": "lumity/%E0%AB%AE%E2%82%8D%20%CB%83%20%E2%A4%99%20%CB%82%20%E2%82%8E%E1%83%90.jpeg"}, {"name": "• Lumity •.jpeg", "url": "lumity/%E2%80%A2%20Lumity%20%E2%80%A2.jpeg"}, {"name": "• • • 『 AMITY BLIGHT 』 • • •__↶· · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ·↷.jpeg", "url": "lumity/%E2%80%A2%20%E2%80%A2%20%E2%80%A2%20%E3%80%8E%20AMITY%20BLIGHT%20%E3%80%8F%20%E2%80%A2%20%E2%80%A2%20%E2%80%A2__%E2%86%B6%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%20%C2%B7%E2%86%B7.jpeg"}, {"name": "• 𝘼𝙢𝙞𝙩𝙮 𝘽𝙡𝙞𝙜𝙝𝙩 •.jpeg", "url": "lumity/%E2%80%A2%20%F0%9D%98%BC%F0%9D%99%A2%F0%9D%99%9E%F0%9D%99%A9%F0%9D%99%AE%20%F0%9D%98%BD%F0%9D%99%A1%F0%9D%99%9E%F0%9D%99%9C%F0%9D%99%9D%F0%9D%99%A9%20%E2%80%A2.jpeg"}, {"name": "₊˚_ ༘ ❝ 𝐀𝐌𝐈𝐓𝐘┆˚✧.jpeg", "url": "lumity/%E2%82%8A%CB%9A_%20%E0%BC%98%20%E2%9D%9D%20%F0%9D%90%80%F0%9D%90%8C%F0%9D%90%88%F0%9D%90%93%F0%9D%90%98%E2%94%86%CB%9A%E2%9C%A7.jpeg"}, {"name": "₊˚_ ༘ ❝ 𝐋𝐔𝐌𝐈𝐓𝐘┆˚✧.jpeg", "url": "lumity/%E2%82%8A%CB%9A_%20%E0%BC%98%20%E2%9D%9D%20%F0%9D%90%8B%F0%9D%90%94%F0%9D%90%8C%F0%9D%90%88%F0%9D%90%93%F0%9D%90%98%E2%94%86%CB%9A%E2%9C%A7.jpeg"}, {"name": "☆Amity x Luz☆.jpeg", "url": "lumity/%E2%98%86Amity%20x%20Luz%E2%98%86.jpeg"}, {"name": "♆𝐀𝐌𝐈𝐓𝐘 - 𝐓𝐎𝐇♆.jpeg", "url": "lumity/%E2%99%86%F0%9D%90%80%F0%9D%90%8C%F0%9D%90%88%F0%9D%90%93%F0%9D%90%98%20-%20%F0%9D%90%93%F0%9D%90%8E%F0%9D%90%87%E2%99%86.jpeg"}, {"name": "♡´･ᴗ･`♡𝔸𝕞𝕚𝕥𝕪 𝕚𝕔𝕠𝕟♡´･ᴗ･`♡.jpeg", "url": "lumity/%E2%99%A1%C2%B4%EF%BD%A5%E1%B4%97%EF%BD%A5%60%E2%99%A1%F0%9D%94%B8%F0%9D%95%9E%F0%9D%95%9A%F0%9D%95%A5%F0%9D%95%AA%20%F0%9D%95%9A%F0%9D%95%94%F0%9D%95%A0%F0%9D%95%9F%E2%99%A1%C2%B4%EF%BD%A5%E1%B4%97%EF%BD%A5%60%E2%99%A1.jpeg"}, {"name": "♥︎.jpeg", "url": "lumity/%E2%99%A5%EF%B8%8E.jpeg"}, {"name": "♥︎𝙻𝚞𝚖𝚒𝚝𝚢☼︎ 𝚒𝚌𝚘𝚗.jpeg", "url": "lumity/%E2%99%A5%EF%B8%8E%F0%9D%99%BB%F0%9D%9A%9E%F0%9D%9A%96%F0%9D%9A%92%F0%9D%9A%9D%F0%9D%9A%A2%E2%98%BC%EF%B8%8E%20%F0%9D%9A%92%F0%9D%9A%8C%F0%9D%9A%98%F0%9D%9A%97.jpeg"}, {"name": "✨️Owlphibia ✨️🦉🐸 (@owlp_hibia) on X.jpeg", "url": "lumity/%E2%9C%A8%EF%B8%8FOwlphibia%20%E2%9C%A8%EF%B8%8F%F0%9F%A6%89%F0%9F%90%B8%20%28%40owlp_hibia%29%20on%20X.jpeg"}, {"name": "✰ lumity(1).jpeg", "url": "lumity/%E2%9C%B0%20lumity%281%29.jpeg"}, {"name": "✰ lumity.jpeg", "url": "lumity/%E2%9C%B0%20lumity.jpeg"}, {"name": "❛ lumity ❜ ࿐ ˊˎ-.jpeg", "url": "lumity/%E2%9D%9B%20lumity%20%E2%9D%9C%20%E0%BF%90%20%CB%8A%CB%8E-.jpeg"}, {"name": "꒰꒰ ˎ -   ʟᴜᴍɪᴛʏ ˊˎ - ♡.jpeg", "url": "lumity/%EA%92%B0%EA%92%B0%20%CB%8E%20-%20%20%20%CA%9F%E1%B4%9C%E1%B4%8D%C9%AA%E1%B4%9B%CA%8F%20%CB%8A%CB%8E%20-%20%E2%99%A1.jpeg"}, {"name": "𝓵𝓾𝓶𝓲𝓽𝔂.jpeg", "url": "lumity/%F0%9D%93%B5%F0%9D%93%BE%F0%9D%93%B6%F0%9D%93%B2%F0%9D%93%BD%F0%9D%94%82.jpeg"}, {"name": "𝙻𝚞𝚖𝚒𝚝𝚢.jpeg", "url": "lumity/%F0%9D%99%BB%F0%9D%9A%9E%F0%9D%9A%96%F0%9D%9A%92%F0%9D%9A%9D%F0%9D%9A%A2.jpeg"}, {"name": "🌺꾸시🌺GGushi on Twitter.jpeg", "url": "lumity/%F0%9F%8C%BA%EA%BE%B8%EC%8B%9C%F0%9F%8C%BAGGushi%20on%20Twitter.jpeg"}, {"name": "🏳️_🌈 Lumity 🏳️_🌈.jpeg", "url": "lumity/%F0%9F%8F%B3%EF%B8%8F_%F0%9F%8C%88%20Lumity%20%F0%9F%8F%B3%EF%B8%8F_%F0%9F%8C%88.jpeg"}, {"name": "🐈.jpeg", "url": "lumity/%F0%9F%90%88.jpeg"}, {"name": "🐬Limite🌸.jpeg", "url": "lumity/%F0%9F%90%ACLimite%F0%9F%8C%B8.jpeg"}, {"name": "💭ミ.jpeg", "url": "lumity/%F0%9F%92%AD%E3%83%9F.jpeg"}, {"name": "🟣.jpeg", "url": "lumity/%F0%9F%9F%A3.jpeg"}];
+
+const MIME_MAP = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  png: 'image/png', gif: 'image/gif', webp: 'image/webp'
+};
+
+function extMime(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  return MIME_MAP[ext] || 'image/jpeg';
+}
+
+// Active image list — starts with folder images, replaced when JSON is loaded
+let ALL_IMAGES = FOLDER_IMAGES.slice();
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+const PAGE_SIZE = 60;
+let filtered = ALL_IMAGES.slice();
+let rendered = 0;
+let lbIndex = 0;
+let ssTimer = null;
+
+// ── ELEMENTS ──────────────────────────────────────────────────────────────────
+const gallery     = document.getElementById('gallery');
+const loadMore    = document.getElementById('load-more');
+const countBadge  = document.getElementById('count-badge');
+const sourceBadge = document.getElementById('source-badge');
+const lb          = document.getElementById('lightbox');
+const lbImg       = document.getElementById('lb-img');
+const lbCaption   = document.getElementById('lb-caption');
+const lbCounter   = document.getElementById('lb-counter');
+const toast       = document.getElementById('toast');
+const dropOverlay = document.getElementById('drop-overlay');
+
+// ── TOAST ─────────────────────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+// ── SOURCE SWITCH ─────────────────────────────────────────────────────────────
+function loadFromJson(file) {
+  if (!file || !file.name.endsWith('.json')) {
+    showToast('Please drop a .json file.');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    let data;
+    try { data = JSON.parse(e.target.result); }
+    catch { showToast('Invalid JSON file.'); return; }
+
+    if (!data.files || !Array.isArray(data.files)) {
+      showToast('JSON missing "files" array.');
+      return;
+    }
+
+    ALL_IMAGES = data.files.map(f => ({
+      name: f.filename,
+      url: 'data:' + extMime(f.filename) + ';base64,' + f.data
+    }));
+
+    const folderName = data.folder || file.name.replace('.json','');
+    sourceBadge.textContent = '📦 ' + folderName + ' — ' + ALL_IMAGES.length + ' images (JSON)';
+    sourceBadge.className = 'json-mode';
+
+    resetGallery();
+    showToast('Loaded ' + ALL_IMAGES.length + ' images from JSON ✨');
+  };
+  reader.readAsText(file);
+}
+
+// ── SIZE CONTROL ──────────────────────────────────────────────────────────────
+document.getElementById('size-select').addEventListener('change', e => {
+  gallery.style.setProperty('--col-size', e.target.value + 'px');
+});
+
+// ── SEARCH ────────────────────────────────────────────────────────────────────
+document.getElementById('search').addEventListener('input', e => {
+  const q = e.target.value.toLowerCase();
+  filtered = ALL_IMAGES.filter(img => img.name.toLowerCase().includes(q));
+  rendered = 0;
+  gallery.innerHTML = '';
+  renderBatch();
+  updateCount();
+});
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+function resetGallery() {
+  const q = document.getElementById('search').value.toLowerCase();
+  filtered = ALL_IMAGES.filter(img => img.name.toLowerCase().includes(q));
+  shuffle(filtered);
+  rendered = 0;
+  gallery.innerHTML = '';
+  renderBatch();
+  updateCount();
+}
+
+// ── RENDER ────────────────────────────────────────────────────────────────────
+function updateCount() {
+  countBadge.textContent = filtered.length + ' images';
+  loadMore.disabled = rendered >= filtered.length;
+  loadMore.textContent = rendered < filtered.length
+    ? 'Load more (' + (filtered.length - rendered) + ' remaining)'
+    : 'All loaded';
+}
+
+function renderBatch() {
+  const batch = filtered.slice(rendered, rendered + PAGE_SIZE);
+  batch.forEach((img, i) => {
+    const idx = rendered + i;
+    const div = document.createElement('div');
+    div.className = 'thumb';
+
+    const el = document.createElement('img');
+    el.className = 'loading';
+    el.alt = img.name;
+    el.loading = 'lazy';
+    el.src = img.url;
+    const dimSpan = document.createElement('span');
+    dimSpan.className = 'overlay-dim';
+    el.addEventListener('load', () => {
+      el.classList.remove('loading');
+      dimSpan.textContent = el.naturalWidth + ' × ' + el.naturalHeight;
+    });
+    el.addEventListener('error', () => {
+      div.style.display = 'none';
+      filtered = filtered.filter(x => x !== img);
+      updateCount();
+    });
+
+    const ov = document.createElement('div');
+    ov.className = 'overlay';
+    const sp = document.createElement('span');
+    sp.textContent = img.name;
+    ov.appendChild(dimSpan);
+    ov.appendChild(sp);
+
+    div.appendChild(el);
+    div.appendChild(ov);
+    div.addEventListener('click', () => openLightbox(idx));
+    gallery.appendChild(div);
+  });
+  rendered += batch.length;
+  updateCount();
+}
+
+loadMore.addEventListener('click', renderBatch);
+
+// ── LIGHTBOX ──────────────────────────────────────────────────────────────────
+function openLightbox(idx) {
+  lbIndex = idx;
+  showLb();
+  lb.classList.add('open');
+}
+
+const lbDim = document.getElementById('lb-dim');
+
+function showLb() {
+  const img = filtered[lbIndex];
+  lbDim.textContent = '';
+  lbImg.onload = () => { lbDim.textContent = lbImg.naturalWidth + ' × ' + lbImg.naturalHeight + ' px'; };
+  lbImg.src = img.url;
+  lbCaption.textContent = img.name;
+  lbCounter.textContent = (lbIndex + 1) + ' / ' + filtered.length;
+}
+
+function closeLb() {
+  lb.classList.remove('open');
+  stopSlideshow();
+}
+
+function ensureRendered(idx) {
+  while (rendered <= idx && rendered < filtered.length) renderBatch();
+}
+
+document.getElementById('lb-close').addEventListener('click', closeLb);
+document.getElementById('lb-prev').addEventListener('click', () => {
+  lbIndex = (lbIndex - 1 + filtered.length) % filtered.length;
+  ensureRendered(lbIndex);
+  showLb();
+});
+document.getElementById('lb-next').addEventListener('click', () => {
+  lbIndex = (lbIndex + 1) % filtered.length;
+  ensureRendered(lbIndex);
+  showLb();
+});
+
+lb.addEventListener('click', e => { if (e.target === lb) closeLb(); });
+
+document.addEventListener('keydown', e => {
+  if (!lb.classList.contains('open')) return;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+    lbIndex = (lbIndex + 1) % filtered.length;
+    ensureRendered(lbIndex);
+    showLb();
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+    lbIndex = (lbIndex - 1 + filtered.length) % filtered.length;
+    ensureRendered(lbIndex);
+    showLb();
+  } else if (e.key === 'Escape') {
+    closeLb();
+  }
+});
+
+// ── SLIDESHOW ─────────────────────────────────────────────────────────────────
+const ssToggle = document.getElementById('ss-toggle');
+ssToggle.addEventListener('click', () => {
+  if (ssTimer) stopSlideshow();
+  else {
+    if (!lb.classList.contains('open')) openLightbox(0);
+    startSlideshow();
+  }
+});
+
+function startSlideshow() {
+  const speed = parseInt(document.getElementById('ss-speed').value);
+  ssToggle.textContent = '⏹ Stop';
+  ssToggle.classList.add('active');
+  ssTimer = setInterval(() => {
+    lbIndex = (lbIndex + 1) % filtered.length;
+    ensureRendered(lbIndex);
+    showLb();
+  }, speed);
+}
+
+function stopSlideshow() {
+  clearInterval(ssTimer);
+  ssTimer = null;
+  ssToggle.textContent = '▶ Slideshow';
+  ssToggle.classList.remove('active');
+}
+
+// ── SHUFFLE ───────────────────────────────────────────────────────────────────
+document.getElementById('shuffle-btn').addEventListener('click', () => {
+  for (let i = filtered.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [filtered[i], filtered[j]] = [filtered[j], filtered[i]];
+  }
+  rendered = 0;
+  gallery.innerHTML = '';
+  renderBatch();
+  updateCount();
+  showToast('Images shuffled 🔀');
+});
+
+
+// ── FOLDER BUTTON ─────────────────────────────────────────────────────────────
+const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','webp']);
+
+const folderFileInput = document.getElementById('folder-file-input');
+document.getElementById('folder-btn').addEventListener('click', () => folderFileInput.click());
+folderFileInput.addEventListener('change', e => {
+  const files = [...e.target.files].filter(f => IMAGE_EXTS.has(f.name.split('.').pop().toLowerCase()));
+  if (!files.length) { showToast('No images found in folder.'); return; }
+
+  ALL_IMAGES = files.map(f => ({
+    name: f.name,
+    url: URL.createObjectURL(f),
+  }));
+
+  const folderName = files[0].webkitRelativePath.split('/')[0];
+  sourceBadge.textContent = '📁 ' + folderName + ' — ' + ALL_IMAGES.length + ' images';
+  sourceBadge.className = 'json-mode';
+  resetGallery();
+  showToast('Loaded ' + ALL_IMAGES.length + ' images from folder ✨');
+  e.target.value = '';
+});
+
+// ── JSON BUTTON ───────────────────────────────────────────────────────────────
+const jsonFileInput = document.getElementById('json-file-input');
+document.getElementById('json-btn').addEventListener('click', () => jsonFileInput.click());
+jsonFileInput.addEventListener('change', e => {
+  if (e.target.files[0]) loadFromJson(e.target.files[0]);
+  e.target.value = '';
+});
+
+// ── DRAG & DROP ───────────────────────────────────────────────────────────────
+let dragCounter = 0;
+
+document.addEventListener('dragenter', e => {
+  if ([...e.dataTransfer.types].includes('Files')) {
+    dragCounter++;
+    dropOverlay.classList.add('active');
+  }
+});
+
+document.addEventListener('dragleave', () => {
+  dragCounter--;
+  if (dragCounter <= 0) { dragCounter = 0; dropOverlay.classList.remove('active'); }
+});
+
+document.addEventListener('dragover', e => e.preventDefault());
+
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  dragCounter = 0;
+  dropOverlay.classList.remove('active');
+  const file = e.dataTransfer.files[0];
+  if (file) loadFromJson(file);
+});
+
+// ── DOWNLOAD ZIP ──────────────────────────────────────────────────────────────
+document.getElementById('download-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('download-btn');
+  const total = filtered.length;
+  if (!total) { showToast('No images to download.'); return; }
+
+  btn.disabled = true;
+
+  const zip = new JSZip();
+  const seen = new Map();
+
+  for (let i = 0; i < total; i++) {
+    const img = filtered[i];
+    btn.textContent = `⏳ ${i + 1} / ${total}`;
+
+    let data;
+    if (img.url.startsWith('data:')) {
+      const b64 = img.url.split(',')[1];
+      data = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    } else {
+      const res = await fetch(img.url);
+      data = await res.arrayBuffer();
+    }
+
+    // deduplicate filenames
+    let name = img.name;
+    const count = seen.get(name) ?? 0;
+    seen.set(name, count + 1);
+    if (count > 0) {
+      const dot = name.lastIndexOf('.');
+      name = dot === -1 ? `${name} (${count})` : `${name.slice(0, dot)} (${count})${name.slice(dot)}`;
+    }
+
+    zip.file(name, data);
+  }
+
+  btn.textContent = '⏳ Compressing…';
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 3 } });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'lumity-gallery.zip';
+  a.click();
+  URL.revokeObjectURL(a.href);
+
+  btn.disabled = false;
+  btn.textContent = '⬇ Download ZIP';
+  showToast('Downloaded ' + total + ' images ✨');
+});
+
+// ── DOWNLOAD JSON ─────────────────────────────────────────────────────────────
+document.getElementById('download-json-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('download-json-btn');
+  const total = filtered.length;
+  if (!total) { showToast('No images to download.'); return; }
+
+  btn.disabled = true;
+
+  const files = [];
+  for (let i = 0; i < total; i++) {
+    const img = filtered[i];
+    btn.textContent = `⏳ ${i + 1} / ${total}`;
+
+    let b64;
+    if (img.url.startsWith('data:')) {
+      b64 = img.url.split(',')[1];
+    } else {
+      const res = await fetch(img.url);
+      const ab = await res.arrayBuffer();
+      b64 = btoa(String.fromCharCode(...new Uint8Array(ab)));
+    }
+    files.push({ filename: img.name, data: b64 });
+  }
+
+  const folderName = sourceBadge.textContent.replace(/📁|📦|\s*—.*$/g, '').trim() || 'lumity';
+  const payload = JSON.stringify({ folder: folderName, files });
+  const blob = new Blob([payload], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = folderName + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+
+  btn.disabled = false;
+  btn.textContent = '⬇ Download JSON';
+  showToast('Downloaded ' + total + ' images as JSON ✨');
+});
+
+// ── SORT BY DIMENSIONS ────────────────────────────────────────────────────────
+const dimCache = new Map();
+let dimSortDir = 1;
+
+function getDimensions(url) {
+  if (dimCache.has(url)) return Promise.resolve(dimCache.get(url));
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const px = img.naturalWidth * img.naturalHeight;
+      dimCache.set(url, px);
+      resolve(px);
+    };
+    img.onerror = () => { dimCache.set(url, 0); resolve(0); };
+    img.src = url;
+  });
+}
+
+const sortDimBtn = document.getElementById('sort-dim-btn');
+sortDimBtn.addEventListener('click', async () => {
+  sortDimBtn.disabled = true;
+  sortDimBtn.textContent = '⏳ Measuring…';
+
+  const withDims = await Promise.all(filtered.map(async img => ({ img, px: await getDimensions(img.url) })));
+  withDims.sort((a, b) => dimSortDir * (a.px - b.px));
+  filtered = withDims.map(x => x.img);
+
+  dimSortDir *= -1;
+  sortDimBtn.textContent = dimSortDir === 1 ? '⇅ Dim ↑' : '⇅ Dim ↓';
+  sortDimBtn.disabled = false;
+
+  rendered = 0;
+  gallery.innerHTML = '';
+  renderBatch();
+});
+
+// ── COLLAPSIBLE MENU ──────────────────────────────────────────────────────────
+document.getElementById('controls-toggle').addEventListener('click', () => {
+  document.getElementById('controls').classList.toggle('collapsed');
+});
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+shuffle(filtered);
+renderBatch();
+</script>
+</body>
+</html>
