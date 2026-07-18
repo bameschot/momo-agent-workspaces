@@ -23,8 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      - name: Assemble published subset
+        run: |
+          mkdir _site
+          cp index.html _site/
+          cp -r ereader _site/
+          cp -r map-generator _site/
+          cp -r lumity-gallery _site/
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: '_site'
       - uses: actions/deploy-pages@v4
         id: deployment
