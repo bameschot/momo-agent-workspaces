@@ -214,6 +214,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
     <div class="topbar">
       <h1>My Books</h1>
       <div class="iconbar">
+        <button id="installBtn" class="btn-primary" title="Install as an app" style="display:none;">⬇ Install</button>
         <button id="searchLibraryBtn" title="Search library" aria-label="Search library">🔍</button>
         <button id="backupExportBtn" title="Export library backup">⇩ Backup</button>
         <button id="backupImportBtn" title="Import library backup">⇧ Restore</button>
@@ -1942,12 +1943,49 @@ function setupInstallability(){
   const icon512=buildIconDataUrl(512);
   document.getElementById('faviconLink').setAttribute('href', icon192);
   document.getElementById('appleTouchIconLink').setAttribute('href', icon192);
+  /* start_url/id/scope are resolved relative to the MANIFEST's own URL, not
+     the document's — and a data: URI manifest has no meaningful base to
+     resolve a relative "." against, which Chrome flags as
+     start-url-not-valid (confirmed via Page.getAppManifest) and refuses to
+     treat the page as installable. Using the page's own current, absolute
+     location as start_url/id/scope sidesteps that entirely. */
+  const here=location.href.split('#')[0];
   const manifest={
-    name:'eReader', short_name:'eReader', start_url:'.', display:'standalone',
+    name:'eReader', short_name:'eReader',
+    id: here, start_url: here, scope: here,
+    display:'standalone',
     background_color:'#f7f5f0', theme_color:'#8b5cf6',
     icons:[{src:icon192, sizes:'192x192', type:'image/png'}, {src:icon512, sizes:'512x512', type:'image/png'}]
   };
   document.getElementById('manifestLink').setAttribute('href', 'data:application/manifest+json;base64,'+btoa(JSON.stringify(manifest)));
+}
+
+/* Registered at top level (not inside boot()) so it's listening before the
+   browser evaluates installability — Chrome only fires this once the page
+   passes every installability check (valid manifest, secure origin, etc).
+   Surfacing a real in-app button beats leaving this buried in the browser's
+   own menu. */
+let deferredInstallPrompt=null;
+window.addEventListener('beforeinstallprompt', (e)=>{
+  e.preventDefault();
+  deferredInstallPrompt=e;
+  const btn=document.getElementById('installBtn');
+  if(btn) btn.style.display='';
+});
+window.addEventListener('appinstalled', ()=>{
+  deferredInstallPrompt=null;
+  const btn=document.getElementById('installBtn');
+  if(btn) btn.style.display='none';
+  showToast('Installed');
+});
+
+async function promptInstall(){
+  if(!deferredInstallPrompt) return;
+  const btn=document.getElementById('installBtn');
+  if(btn) btn.style.display='none';
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt=null;
 }
 
 /* === SECTION: BOOTSTRAP === */
@@ -1965,6 +2003,7 @@ function wireEvents(){
     if(file) importLibraryBackup(file);
   });
   document.getElementById('searchLibraryBtn').addEventListener('click', ()=>openSearch('library'));
+  document.getElementById('installBtn').addEventListener('click', promptInstall);
 
   const libraryBody=document.getElementById('libraryBody');
   libraryBody.addEventListener('dragover', e=>{ e.preventDefault(); document.getElementById('libraryScreen').classList.add('dropzone-active'); });
