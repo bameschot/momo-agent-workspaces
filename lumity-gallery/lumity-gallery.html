@@ -4,6 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lumity Gallery ✨</title>
+  <meta name="theme-color" content="#9b59b6">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Lumity Gallery">
+  <link rel="icon" id="favicon-link" href="">
+  <link rel="apple-touch-icon" id="apple-touch-icon-link" href="">
+  <link rel="manifest" id="manifest-link" href="">
   <style>
     :root {
       --bg: #0d0010;
@@ -153,7 +161,7 @@
     }
 
     /* ── TOOLBAR BUTTONS ── */
-    #download-btn, #download-json-btn, #folder-btn, #json-btn {
+    #install-btn, #download-btn, #download-json-btn, #folder-btn, #json-btn {
       background: var(--surface2);
       border: 1px solid var(--border);
       color: var(--accent2);
@@ -164,7 +172,7 @@
       transition: background 0.15s, border-color 0.15s;
       white-space: nowrap;
     }
-    #download-btn:hover, #download-json-btn:hover, #folder-btn:hover, #json-btn:hover { background: var(--glow); border-color: var(--accent); color: #fff; }
+    #install-btn:hover, #download-btn:hover, #download-json-btn:hover, #folder-btn:hover, #json-btn:hover { background: var(--glow); border-color: var(--accent); color: #fff; }
     #download-btn:disabled, #download-json-btn:disabled { opacity: 0.5; cursor: default; }
     #folder-file-input, #json-file-input { display: none; }
 
@@ -405,6 +413,7 @@
     <span>Menu</span><span class="chevron">▲</span>
   </div>
   <div class="controls-body">
+  <button id="install-btn" title="Install as an app" style="display:none;">⬇ Install</button>
   <input type="text" id="search" placeholder="Search images…" />
   <label>
     Size
@@ -1004,7 +1013,67 @@ document.getElementById('controls-toggle').addEventListener('click', () => {
   document.getElementById('controls').classList.toggle('collapsed');
 });
 
+// ── INSTALLABILITY ────────────────────────────────────────────────────────────
+function buildIconDataUrl(size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#9b59b6';
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold ' + Math.round(size * 0.56) + 'px Georgia, serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('L', size / 2, size * 0.56);
+  return canvas.toDataURL('image/png');
+}
+
+function setupInstallability() {
+  const icon192 = buildIconDataUrl(192);
+  const icon512 = buildIconDataUrl(512);
+  document.getElementById('favicon-link').setAttribute('href', icon192);
+  document.getElementById('apple-touch-icon-link').setAttribute('href', icon192);
+  // start_url/id/scope resolve against the MANIFEST's own URL, not the
+  // document's — a data: URI manifest has no base to resolve a relative "."
+  // against, so the page's own absolute location is used instead.
+  const here = location.href.split('#')[0];
+  const manifest = {
+    name: 'Lumity Gallery', short_name: 'Lumity',
+    id: here, start_url: here, scope: here,
+    display: 'standalone',
+    background_color: '#0d0010', theme_color: '#9b59b6',
+    icons: [{ src: icon192, sizes: '192x192', type: 'image/png' }, { src: icon512, sizes: '512x512', type: 'image/png' }]
+  };
+  document.getElementById('manifest-link').setAttribute('href', 'data:application/manifest+json;base64,' + btoa(JSON.stringify(manifest)));
+}
+
+// Registered at top level so it's listening before the browser evaluates
+// installability — Chrome only fires this once the page passes every
+// installability check (valid manifest, secure origin, etc).
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  const btn = document.getElementById('install-btn');
+  if (btn) btn.style.display = '';
+});
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  const btn = document.getElementById('install-btn');
+  if (btn) btn.style.display = 'none';
+  showToast('Installed ✨');
+});
+
+document.getElementById('install-btn').addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return;
+  const btn = document.getElementById('install-btn');
+  btn.style.display = 'none';
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+});
+
 // ── INIT ──────────────────────────────────────────────────────────────────────
+setupInstallability();
 shuffle(filtered);
 renderBatch();
 </script>
