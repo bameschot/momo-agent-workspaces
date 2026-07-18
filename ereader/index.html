@@ -161,8 +161,21 @@ h1,h2,h3{margin:0;}
 }
 .reader-bottombar .progress-track{flex:1; height:3px; background:var(--border); border-radius:2px; overflow:hidden;}
 .reader-bottombar .progress-fill{height:100%; background:var(--progress);}
-#loadingIndicator{position:absolute; inset:0; display:none; align-items:center; justify-content:center; color:var(--muted); background:var(--bg);}
+/* Fixed to #app, not any one screen, so it can overlay whichever screen
+   (library or reader) is active when a long-running operation is busy. */
+#loadingIndicator{
+  position:fixed; inset:0; z-index:60; display:none;
+  flex-direction:column; align-items:center; justify-content:center; gap:.85rem;
+  color:var(--muted); background:var(--bg);
+}
 #loadingIndicator.show{display:flex;}
+#loadingIndicator .spinner{
+  width:2.5rem; height:2.5rem; border-radius:50%;
+  border:3px solid var(--border); border-top-color:var(--accent);
+  animation:spin .8s linear infinite;
+}
+#loadingIndicator .loading-text{font-size:.9rem;}
+@keyframes spin{ to{ transform:rotate(360deg); } }
 
 /* selection toolbar */
 #selectionToolbar{
@@ -278,7 +291,6 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
       <div id="chapterContainer" class="reader-page"></div>
       <div class="reader-edge left" id="edgePrev" aria-hidden="true"></div>
       <div class="reader-edge right" id="edgeNext" aria-hidden="true"></div>
-      <div id="loadingIndicator">Loading…</div>
       <div id="selectionToolbar">
         <button class="swatch" data-color="#fde047" style="background:#fde047" aria-label="Yellow highlight"></button>
         <button class="swatch" data-color="#86efac" style="background:#86efac" aria-label="Green highlight"></button>
@@ -362,6 +374,12 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
   </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
+
+  <!-- ===================== Busy overlay ===================== -->
+  <div id="loadingIndicator">
+    <div class="spinner" aria-hidden="true"></div>
+    <div class="loading-text">Loading…</div>
+  </div>
 </div>
 
 <script>
@@ -1592,11 +1610,14 @@ async function importLibraryBackup(file){
   try{ payload=JSON.parse(text); }catch(e){ showToast('That file is not a valid backup'); return; }
   if(!payload || !Array.isArray(payload.books)){ showToast('That file is not a valid backup'); return; }
 
+  showLoading(true, 'Restoring 0 of '+payload.books.length+'…');
   const existing=await dbGetAll();
   const existingIds=new Set(existing.map(b=>b.id));
   const existingTitles=new Set(existing.map(b=>(b.title+'|'+b.author).toLowerCase()));
   let added=0, skipped=0;
-  for(const book of payload.books){
+  for(let i=0;i<payload.books.length;i++){
+    const book=payload.books[i];
+    showLoading(true, 'Restoring '+(i+1)+' of '+payload.books.length+'…');
     const key=(book.title+'|'+book.author).toLowerCase();
     if(existingTitles.has(key)){ skipped++; continue; }
     const toSave=Object.assign({}, book);
@@ -1605,7 +1626,9 @@ async function importLibraryBackup(file){
     existingIds.add(toSave.id);
     existingTitles.add(key);
     added++;
+    await new Promise(r=>requestAnimationFrame(r));
   }
+  showLoading(false);
   await refreshLibraryFromDb();
   showToast('Restored '+added+' book'+(added===1?'':'s')+(skipped ? ', skipped '+skipped+' duplicate'+(skipped===1?'':'s') : ''));
 }
@@ -1789,8 +1812,10 @@ async function closeReader(){
   refreshLibraryFromDb();
 }
 
-function showLoading(on){
-  document.getElementById('loadingIndicator').classList.toggle('show', !!on);
+function showLoading(on, text){
+  const el=document.getElementById('loadingIndicator');
+  el.classList.toggle('show', !!on);
+  if(text!=null) el.querySelector('.loading-text').textContent=text;
 }
 
 async function parseFileToBookData(file){
@@ -1803,7 +1828,7 @@ async function parseFileToBookData(file){
 }
 
 async function handleFileUpload(file){
-  showLoading(true);
+  showLoading(true, 'Opening book…');
   try{
     const parsed=await parseFileToBookData(file);
     const book={
@@ -1842,13 +1867,15 @@ async function handleFolderImport(fileList){
     return;
   }
 
-  showLoading(true);
+  showLoading(true, 'Importing 0 of '+files.length+'…');
   let imported=0, skipped=0, failed=0;
   try{
     const existing=await dbGetAll();
     const seenKeys=new Set(existing.map(b=>(b.title+'|'+b.author).toLowerCase()));
 
-    for(const file of files){
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      showLoading(true, 'Importing '+(i+1)+' of '+files.length+'…');
       try{
         const parsed=await parseFileToBookData(file);
         const key=(parsed.title+'|'+parsed.author).toLowerCase();
