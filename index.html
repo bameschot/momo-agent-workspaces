@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Momo Agent Workspaces</title>
+<style>
+  :root{
+    --bg:#0d0f14; --surface:#171a21; --text:#e8eaf0; --muted:#9aa2b1;
+    --accent:#8b5cf6; --border:#2a2e3a;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    padding:3rem 1.25rem;
+  }
+  h1{font-size:1.5rem; margin:0 0 .4rem;}
+  p.lead{color:var(--muted); margin:0 0 2.5rem; text-align:center;}
+  .grid{
+    display:grid; gap:1.25rem; width:100%; max-width:56rem;
+    grid-template-columns:repeat(auto-fit, minmax(15rem, 1fr));
+  }
+  a.card{
+    display:block; background:var(--surface); border:1px solid var(--border);
+    border-radius:.9rem; padding:1.5rem; text-decoration:none; color:inherit;
+    transition:transform .15s ease, border-color .15s ease;
+  }
+  a.card:hover, a.card:focus-visible{
+    border-color:var(--accent); transform:translateY(-2px);
+  }
+  a.card .icon{font-size:1.8rem; display:block; margin-bottom:.6rem;}
+  a.card h2{font-size:1.05rem; margin:0 0 .35rem;}
+  a.card p{font-size:.85rem; color:var(--muted); margin:0;}
+</style>
+</head>
+<body>
+  <h1>Momo Agent Workspaces</h1>
+  <p class="lead">Self-contained HTML apps, each in its own folder.</p>
+  <div class="grid">
+    <a class="card" href="ereader/ereader.html">
+      <span class="icon">📖</span>
+      <h2>eReader</h2>
+      <p>Offline EPUB &amp; text reader with bookmarks, highlights, and search.</p>
+    </a>
+    <a class="card" href="map-generator/map-generator.html">
+      <span class="icon">🗺️</span>
+      <h2>Fantasy Map Generator</h2>
+      <p>Generates and renders fantasy-style maps.</p>
+    </a>
+    <a class="card" href="lumity-gallery/lumity-gallery.html">
+      <span class="icon">✨</span>
+      <h2>Lumity Gallery</h2>
+      <p>An image gallery viewer.</p>
+    </a>
+  </div>
+</body>
+</html>
