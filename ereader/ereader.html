@@ -2864,7 +2864,7 @@ function initTextSettings(){
   document.documentElement.style.setProperty('--reader-font-family', state.fontFamily);
   populateFontFamilySelect();
 
-  state.textAlign = localStorage.getItem('ereader-text-align')==='justify' ? 'justify' : 'left';
+  state.textAlign = localStorage.getItem('ereader-text-align')==='left' ? 'left' : 'justify'; // default on
   document.body.classList.toggle('justify-text', state.textAlign==='justify');
   updateToggleButton('justifyToggleBtn', state.textAlign==='justify');
 
