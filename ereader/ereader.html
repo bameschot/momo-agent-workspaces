@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="eReader">
 <link rel="icon" id="faviconLink" href="">
 <link rel="apple-touch-icon" id="appleTouchIconLink" href="">
-<link rel="manifest" id="manifestLink" href="">
+<link rel="manifest" href="manifest.json">
 <style>
 :root{
   --bg:#f7f5f0; --surface:#ffffff; --text:#1a1a1a; --muted:#6b7280;
@@ -2253,25 +2253,16 @@ function buildIconDataUrl(size){
 }
 
 function setupInstallability(){
+  // The manifest itself is a real static file (manifest.json, linked in
+  // <head>), not built here. Android's WebAPK minting is a server-side step,
+  // separate from the local, always-succeeding beforeinstallprompt
+  // eligibility check — that server needs to independently re-fetch the
+  // manifest by URL later to check for updates, which a data: URI manifest
+  // can't support (nothing for it to re-fetch). Favicon/apple-touch-icon
+  // have no such constraint and can stay dynamically generated data: URIs.
   const icon192=buildIconDataUrl(192);
-  const icon512=buildIconDataUrl(512);
   document.getElementById('faviconLink').setAttribute('href', icon192);
   document.getElementById('appleTouchIconLink').setAttribute('href', icon192);
-  /* start_url/id/scope are resolved relative to the MANIFEST's own URL, not
-     the document's — and a data: URI manifest has no meaningful base to
-     resolve a relative "." against, which Chrome flags as
-     start-url-not-valid (confirmed via Page.getAppManifest) and refuses to
-     treat the page as installable. Using the page's own current, absolute
-     location as start_url/id/scope sidesteps that entirely. */
-  const here=location.href.split('#')[0];
-  const manifest={
-    name:'eReader', short_name:'eReader',
-    id: here, start_url: here, scope: here,
-    display:'standalone',
-    background_color:'#f7f5f0', theme_color:'#8b5cf6',
-    icons:[{src:icon192, sizes:'192x192', type:'image/png'}, {src:icon512, sizes:'512x512', type:'image/png'}]
-  };
-  document.getElementById('manifestLink').setAttribute('href', 'data:application/manifest+json;base64,'+btoa(JSON.stringify(manifest)));
 }
 
 /* Registered at top level (not inside boot()) so it's listening before the

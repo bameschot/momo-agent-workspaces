@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Fantasy Map">
 <link rel="icon" id="faviconLink" href="">
 <link rel="apple-touch-icon" id="appleTouchIconLink" href="">
-<link rel="manifest" id="manifestLink" href="">
+<link rel="manifest" href="manifest.json">
 <style>
 @font-face {
   font-family: 'FantasyMap';
@@ -5285,13 +5285,7 @@ function buildIconDataUrl(size){
   const ctx=canvas.getContext('2d');
   // Flat fill rather than a gradient: gradients produce much noisier pixel
   // data that PNG's lossless compression can't shrink nearly as well,
-  // ballooning this icon (and the manifest embedding it) to ~4x the size
-  // of eReader's/Lumity Gallery's flat-color icons. Android's WebAPK
-  // installation sends the manifest+icons to a separate server-side
-  // minting step (distinct from the local, always-succeeding
-  // beforeinstallprompt eligibility check), and that step has practical
-  // payload-size limits — a plausible explanation for why the install
-  // popup shows but the app never actually finishes installing.
+  // keeping this icon (and manifest.json, which embeds it) small.
   ctx.fillStyle='#a8823a';
   ctx.fillRect(0,0,size,size);
   ctx.fillStyle='#2a1005';
@@ -5302,25 +5296,19 @@ function buildIconDataUrl(size){
 }
 
 function setupInstallability(){
+  // The manifest itself is a real static file (manifest.json, linked in
+  // <head>), not built here. Android's WebAPK minting is a server-side step,
+  // separate from the local, always-succeeding beforeinstallprompt
+  // eligibility check — that server needs to independently re-fetch the
+  // manifest by URL later to check for updates, which a data: URI manifest
+  // can't support (nothing for it to re-fetch). That mismatch is why a
+  // data: URI manifest used to pass the local eligibility check and still
+  // show the install prompt, while the actual install silently never
+  // completed. Favicon/apple-touch-icon have no such constraint and can
+  // stay dynamically generated data: URIs.
   const icon192=buildIconDataUrl(192);
-  const icon512=buildIconDataUrl(512);
   document.getElementById('faviconLink').setAttribute('href', icon192);
   document.getElementById('appleTouchIconLink').setAttribute('href', icon192);
-  /* start_url/id/scope are resolved relative to the MANIFEST's own URL, not
-     the document's — a data: URI manifest has no meaningful base to resolve
-     a relative "." against, which Chrome flags as start-url-not-valid and
-     refuses to treat the page as installable. Using the page's own current,
-     absolute location sidesteps that entirely (confirmed working via Chrome
-     DevTools Protocol while building this same fix for the eReader app). */
-  const here=location.href.split('#')[0];
-  const manifest={
-    name:'Fantasy Map Generator', short_name:'Fantasy Map',
-    id: here, start_url: here, scope: here,
-    display:'standalone',
-    background_color:'#2c1810', theme_color:'#a8823a',
-    icons:[{src:icon192, sizes:'192x192', type:'image/png'}, {src:icon512, sizes:'512x512', type:'image/png'}]
-  };
-  document.getElementById('manifestLink').setAttribute('href', 'data:application/manifest+json;base64,'+btoa(JSON.stringify(manifest)));
 }
 
 let deferredInstallPrompt=null;

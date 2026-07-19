@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-title" content="Lumity Gallery">
   <link rel="icon" id="favicon-link" href="">
   <link rel="apple-touch-icon" id="apple-touch-icon-link" href="">
-  <link rel="manifest" id="manifest-link" href="">
+  <link rel="manifest" href="manifest.json">
   <style>
     :root {
       --bg: #0d0010;
@@ -1065,22 +1065,16 @@ function buildIconDataUrl(size) {
 }
 
 function setupInstallability() {
+  // The manifest itself is a real static file (manifest.json, linked in
+  // <head>), not built here. Android's WebAPK minting is a server-side step,
+  // separate from the local, always-succeeding beforeinstallprompt
+  // eligibility check — that server needs to independently re-fetch the
+  // manifest by URL later to check for updates, which a data: URI manifest
+  // can't support (nothing for it to re-fetch). Favicon/apple-touch-icon
+  // have no such constraint and can stay dynamically generated data: URIs.
   const icon192 = buildIconDataUrl(192);
-  const icon512 = buildIconDataUrl(512);
   document.getElementById('favicon-link').setAttribute('href', icon192);
   document.getElementById('apple-touch-icon-link').setAttribute('href', icon192);
-  // start_url/id/scope resolve against the MANIFEST's own URL, not the
-  // document's — a data: URI manifest has no base to resolve a relative "."
-  // against, so the page's own absolute location is used instead.
-  const here = location.href.split('#')[0];
-  const manifest = {
-    name: 'Lumity Gallery', short_name: 'Lumity',
-    id: here, start_url: here, scope: here,
-    display: 'standalone',
-    background_color: '#0d0010', theme_color: '#9b59b6',
-    icons: [{ src: icon192, sizes: '192x192', type: 'image/png' }, { src: icon512, sizes: '512x512', type: 'image/png' }]
-  };
-  document.getElementById('manifest-link').setAttribute('href', 'data:application/manifest+json;base64,' + btoa(JSON.stringify(manifest)));
 }
 
 // Registered at top level so it's listening before the browser evaluates
