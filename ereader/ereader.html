@@ -274,6 +274,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
         <button id="backupExportBtn" title="Export library backup">⇩ Backup</button>
         <button id="backupImportBtn" title="Import library backup">⇧ Restore</button>
         <button id="importFolderBtn" title="Select multiple books at once (on Android, pick a couple hundred at a time — selecting too many at once can silently fail)">📁 Import multiple</button>
+        <button id="uploadAllBtn" title="Upload every book in a folder at once, including subfolders (desktop browsers only — 500+ files is fine)">🗂️ Upload all</button>
         <button id="uploadBtn" class="btn-primary" title="Upload a book">+ Add book</button>
       </div>
     </div>
@@ -281,11 +282,12 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
       <div id="recentRow" class="recent-row"></div>
       <div id="libraryGroups"></div>
       <div id="libraryEmpty" class="empty-state">
-        <p>Your library is empty.<br>Tap <strong>+ Add book</strong> to upload an EPUB or text file, or <strong>Import multiple</strong> to select several at once.</p>
+        <p>Your library is empty.<br>Tap <strong>+ Add book</strong> to upload an EPUB or text file, <strong>Import multiple</strong> to select several at once, or <strong>Upload all</strong> to import a whole folder.</p>
       </div>
     </div>
     <input type="file" id="fileInput" accept=".epub,.txt,application/epub+zip,text/plain" class="visually-hidden">
     <input type="file" id="folderInput" multiple accept=".epub,.txt,application/epub+zip,text/plain" class="visually-hidden">
+    <input type="file" id="folderPickerInput" webkitdirectory directory multiple class="visually-hidden">
     <input type="file" id="restoreInput" accept="application/json,.json" class="visually-hidden">
   </section>
 
@@ -2346,6 +2348,35 @@ function wireEvents(){
     const files=Array.from(e.target.files); e.target.value='';
     if(files.length) handleFolderImport(files);
     else showToast('No files were selected');
+  });
+  document.getElementById('uploadAllBtn').addEventListener('click', ()=>{
+    const input=document.getElementById('folderPickerInput');
+    let changeFired=false;
+    const markChanged=()=>{ changeFired=true; };
+    input.addEventListener('change', markChanged, {once:true});
+    input.click();
+    /* webkitdirectory folder picking is the same feature that was tried and
+       abandoned for importFolderBtn (see the comment on handleFolderImport)
+       because it can silently fail on mobile browsers, closing the picker
+       with no 'change' event ever firing. Desktop is the realistic target
+       for this button, but detect the silent-failure case the same way and
+       point at the working fallback rather than leaving the screen looking
+       like nothing happened. */
+    window.addEventListener('focus', function onFocus(){
+      window.removeEventListener('focus', onFocus);
+      setTimeout(()=>{
+        input.removeEventListener('change', markChanged);
+        if(!changeFired){
+          showToast('No folder was received — folder upload may not be supported on this browser/device. Try "Import multiple" instead.');
+        }
+      }, 500);
+    });
+  });
+  document.getElementById('folderPickerInput').addEventListener('change', (e)=>{
+    /* Same live-FileList caveat as folderInput above: copy before resetting .value. */
+    const files=Array.from(e.target.files); e.target.value='';
+    if(files.length) handleFolderImport(files);
+    else showToast('No .epub or .txt files were found in that folder');
   });
   document.getElementById('backupExportBtn').addEventListener('click', exportLibraryBackup);
   document.getElementById('backupImportBtn').addEventListener('click', ()=>document.getElementById('restoreInput').click());
