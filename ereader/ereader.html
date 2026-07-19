@@ -169,6 +169,26 @@ body.hyphenate-text .reader-page{hyphens:auto; -webkit-hyphens:auto; overflow-wr
 }
 .reader-bottombar .progress-track{flex:1; height:3px; background:var(--border); border-radius:2px; overflow:hidden;}
 .reader-bottombar .progress-fill{height:100%; background:var(--progress);}
+/* Enlarges the tap/drag target well past the 3px visual bar (padding,
+   offset back out via a matching negative margin so layout/height are
+   unaffected) so tap-to-jump and drag-to-scrub (see wireEvents) have a
+   real hit area to land on. touch-action:none stops the browser treating
+   a drag here as a page-scroll gesture, which would otherwise fight with
+   pointermove-based scrubbing. Scoped to its own id (not the .progress-track
+   class) because that class/.progress-fill are also used, unmodified, by
+   the read-only progress bars on library-screen book tiles. */
+.progress-scrubber{
+  flex:1; position:relative; display:flex; align-items:center;
+  padding:.9rem 0; margin:-.9rem 0; touch-action:none; cursor:pointer;
+}
+.progress-scrubber.dragging .progress-fill{background:var(--accent);}
+#scrubPreview{
+  position:absolute; z-index:20; display:none; background:var(--surface);
+  border:1px solid var(--border); border-radius:.5rem; box-shadow:0 2px 10px rgba(0,0,0,.3);
+  padding:.35rem .6rem; font-size:.75rem; color:var(--text); white-space:nowrap;
+  bottom:100%; margin-bottom:.5rem; left:0; transform:translateX(-50%); pointer-events:none;
+}
+#scrubPreview.show{display:block;}
 /* Fixed to #app, not any one screen, so it can overlay whichever screen
    (library or reader) is active when a long-running operation is busy. */
 #loadingIndicator{
@@ -300,12 +320,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
         <button id="librarySettingsBtn" title="Display settings" aria-label="Display settings">Aa</button>
         <button id="statsBtn" title="Reading stats" aria-label="Reading stats">📊</button>
         <button id="searchLibraryBtn" title="Search library" aria-label="Search library">🔍</button>
-        <button id="backupExportBtn" title="Export library backup">⇩ Backup</button>
-        <button id="backupImportBtn" title="Import library backup">⇧ Restore</button>
-        <button id="downloadEpubsBtn" title="Download every EPUB in your library as a single .zip file (text-file imports aren't included)">📦 Download EPUBs</button>
-        <button id="importFolderBtn" title="Select multiple books at once (on Android, pick a couple hundred at a time — selecting too many at once can silently fail)">📁 Import multiple</button>
-        <button id="uploadAllBtn" title="Upload every book in a folder at once, including subfolders (desktop browsers only — 500+ files is fine)">🗂️ Upload all</button>
-        <button id="uploadBtn" class="btn-primary" title="Upload a book">+ Add book</button>
+        <button id="importExportBtn" class="btn-primary" title="Import/Export" aria-label="Import and export options">⇅ Import/Export</button>
       </div>
     </div>
     <div id="libraryBody">
@@ -348,7 +363,10 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
     </div>
     <div class="reader-bottombar">
       <span id="pageIndicator">–</span>
-      <div class="progress-track"><div class="progress-fill" id="chapterProgressFill" style="width:0%"></div></div>
+      <div class="progress-scrubber" id="progressScrubber">
+        <div class="progress-track"><div class="progress-fill" id="chapterProgressFill" style="width:0%"></div></div>
+        <div id="scrubPreview"></div>
+      </div>
       <span id="percentIndicator">0%</span>
       <span id="timeLeftIndicator"></span>
     </div>
@@ -408,6 +426,20 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
         <div class="stat-card"><div class="stat-value" id="statBookCount">0</div><div class="stat-label">Books in library</div></div>
         <div class="stat-card"><div class="stat-value" id="statFinishedCount">0</div><div class="stat-label">Books finished</div></div>
       </div>
+    </div>
+  </div>
+
+  <!-- ===================== Import/Export Panel ===================== -->
+  <div class="panel-overlay" id="importExportOverlay"></div>
+  <div class="panel" id="importExportPanel" aria-label="Import/Export">
+    <div class="panel-head"><h2>Import/Export</h2><button id="importExportCloseBtn" aria-label="Close">✕</button></div>
+    <div class="panel-body">
+      <button type="button" class="list-entry btn-primary" id="uploadBtn">+ Add book</button>
+      <button type="button" class="list-entry" id="importFolderBtn" title="Select multiple books at once (on Android, pick a couple hundred at a time — selecting too many at once can silently fail)">📁 Import multiple</button>
+      <button type="button" class="list-entry" id="uploadAllBtn" title="Upload every book in a folder at once, including subfolders (desktop browsers only — 500+ files is fine)">🗂️ Upload all (folder)</button>
+      <button type="button" class="list-entry" id="backupExportBtn">⇩ Backup library (JSON)</button>
+      <button type="button" class="list-entry" id="backupImportBtn">⇧ Restore backup</button>
+      <button type="button" class="list-entry" id="downloadEpubsBtn" title="Download every EPUB in your library as a single .zip file (text-file imports aren't included)">📦 Download EPUBs (.zip)</button>
     </div>
   </div>
 
@@ -1778,6 +1810,25 @@ function computeOverallProgress(){
   const overallPage=counts.cumulative[state.currentChapterIndex] + state.currentPageIndex + 1;
   const pct=counts.total>0 ? (overallPage/counts.total)*100 : 0;
   return {overallPage, total:counts.total, pct};
+}
+
+/* Inverse of computeOverallProgress, for the progress-bar scrubber: given a
+   0..1 ratio along the whole-book track, finds which {chapterIndex,
+   pageIndex} that lands on. Takes a ratio (not a raw page number) because
+   the caller works in track-relative pixel offsets. Chapter counts are
+   small (tens, not thousands), so a linear scan over cumulative[] is
+   simpler than a binary search and not worth the extra code. */
+function pageForOverallRatio(ratio){
+  const counts=ensureBookPageCounts();
+  const clampedRatio=Math.max(0, Math.min(ratio, 1));
+  const targetOverallPage=Math.min(Math.round(clampedRatio*counts.total), Math.max(0, counts.total-1));
+  let chapterIndex=counts.cumulative.length-1;
+  for(let i=0;i<counts.cumulative.length;i++){
+    const chapterEnd=counts.cumulative[i]+counts.perChapter[i];
+    if(targetOverallPage<chapterEnd){ chapterIndex=i; break; }
+  }
+  const pageIndex=targetOverallPage-counts.cumulative[chapterIndex];
+  return {chapterIndex, pageIndex, overallPage:targetOverallPage+1, total:counts.total};
 }
 
 function updateBottomBar(){
@@ -3458,6 +3509,18 @@ function wireEvents(){
   document.getElementById('statsCloseBtn').addEventListener('click', ()=>closePanel('stats'));
   document.getElementById('statsOverlay').addEventListener('click', ()=>closePanel('stats'));
 
+  /* -- Import/Export panel -- */
+  document.getElementById('importExportBtn').addEventListener('click', ()=>openPanel('importExport'));
+  document.getElementById('importExportCloseBtn').addEventListener('click', ()=>closePanel('importExport'));
+  document.getElementById('importExportOverlay').addEventListener('click', ()=>closePanel('importExport'));
+  /* Each action button inside keeps its own existing click listener (file
+     picker trigger, backup export, etc.) — this just closes the panel
+     afterward, via bubbling, so picking an action doesn't leave the menu
+     sitting open behind the native file dialog or the loading spinner. */
+  document.getElementById('importExportPanel').addEventListener('click', (e)=>{
+    if(e.target.closest('.list-entry')) closePanel('importExport');
+  });
+
   /* -- Bookmarks panel -- */
   document.getElementById('bookmarkToggleBtn').addEventListener('click', toggleBookmarkAtCurrentPosition);
   document.getElementById('bookmarksListBtn').addEventListener('click', ()=>{ renderBookmarksList(); openPanel('bookmarks'); });
@@ -3527,6 +3590,73 @@ function wireEvents(){
     if(e.key==='ArrowRight') nextPage();
     else if(e.key==='ArrowLeft') prevPage();
     else if(e.key==='Escape') closeReader();
+  });
+
+  /* -- Bottom progress bar: tap-to-jump / drag-to-scrub --
+     Pointer Events rather than the touchstart/touchend pattern the swipe
+     logic above uses: scrubbing needs a continuous drag on both touch and
+     mouse input (unlike swipe, which only needs start/end deltas), and
+     setPointerCapture keeps delivering pointermove even if the pointer
+     strays outside this thin bottombar strip mid-drag. This is a
+     deliberate deviation from the touch-events convention used elsewhere
+     in this file, not an inconsistency to "fix". */
+  const scrubber=document.getElementById('progressScrubber');
+  const scrubPreview=document.getElementById('scrubPreview');
+  let scrubActive=false;
+
+  function ratioFromPointerEvent(e){
+    const rect=scrubber.getBoundingClientRect();
+    return (e.clientX-rect.left)/rect.width;
+  }
+
+  /* Only moves the preview label and live fill width — never calls
+     displayPage/goToChapter. A full chapter render (innerHTML swap,
+     reapplyHighlightsForCurrentChapter, updateBookmarkButtonState, a
+     debounced position save) is too expensive to run at pointermove
+     frequency, and would persist scrub positions the user hasn't
+     committed to. The one real navigation happens once, on release. */
+  function showScrubPreview(ratio){
+    const target=pageForOverallRatio(ratio);
+    const clampedPct=Math.max(0, Math.min(ratio, 1))*100;
+    const chapter=state.currentBook.chapters[target.chapterIndex];
+    scrubPreview.textContent=(chapter && chapter.title ? chapter.title+' · ' : '')+target.overallPage+' / '+target.total;
+    scrubPreview.style.left=clampedPct+'%';
+    scrubPreview.classList.add('show');
+    document.getElementById('chapterProgressFill').style.width=clampedPct+'%';
+    return target;
+  }
+
+  function beginScrub(e){
+    if(!state.currentBook) return;
+    scrubActive=true;
+    scrubber.classList.add('dragging');
+    scrubber.setPointerCapture(e.pointerId);
+    showScrubPreview(ratioFromPointerEvent(e));
+  }
+  scrubber.addEventListener('pointerdown', beginScrub);
+  scrubber.addEventListener('pointermove', (e)=>{
+    if(!scrubActive) return;
+    showScrubPreview(ratioFromPointerEvent(e));
+  });
+  scrubber.addEventListener('pointerup', (e)=>{
+    if(!scrubActive) return;
+    scrubActive=false;
+    scrubber.classList.remove('dragging');
+    scrubPreview.classList.remove('show');
+    const target=pageForOverallRatio(ratioFromPointerEvent(e));
+    goToChapter(target.chapterIndex, target.pageIndex);
+  });
+  /* A pointercancel (e.g. an incoming call, or the OS's own edge-swipe
+     gesture hijacking the pointer) must abandon the scrub without
+     committing a navigation the user never confirmed with a release —
+     restore the fill/text via updateBottomBar() rather than leaving them
+     stranded wherever the drag was interrupted. */
+  scrubber.addEventListener('pointercancel', ()=>{
+    if(!scrubActive) return;
+    scrubActive=false;
+    scrubber.classList.remove('dragging');
+    scrubPreview.classList.remove('show');
+    updateBottomBar();
   });
 
   /* -- Text selection: floating highlight-color toolbar -- */
