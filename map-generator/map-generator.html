@@ -5283,9 +5283,16 @@ function buildIconDataUrl(size){
   const canvas=document.createElement('canvas');
   canvas.width=size; canvas.height=size;
   const ctx=canvas.getContext('2d');
-  const grad=ctx.createLinearGradient(0,0,0,size);
-  grad.addColorStop(0,'#c8a96e'); grad.addColorStop(0.5,'#b8935a'); grad.addColorStop(1,'#6b4423');
-  ctx.fillStyle=grad;
+  // Flat fill rather than a gradient: gradients produce much noisier pixel
+  // data that PNG's lossless compression can't shrink nearly as well,
+  // ballooning this icon (and the manifest embedding it) to ~4x the size
+  // of eReader's/Lumity Gallery's flat-color icons. Android's WebAPK
+  // installation sends the manifest+icons to a separate server-side
+  // minting step (distinct from the local, always-succeeding
+  // beforeinstallprompt eligibility check), and that step has practical
+  // payload-size limits — a plausible explanation for why the install
+  // popup shows but the app never actually finishes installing.
+  ctx.fillStyle='#a8823a';
   ctx.fillRect(0,0,size,size);
   ctx.fillStyle='#2a1005';
   ctx.font='bold '+Math.round(size*0.56)+'px Georgia, serif';
