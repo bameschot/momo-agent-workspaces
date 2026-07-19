@@ -949,6 +949,17 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+// Lightweight FNV-1a hash of the base64 payload, used to spot duplicate
+// images without keeping every full base64 string alive in a Set at once.
+function hashBase64(b64) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < b64.length; i++) {
+    hash ^= b64.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16) + ':' + b64.length;
+}
+
 // ── DOWNLOAD JSON ─────────────────────────────────────────────────────────────
 document.getElementById('download-json-btn').addEventListener('click', async () => {
   const btn = document.getElementById('download-json-btn');
@@ -958,6 +969,8 @@ document.getElementById('download-json-btn').addEventListener('click', async () 
   btn.disabled = true;
 
   const files = [];
+  const seenHashes = new Set();
+  let duplicates = 0;
   for (let i = 0; i < total; i++) {
     const img = filtered[i];
     btn.textContent = `⏳ ${i + 1} / ${total}`;
@@ -970,6 +983,13 @@ document.getElementById('download-json-btn').addEventListener('click', async () 
       const ab = await res.arrayBuffer();
       b64 = bytesToBase64(new Uint8Array(ab));
     }
+
+    const hash = hashBase64(b64);
+    if (seenHashes.has(hash)) {
+      duplicates++;
+      continue;
+    }
+    seenHashes.add(hash);
     files.push({ filename: img.name, data: b64 });
   }
 
@@ -984,7 +1004,9 @@ document.getElementById('download-json-btn').addEventListener('click', async () 
 
   btn.disabled = false;
   btn.textContent = '⬇ Download JSON';
-  showToast('Downloaded ' + total + ' images as JSON ✨');
+  showToast('Downloaded ' + files.length + ' images as JSON'
+    + (duplicates ? ` (${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped)` : '')
+    + ' ✨');
 });
 
 // ── SORT BY DIMENSIONS ────────────────────────────────────────────────────────
