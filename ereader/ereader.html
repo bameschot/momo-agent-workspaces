@@ -429,19 +429,8 @@ function bytesToBase64(bytes){
   return btoa(binary);
 }
 
-function base64ToBytes(b64){
-  const binary=atob(b64);
-  const bytes=new Uint8Array(binary.length);
-  for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
-  return bytes;
-}
-
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-function formatDate(ts){
-  try{ return new Date(ts).toLocaleDateString(); }catch(e){ return ''; }
 }
 
 let toastTimer=null;
@@ -450,7 +439,11 @@ function showToast(msg){
   el.textContent=msg;
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer=setTimeout(()=>el.classList.remove('show'), 30000);
+  /* Scales with message length so short confirmations ("Bookmark added")
+     clear quickly while longer explanatory errors stay readable, capped so
+     it never lingers indefinitely. */
+  const duration=Math.max(3000, Math.min(8000, msg.length*60));
+  toastTimer=setTimeout(()=>el.classList.remove('show'), duration);
 }
 
 function confirmDialog(title, body){
@@ -738,7 +731,6 @@ function parseZip(arrayBuffer){
   const cenOffset=readU32LE(dv, eocdOff+16);
 
   const entries=new Map();
-  const names=[];
   let p=cenOffset;
   for(let i=0;i<totalEntries;i++){
     if(readU32LE(dv,p)!==CEN_SIG) throw new Error('Corrupt EPUB (zip): bad central directory entry');
@@ -752,7 +744,6 @@ function parseZip(arrayBuffer){
     const nameBytes=bytes.subarray(p+46, p+46+nameLen);
     const name=new TextDecoder('utf-8').decode(nameBytes);
     entries.set(name, {method, compSize, uncompSize, localOffset});
-    names.push(name);
     p += 46 + nameLen + extraLen + commentLen;
   }
 
@@ -779,7 +770,7 @@ function parseZip(arrayBuffer){
     return b ? new TextDecoder('utf-8').decode(b) : null;
   }
 
-  return {names, entries, getFile, getText};
+  return {getFile, getText};
 }
 
 /* === SECTION: EPUB PARSER === */
@@ -795,8 +786,13 @@ function resolvePath(baseDir, relPath){
   if(!relPath) return relPath;
   let clean=relPath.split('#')[0];
   try{ clean=decodeURIComponent(clean); }catch(e){ /* leave as-is if malformed */ }
-  if(clean.startsWith('/')) clean=clean.slice(1);
-  const baseParts = baseDir ? baseDir.split('/').filter(Boolean) : [];
+  /* A leading slash means "from the archive root", not "relative to
+     baseDir" — dropping baseParts in that case keeps e.g. a chapter at
+     OEBPS/text/ch1.xhtml referencing /images/cover.jpg resolving to
+     images/cover.jpg rather than OEBPS/text/images/cover.jpg. */
+  const isAbsolute=clean.startsWith('/');
+  if(isAbsolute) clean=clean.slice(1);
+  const baseParts = (!isAbsolute && baseDir) ? baseDir.split('/').filter(Boolean) : [];
   const relParts = clean.split('/');
   const stack=[...baseParts];
   for(const part of relParts){
@@ -805,6 +801,46 @@ function resolvePath(baseDir, relPath){
     else stack.push(part);
   }
   return stack.join('/');
+}
+
+/* Removes elements/attributes capable of running script from a parsed DOM
+   tree: <script>/<style>/<link>/<iframe>/<object>/<embed>/<meta>/<base>
+   outright, plus any "on*" event-handler attribute and javascript: URL on
+   whatever remains. Applied to every EPUB chapter at parse time, and again
+   to every chapter re-hydrated from an imported backup file (see
+   sanitizeChapterHtml) — a backup is just as untrusted as a downloaded EPUB,
+   since nothing stops someone from handing another user a crafted
+   "library backup.json". Must only ever run on a detached (unconnected)
+   node — see sanitizeChapterHtml — so removal happens before anything has a
+   chance to load/execute. */
+const UNSAFE_TAGS_SELECTOR='script, style, link, iframe, object, embed, meta, base';
+function stripUnsafeContent(root){
+  root.querySelectorAll(UNSAFE_TAGS_SELECTOR).forEach(el=>el.remove());
+  const walker=document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  const els=[root];
+  let n;
+  while(n=walker.nextNode()) els.push(n);
+  els.forEach(el=>{
+    Array.from(el.attributes||[]).forEach(attr=>{
+      const name=attr.name.toLowerCase();
+      if(name.startsWith('on')){ el.removeAttribute(attr.name); return; }
+      if(/^(href|src|xlink:href)$/.test(name) && /^\s*javascript:/i.test(attr.value)){
+        el.removeAttribute(attr.name);
+      }
+    });
+  });
+}
+
+/* Sanitizes a raw HTML string in a detached (never-connected) element, so
+   parsing it can never trigger image loads or other side effects before
+   stripUnsafeContent has had a chance to remove the dangerous bits. Used to
+   re-sanitize chapter HTML coming from an imported backup file, which
+   (unlike a freshly-parsed EPUB) was never run through parseChapterXhtml. */
+function sanitizeChapterHtml(html){
+  const div=document.createElement('div');
+  div.innerHTML=String(html||'');
+  stripUnsafeContent(div);
+  return div.innerHTML;
 }
 
 const BLOCK_ANCHOR_SELECTOR='p, h1, h2, h3, h4, h5, h6, li, blockquote, figure, img, table, pre';
@@ -818,7 +854,7 @@ function parseChapterXhtml(xhtmlText, chapterHref, zip){
   }
   if(!body) body=document.createElement('body');
 
-  body.querySelectorAll('script, style, link').forEach(el=>el.remove());
+  stripUnsafeContent(body);
 
   const chapterDir=chapterHref.includes('/') ? chapterHref.slice(0, chapterHref.lastIndexOf('/')) : '';
 
@@ -993,7 +1029,7 @@ async function parseEpub(arrayBuffer){
     const parsed=parseChapterXhtml(xhtmlText, item.href, zip);
     const chapterIndex=chapters.length;
     hrefToChapterIndex[item.href]=chapterIndex;
-    chapters.push({href:item.href, title: parsed.title || ('Chapter '+(chapterIndex+1)), html: parsed.html});
+    chapters.push({title: parsed.title || ('Chapter '+(chapterIndex+1)), html: parsed.html});
     chapterIdMaps.push(parsed.idMap);
   }
   if(chapters.length===0) throw new Error('No readable chapters were found in this EPUB.');
@@ -1056,7 +1092,7 @@ function parseTxt(text, filename){
       anchor++;
     });
     if(!html) html='<p data-anchor="0"></p>';
-    chapters.push({href:'txt-chapter-'+chapterIndex, title: rc.title, html});
+    chapters.push({title: rc.title, html});
     toc.push({label: rc.title, chapterIndex, anchorId:0});
   });
 
@@ -1392,15 +1428,25 @@ function repaginateKeepingPosition(){
   goToChapterAnchor(state.currentChapterIndex, anchorId);
 }
 
+/* Shared by updateBottomBar and saveCurrentPosition so the reader's own
+   "page X of N" / percent display and the percentage persisted for the
+   library screen (see bookProgressPercent) are always derived from the
+   same page-based number, rather than the library falling back to a
+   coarser chapter-count estimate that can visibly disagree with it. */
+function computeOverallProgress(){
+  const counts=ensureBookPageCounts();
+  const overallPage=counts.cumulative[state.currentChapterIndex] + state.currentPageIndex + 1;
+  const pct=counts.total>0 ? (overallPage/counts.total)*100 : 0;
+  return {overallPage, total:counts.total, pct};
+}
+
 function updateBottomBar(){
   const pageIndicator=document.getElementById('pageIndicator');
   const percentIndicator=document.getElementById('percentIndicator');
   const fill=document.getElementById('chapterProgressFill');
   if(!state.currentBook) return;
-  const counts=ensureBookPageCounts();
-  const overallPage=counts.cumulative[state.currentChapterIndex] + state.currentPageIndex + 1;
-  const pct=counts.total>0 ? (overallPage/counts.total)*100 : 0;
-  pageIndicator.textContent=overallPage+' / '+counts.total;
+  const {overallPage, total, pct}=computeOverallProgress();
+  pageIndicator.textContent=overallPage+' / '+total;
   percentIndicator.textContent=Math.round(pct)+'%';
   fill.style.width=pct+'%';
 }
@@ -1436,6 +1482,7 @@ function saveCurrentPosition(){
   const anchorId=getTopAnchorOfCurrentPage();
   state.currentBook.position={chapterIndex: state.currentChapterIndex, anchorId: anchorId||0};
   state.currentBook.lastOpenedAt=Date.now();
+  state.currentBook.progressPercent=Math.round(computeOverallProgress().pct);
   persistCurrentBook();
 }
 
@@ -1646,6 +1693,57 @@ async function exportLibraryBackup(){
   showToast('Backup downloaded');
 }
 
+/* A backup file is exactly as untrusted as a downloaded EPUB — nothing
+   stops someone from hand-editing one, or handing another user a crafted
+   "library backup.json" — so every field is coerced to its expected
+   type/shape here rather than trusted verbatim, the way the old
+   Object.assign({}, book) did. Chapter HTML in particular is re-run through
+   sanitizeChapterHtml, since a backup skips the parseChapterXhtml step a
+   real EPUB import goes through. Returns null for anything that isn't
+   recognizable as a book at all. */
+function sanitizeImportedBook(raw){
+  if(!raw || typeof raw!=='object' || !Array.isArray(raw.chapters) || raw.chapters.length===0) return null;
+  const str=(v, fallback)=> typeof v==='string' ? v : fallback;
+  const num=(v, fallback)=> typeof v==='number' && isFinite(v) ? v : fallback;
+  const chapters=raw.chapters.map(c=>({
+    title: str(c && c.title, 'Untitled'),
+    html: sanitizeChapterHtml(c && c.html)
+  }));
+  const clampChapter=(v)=>Math.max(0, Math.min(chapters.length-1, Math.trunc(num(v,0))));
+  const toc=Array.isArray(raw.toc) && raw.toc.length ? raw.toc.map(t=>({
+    label: str(t && t.label, ''),
+    chapterIndex: clampChapter(t && t.chapterIndex),
+    anchorId: (t && t.anchorId==null) ? null : num(t.anchorId, 0)
+  })) : chapters.map((c,i)=>({label:c.title, chapterIndex:i, anchorId:null}));
+  const position=(raw.position && typeof raw.position==='object')
+    ? {chapterIndex: clampChapter(raw.position.chapterIndex), anchorId: num(raw.position.anchorId, 0)}
+    : {chapterIndex:0, anchorId:0};
+  const bookmarks=Array.isArray(raw.bookmarks) ? raw.bookmarks.map(b=>({
+    id: str(b && b.id, uid()), chapterIndex: clampChapter(b && b.chapterIndex),
+    anchorId: num(b && b.anchorId, 0), excerpt: str(b && b.excerpt, ''), createdAt: num(b && b.createdAt, Date.now())
+  })) : [];
+  const highlights=Array.isArray(raw.highlights) ? raw.highlights.map(h=>({
+    id: str(h && h.id, uid()), chapterIndex: clampChapter(h && h.chapterIndex),
+    anchorId: num(h && h.anchorId, 0), startOffset: num(h && h.startOffset, 0), endOffset: num(h && h.endOffset, 0),
+    color: (typeof (h && h.color)==='string' && /^#[0-9a-fA-F]{3,8}$/.test(h.color)) ? h.color : '#fde047',
+    text: str(h && h.text, ''), note: str(h && h.note, ''), createdAt: num(h && h.createdAt, Date.now())
+  })) : [];
+  const rawFontScale=raw.settings && num(raw.settings.fontScale, null);
+  const fontScale=FONT_SCALE_STEPS.includes(rawFontScale) ? rawFontScale : 1.0;
+  const progressPercent=num(raw.progressPercent, null);
+  return {
+    id: str(raw.id, uid()),
+    title: str(raw.title, 'Untitled'),
+    author: str(raw.author, 'Unknown author'),
+    coverDataUrl: (typeof raw.coverDataUrl==='string' && /^data:image\//i.test(raw.coverDataUrl)) ? raw.coverDataUrl : null,
+    chapters, toc,
+    addedAt: num(raw.addedAt, Date.now()),
+    lastOpenedAt: num(raw.lastOpenedAt, undefined),
+    position, settings:{fontScale}, bookmarks, highlights,
+    progressPercent: (progressPercent!=null && progressPercent>=0 && progressPercent<=100) ? progressPercent : undefined
+  };
+}
+
 async function importLibraryBackup(file){
   let text;
   try{ text=await file.text(); }catch(e){ showToast('Could not read that file'); return; }
@@ -1657,23 +1755,26 @@ async function importLibraryBackup(file){
   const existing=await dbGetAll();
   const existingIds=new Set(existing.map(b=>b.id));
   const existingTitles=new Set(existing.map(b=>(b.title+'|'+b.author).toLowerCase()));
-  let added=0, skipped=0;
+  let added=0, skipped=0, invalid=0;
   for(let i=0;i<payload.books.length;i++){
-    const book=payload.books[i];
     showLoading(true, 'Restoring '+(i+1)+' of '+payload.books.length+'…');
+    const book=sanitizeImportedBook(payload.books[i]);
+    if(!book){ invalid++; continue; }
     const key=(book.title+'|'+book.author).toLowerCase();
     if(existingTitles.has(key)){ skipped++; continue; }
-    const toSave=Object.assign({}, book);
-    if(existingIds.has(toSave.id)) toSave.id=uid();
-    await dbPut(toSave);
-    existingIds.add(toSave.id);
+    if(existingIds.has(book.id)) book.id=uid();
+    await dbPut(book);
+    existingIds.add(book.id);
     existingTitles.add(key);
     added++;
     await new Promise(r=>requestAnimationFrame(r));
   }
   showLoading(false);
   await refreshLibraryFromDb();
-  showToast('Restored '+added+' book'+(added===1?'':'s')+(skipped ? ', skipped '+skipped+' duplicate'+(skipped===1?'':'s') : ''));
+  const parts=['Restored '+added+' book'+(added===1?'':'s')];
+  if(skipped) parts.push(skipped+' duplicate'+(skipped===1?'':'s')+' skipped');
+  if(invalid) parts.push(invalid+' invalid entr'+(invalid===1?'y':'ies')+' skipped');
+  showToast(parts.join(', '));
 }
 
 /* === SECTION: STATE + UI RENDERING === */
@@ -1698,6 +1799,12 @@ function showScreen(name){
 }
 
 function bookProgressPercent(book){
+  /* Once a book has actually been read, progressPercent (saved by
+     saveCurrentPosition from the same page-based math the reader's own
+     bottom bar shows) is authoritative. Books that have never been opened
+     don't have one yet, so fall back to a coarse chapter-count estimate —
+     the only thing available without paginating the whole book. */
+  if(typeof book.progressPercent==='number') return book.progressPercent;
   if(!book.chapters || book.chapters.length===0) return 0;
   const idx=(book.position && typeof book.position.chapterIndex==='number') ? book.position.chapterIndex : 0;
   return Math.round(((idx+1)/book.chapters.length)*100);
@@ -1907,6 +2014,22 @@ async function parseFileToBookData(file){
   return parseTxt(text, file.name);
 }
 
+/* Shared by handleFileUpload and handleFolderImport so a freshly-parsed
+   book always turns into the same record shape. opened=true marks it as
+   just-opened (handleFileUpload's single-book path); opened=false leaves
+   lastOpenedAt unset so folder-imported books don't show up in "Continue
+   Reading" until actually opened (see handleFolderImport below). */
+function makeBookRecord(parsed, opened){
+  return {
+    id:uid(), title:parsed.title, author:parsed.author, coverDataUrl:parsed.coverDataUrl,
+    chapters:parsed.chapters, toc:parsed.toc,
+    addedAt:Date.now(), lastOpenedAt: opened ? Date.now() : undefined,
+    position:{chapterIndex:0, anchorId:0},
+    settings:{fontScale: state.fontScale},
+    bookmarks:[], highlights:[]
+  };
+}
+
 /* Shared by handleFileUpload and handleFolderImport — both mutate the same
    IndexedDB books store and neither should run concurrently with the other,
    e.g. dropping/selecting the same file twice in quick succession before the
@@ -1930,14 +2053,7 @@ async function handleFileUpload(file){
       openBook(existing.id);
       return;
     }
-    const book={
-      id:uid(), title:parsed.title, author:parsed.author, coverDataUrl:parsed.coverDataUrl,
-      chapters:parsed.chapters, toc:parsed.toc,
-      addedAt:Date.now(), lastOpenedAt:Date.now(),
-      position:{chapterIndex:0, anchorId:0},
-      settings:{fontScale: state.fontScale},
-      bookmarks:[], highlights:[]
-    };
+    const book=makeBookRecord(parsed, true);
     await dbPut(book);
     await refreshLibraryFromDb();
     openBook(book.id);
@@ -2001,14 +2117,7 @@ async function handleFolderImport(fileList){
         if(seenKeys.has(key)){
           skipped++;
         }else{
-          const book={
-            id:uid(), title:parsed.title, author:parsed.author, coverDataUrl:parsed.coverDataUrl,
-            chapters:parsed.chapters, toc:parsed.toc,
-            addedAt:Date.now(),
-            position:{chapterIndex:0, anchorId:0},
-            settings:{fontScale: state.fontScale},
-            bookmarks:[], highlights:[]
-          };
+          const book=makeBookRecord(parsed, false);
           await dbPut(book);
           seenKeys.add(key);
           imported++;
@@ -2115,7 +2224,7 @@ function renderHighlightsList(){
   [...hls].sort((a,b)=>a.chapterIndex-b.chapterIndex || a.anchorId-b.anchorId).forEach(hl=>{
     const chTitle=(state.currentBook.chapters[hl.chapterIndex]||{}).title || ('Chapter '+(hl.chapterIndex+1));
     const row=document.createElement('div'); row.className='list-entry';
-    row.innerHTML='<div class="row1"><span><span class="hl-color-dot" style="background:'+hl.color+'"></span>'+escapeHtml(chTitle)+'</span><button type="button" class="del">Remove</button></div>'+
+    row.innerHTML='<div class="row1"><span><span class="hl-color-dot" style="background:'+escapeHtml(hl.color)+'"></span>'+escapeHtml(chTitle)+'</span><button type="button" class="del">Remove</button></div>'+
       '<div class="excerpt">“'+escapeHtml(hl.text||'')+'”</div>';
     row.querySelector('.row1 span').addEventListener('click', ()=>{ goToChapterAnchor(hl.chapterIndex, hl.anchorId); closePanel('highlights'); });
     row.querySelector('.excerpt').addEventListener('click', ()=>{ goToChapterAnchor(hl.chapterIndex, hl.anchorId); closePanel('highlights'); });
@@ -2295,6 +2404,28 @@ async function promptInstall(){
 
 /* === SECTION: BOOTSTRAP === */
 
+/* Clicks a file/folder <input>, then warns if the native picker sheet
+   closes (the window regains focus) without a 'change' event having fired
+   shortly after — the signature of a picker silently failing to hand any
+   files back (see the callers below for when/why that happens). A normal
+   cancel also regains focus with no 'change', but callers already show
+   their own "no files selected" toast for that case via the input's own
+   'change' listener, so this only ever adds a message where there was
+   none before. */
+function warnIfPickerIsSilent(input, failureMessage){
+  let changeFired=false;
+  const markChanged=()=>{ changeFired=true; };
+  input.addEventListener('change', markChanged, {once:true});
+  input.click();
+  window.addEventListener('focus', function onFocus(){
+    window.removeEventListener('focus', onFocus);
+    setTimeout(()=>{
+      input.removeEventListener('change', markChanged);
+      if(!changeFired) showToast(failureMessage);
+    }, 500);
+  });
+}
+
 function wireEvents(){
   /* -- Library: upload, folder import, backup/restore, search, install -- */
   document.getElementById('uploadBtn').addEventListener('click', ()=>document.getElementById('fileInput').click());
@@ -2303,32 +2434,21 @@ function wireEvents(){
     if(file) handleFileUpload(file);
   });
   document.getElementById('importFolderBtn').addEventListener('click', ()=>{
-    const input=document.getElementById('folderInput');
-    let changeFired=false;
-    const markChanged=()=>{ changeFired=true; };
-    input.addEventListener('change', markChanged, {once:true});
-    input.click();
     /* On some Android/Chrome versions, selecting a very large number of
        files at once (several hundred+) hits an OS-level limit on how many
        file URIs the system document picker can hand back to the browser in
        one go — the picker just closes and 'change' never fires at all, with
        no error surfaced anywhere in the page. That leaves the user looking
-       at a screen that appears to have done nothing. Detect it via the
-       window regaining focus (the picker closing, for any reason) without a
-       'change' having fired shortly after, and say what's likely wrong
-       instead of staying silent. A real, well-behaved cancel also lands
-       here, but the existing "No files were selected" toast below already
-       covers that case whenever 'change' does fire with an empty list, so
-       this only ever adds a message where there was none before. */
-    window.addEventListener('focus', function onFocus(){
-      window.removeEventListener('focus', onFocus);
-      setTimeout(()=>{
-        input.removeEventListener('change', markChanged);
-        if(!changeFired){
-          showToast('No files were received — if you selected a large number of files, your device may have failed to hand them all back. Try selecting fewer at a time (a couple hundred or less).');
-        }
-      }, 500);
-    });
+       at a screen that appears to have done nothing. warnIfPickerIsSilent
+       detects it via the window regaining focus (the picker closing, for
+       any reason) without a 'change' having fired shortly after, and says
+       what's likely wrong instead of staying silent. A real, well-behaved
+       cancel also lands here, but the existing "No files were selected"
+       toast below already covers that case whenever 'change' does fire with
+       an empty list, so this only ever adds a message where there was none
+       before. */
+    warnIfPickerIsSilent(document.getElementById('folderInput'),
+      'No files were received — if you selected a large number of files, your device may have failed to hand them all back. Try selecting fewer at a time (a couple hundred or less).');
   });
   document.getElementById('folderInput').addEventListener('change', (e)=>{
     /* input.files is a LIVE FileList in some browsers — resetting .value
@@ -2341,27 +2461,15 @@ function wireEvents(){
     else showToast('No files were selected');
   });
   document.getElementById('uploadAllBtn').addEventListener('click', ()=>{
-    const input=document.getElementById('folderPickerInput');
-    let changeFired=false;
-    const markChanged=()=>{ changeFired=true; };
-    input.addEventListener('change', markChanged, {once:true});
-    input.click();
     /* webkitdirectory folder picking is the same feature that was tried and
        abandoned for importFolderBtn (see the comment on handleFolderImport)
        because it can silently fail on mobile browsers, closing the picker
        with no 'change' event ever firing. Desktop is the realistic target
-       for this button, but detect the silent-failure case the same way and
-       point at the working fallback rather than leaving the screen looking
-       like nothing happened. */
-    window.addEventListener('focus', function onFocus(){
-      window.removeEventListener('focus', onFocus);
-      setTimeout(()=>{
-        input.removeEventListener('change', markChanged);
-        if(!changeFired){
-          showToast('No folder was received — folder upload may not be supported on this browser/device. Try "Import multiple" instead.');
-        }
-      }, 500);
-    });
+       for this button, but warnIfPickerIsSilent detects the silent-failure
+       case the same way and points at the working fallback rather than
+       leaving the screen looking like nothing happened. */
+    warnIfPickerIsSilent(document.getElementById('folderPickerInput'),
+      'No folder was received — folder upload may not be supported on this browser/device. Try "Import multiple" instead.');
   });
   document.getElementById('folderPickerInput').addEventListener('change', (e)=>{
     /* Same live-FileList caveat as folderInput above: copy before resetting .value. */
