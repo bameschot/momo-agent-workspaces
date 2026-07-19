@@ -1286,6 +1286,30 @@ function ensurePages(chapterIndex){
   return pages;
 }
 
+let bookPageCountsCache={bookId:null, cacheKey:null, perChapter:null, cumulative:null, total:0};
+
+/* Whole-book page count/position, for the "page X of N" and percent display
+   at the bottom of the reader — unlike ensurePages, which only paginates the
+   one chapter currently on screen, this needs every chapter's page count.
+   Uses paginateChapter directly (not ensurePages) so counting the whole book
+   never evicts the single-entry pagesCache that the currently-displayed
+   chapter relies on. Cached per book+cacheKey, so it's only recomputed when
+   the book, font size, or viewport actually changes — never on a plain page
+   turn within the same chapter. */
+function ensureBookPageCounts(){
+  const book=state.currentBook;
+  const key=pagesCacheKey();
+  if(bookPageCountsCache.bookId===book.id && bookPageCountsCache.cacheKey===key){
+    return bookPageCountsCache;
+  }
+  const perChapter=book.chapters.map((c,i)=>paginateChapter(i).length);
+  const cumulative=[];
+  let sum=0;
+  perChapter.forEach(count=>{ cumulative.push(sum); sum+=count; });
+  bookPageCountsCache={bookId: book.id, cacheKey: key, perChapter, cumulative, total: sum};
+  return bookPageCountsCache;
+}
+
 function displayPage(chapterIndex, pageIndex){
   const pages=ensurePages(chapterIndex);
   const clamped=Math.max(0, Math.min(pageIndex, pages.length-1));
@@ -1371,11 +1395,12 @@ function updateBottomBar(){
   const percentIndicator=document.getElementById('percentIndicator');
   const fill=document.getElementById('chapterProgressFill');
   if(!state.currentBook) return;
-  pageIndicator.textContent=(state.currentPageIndex+1)+' / '+state.totalPagesInChapter;
-  const chapterCount=state.currentBook.chapters.length;
-  const overall=((state.currentChapterIndex + (state.currentPageIndex+1)/state.totalPagesInChapter) / chapterCount)*100;
-  percentIndicator.textContent=Math.round(overall)+'%';
-  fill.style.width=Math.round(((state.currentPageIndex+1)/state.totalPagesInChapter)*100)+'%';
+  const counts=ensureBookPageCounts();
+  const overallPage=counts.cumulative[state.currentChapterIndex] + state.currentPageIndex + 1;
+  const pct=counts.total>0 ? (overallPage/counts.total)*100 : 0;
+  pageIndicator.textContent=overallPage+' / '+counts.total;
+  percentIndicator.textContent=Math.round(pct)+'%';
+  fill.style.width=pct+'%';
 }
 
 const handleViewportChange=debounce(()=>{
