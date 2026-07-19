@@ -936,6 +936,19 @@ document.getElementById('download-btn').addEventListener('click', async () => {
   showToast('Downloaded ' + total + ' images ✨');
 });
 
+// Spreading a large typed array straight into String.fromCharCode(...bytes)
+// blows the call stack once a single image is much past ~100KB (a real
+// photo easily is) — encode in chunks instead so export doesn't silently
+// die partway through a folder of big pictures.
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
 // ── DOWNLOAD JSON ─────────────────────────────────────────────────────────────
 document.getElementById('download-json-btn').addEventListener('click', async () => {
   const btn = document.getElementById('download-json-btn');
@@ -955,7 +968,7 @@ document.getElementById('download-json-btn').addEventListener('click', async () 
     } else {
       const res = await fetch(img.url);
       const ab = await res.arrayBuffer();
-      b64 = btoa(String.fromCharCode(...new Uint8Array(ab)));
+      b64 = bytesToBase64(new Uint8Array(ab));
     }
     files.push({ filename: img.name, data: b64 });
   }
