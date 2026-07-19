@@ -528,13 +528,16 @@ function confirmDialog(title, body){
   });
 }
 
-function downloadTextFile(filename, text, mime){
-  const blob=new Blob([text], {type: mime || 'application/octet-stream'});
+function downloadBlob(filename, blob){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
   a.href=url; a.download=filename;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 5000);
+}
+
+function downloadTextFile(filename, text, mime){
+  downloadBlob(filename, new Blob([text], {type: mime || 'application/octet-stream'}));
 }
 
 /* === SECTION: INDEXEDDB === */
@@ -1902,12 +1905,39 @@ async function searchLibrary(query){
 /* === SECTION: BACKUP EXPORT/IMPORT === */
 
 async function exportLibraryBackup(){
-  const books=await dbGetAll();
-  if(books.length===0){ showToast('Your library is empty — nothing to back up'); return; }
-  const payload={app:'ereader-backup', version:1, exportedAt:Date.now(), books};
-  const filename='ereader-backup-'+new Date().toISOString().slice(0,10)+'.json';
-  downloadTextFile(filename, JSON.stringify(payload), 'application/json');
-  showToast('Backup downloaded');
+  showLoading(true, 'Preparing backup…');
+  try{
+    const books=await dbGetAll();
+    if(books.length===0){ showToast('Your library is empty — nothing to back up'); return; }
+    /* Built as an array of chunks fed straight to Blob, rather than one
+       JSON.stringify(hugeObject) call producing a single JS string — a
+       large library (many books, each carrying full chapter HTML plus
+       inlined cover/image data) can otherwise exceed the JS engine's
+       maximum string length and crash the tab outright, or at minimum
+       double memory use by holding the whole serialized copy alongside
+       the original data. Blob concatenates its parts internally without
+       ever materializing one combined string, and nulling out each book
+       as it's consumed lets that memory be reclaimed as the loop goes
+       rather than held until the very end. */
+    const chunks=['{"app":"ereader-backup","version":1,"exportedAt":'+Date.now()+',"books":['];
+    for(let i=0;i<books.length;i++){
+      showLoading(true, 'Preparing backup… ('+(i+1)+' of '+books.length+')');
+      if(i>0) chunks.push(',');
+      chunks.push(JSON.stringify(books[i]));
+      books[i]=null;
+      await new Promise(r=>setTimeout(r, 0));
+    }
+    chunks.push(']}');
+    const blob=new Blob(chunks, {type:'application/json'});
+    const filename='ereader-backup-'+new Date().toISOString().slice(0,10)+'.json';
+    downloadBlob(filename, blob);
+    showToast('Backup downloaded');
+  }catch(err){
+    console.error('Backup export failed', err);
+    showToast('Could not create backup: '+(err && err.message ? err.message : 'unknown error'));
+  }finally{
+    showLoading(false);
+  }
 }
 
 /* A backup file is exactly as untrusted as a downloaded EPUB — nothing
