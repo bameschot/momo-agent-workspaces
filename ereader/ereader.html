@@ -2350,27 +2350,7 @@ function wireEvents(){
     else showToast('No files were selected');
   });
   document.getElementById('uploadAllBtn').addEventListener('click', ()=>{
-    const input=document.getElementById('folderPickerInput');
-    let changeFired=false;
-    const markChanged=()=>{ changeFired=true; };
-    input.addEventListener('change', markChanged, {once:true});
-    input.click();
-    /* webkitdirectory folder picking is the same feature that was tried and
-       abandoned for importFolderBtn (see the comment on handleFolderImport)
-       because it can silently fail on mobile browsers, closing the picker
-       with no 'change' event ever firing. Desktop is the realistic target
-       for this button, but detect the silent-failure case the same way and
-       point at the working fallback rather than leaving the screen looking
-       like nothing happened. */
-    window.addEventListener('focus', function onFocus(){
-      window.removeEventListener('focus', onFocus);
-      setTimeout(()=>{
-        input.removeEventListener('change', markChanged);
-        if(!changeFired){
-          showToast('No folder was received — folder upload may not be supported on this browser/device. Try "Import multiple" instead.');
-        }
-      }, 500);
-    });
+    document.getElementById('folderPickerInput').click();
   });
   document.getElementById('folderPickerInput').addEventListener('change', (e)=>{
     /* Same live-FileList caveat as folderInput above: copy before resetting .value. */
