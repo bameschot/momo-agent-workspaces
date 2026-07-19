@@ -19,6 +19,7 @@
   --accent:#8b5cf6; --border:#e5e7eb; --progress:#8b5cf6;
   --danger:#dc2626; --overlay:rgba(0,0,0,.4);
   --font-scale:1;
+  --reader-font-family:Georgia,'Times New Roman',serif;
   color-scheme: light;
 }
 :root[data-theme="dark"]{
@@ -145,14 +146,21 @@ h1,h2,h3{margin:0;}
    both measure/render text identically at the current font size. */
 .reader-page{
   line-height:1.6;
-  font-family:Georgia,'Times New Roman',serif;
+  font-family:var(--reader-font-family);
   font-size:calc(1.05rem * var(--font-scale));
 }
 .reader-page p{margin:0 0 1em;}
-.reader-page img{max-width:100%; height:auto;}
+.reader-page img{max-width:100%; max-height:100%; height:auto; object-fit:contain;}
 .reader-page mark.highlight{border-radius:.15em; padding:0 .05em;}
+.reader-page a{color:var(--accent);}
+body.justify-text .reader-page{text-align:justify;}
+body.hyphenate-text .reader-page{hyphens:auto; -webkit-hyphens:auto; overflow-wrap:break-word;}
 #chapterContainer{position:absolute; overflow:hidden;}
-.reader-edge{position:absolute; top:0; bottom:0; width:22%; z-index:2;}
+/* pointer-events:none so links/other interactive content rendered inside
+   these margins (e.g. a footnote reference near the page edge) stay
+   clickable — edge-tap page-turning is instead computed from click
+   position in the shared viewport click handler in wireEvents. */
+.reader-edge{position:absolute; top:0; bottom:0; width:22%; z-index:2; pointer-events:none;}
 .reader-edge.left{left:0;} .reader-edge.right{right:0;}
 .reader-bottombar{
   display:flex; align-items:center; gap:.6rem; padding:.5rem 1rem .75rem;
@@ -214,14 +222,34 @@ h1,h2,h3{margin:0;}
 .list-entry .excerpt{color:var(--muted); font-size:.82rem; margin-top:.2rem; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;}
 .list-entry .del{color:var(--danger); font-size:.75rem; flex:none;}
 .hl-color-dot{display:inline-block; width:.7rem; height:.7rem; border-radius:50%; margin-right:.4rem;}
+.hl-note-row{margin-top:.4rem; display:flex; align-items:flex-start; justify-content:space-between; gap:.5rem;}
+.hl-note-text{color:var(--text); font-size:.82rem; font-style:italic; flex:1;}
+.hl-note-btn{font-size:.75rem; color:var(--accent); flex:none; padding:.2rem .4rem;}
+.hl-note-edit{width:100%; margin-top:.4rem;}
+.hl-note-edit textarea{
+  width:100%; font:inherit; font-size:.85rem; color:var(--text); background:var(--bg);
+  border:1px solid var(--border); border-radius:.5rem; padding:.5rem; resize:vertical; min-height:3.5rem;
+}
+.hl-note-edit .modal-actions{display:flex; justify-content:flex-end; gap:.5rem; margin-top:.4rem;}
 
-.setting-row{display:flex; align-items:center; justify-content:space-between; padding:.85rem .2rem; border-bottom:1px solid var(--border);}
+.setting-row{display:flex; align-items:center; justify-content:space-between; padding:.85rem .2rem; border-bottom:1px solid var(--border); gap:.75rem;}
 .stepper{display:flex; align-items:center; gap:.5rem;}
 .stepper button{width:2.2rem; height:2.2rem; border:1px solid var(--border); border-radius:.5rem;}
-.theme-cycle-btn{
+.theme-cycle-btn, .toggle-btn{
   border:1px solid var(--border); border-radius:.5rem; padding:.4rem 1rem;
   font-size:.85rem; min-width:5.5rem; text-align:center; color:var(--accent);
 }
+.toggle-btn.on{background:var(--accent); color:#fff; border-color:var(--accent);}
+.font-select{
+  font:inherit; font-size:.85rem; color:var(--text); background:var(--bg);
+  border:1px solid var(--border); border-radius:.5rem; padding:.4rem .5rem; max-width:11rem;
+}
+
+/* ---------- Stats panel ---------- */
+.stats-grid{display:grid; grid-template-columns:1fr 1fr; gap:.75rem; padding:.5rem 0 1rem;}
+.stat-card{background:var(--bg); border:1px solid var(--border); border-radius:.6rem; padding:.85rem;}
+.stat-card .stat-value{font-size:1.4rem; font-weight:700; color:var(--accent);}
+.stat-card .stat-label{font-size:.75rem; color:var(--muted); margin-top:.15rem;}
 
 #searchPanel .panel-body{padding-top:0;}
 #searchInput{width:100%; margin:.5rem 0;}
@@ -270,6 +298,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
       <div class="iconbar">
         <button id="installBtn" class="btn-primary" title="Install as an app" style="display:none;">⬇ Install</button>
         <button id="librarySettingsBtn" title="Display settings" aria-label="Display settings">Aa</button>
+        <button id="statsBtn" title="Reading stats" aria-label="Reading stats">📊</button>
         <button id="searchLibraryBtn" title="Search library" aria-label="Search library">🔍</button>
         <button id="backupExportBtn" title="Export library backup">⇩ Backup</button>
         <button id="backupImportBtn" title="Import library backup">⇧ Restore</button>
@@ -319,6 +348,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
       <span id="pageIndicator">–</span>
       <div class="progress-track"><div class="progress-fill" id="chapterProgressFill" style="width:0%"></div></div>
       <span id="percentIndicator">0%</span>
+      <span id="timeLeftIndicator"></span>
     </div>
   </section>
 
@@ -343,8 +373,38 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
         </div>
       </div>
       <div class="setting-row">
+        <span>Font</span>
+        <select id="fontFamilySelect" class="font-select" aria-label="Font"></select>
+      </div>
+      <div class="setting-row">
         <span>Theme</span>
         <button type="button" class="theme-cycle-btn" id="themeCycleBtn" aria-label="Switch theme (light, dark, sepia)">Light</button>
+      </div>
+      <div class="setting-row">
+        <span>Justify text</span>
+        <button type="button" class="toggle-btn" id="justifyToggleBtn" aria-pressed="false">Off</button>
+      </div>
+      <div class="setting-row">
+        <span>Hyphenate</span>
+        <button type="button" class="toggle-btn" id="hyphenateToggleBtn" aria-pressed="false">Off</button>
+      </div>
+      <div class="setting-row">
+        <span>Book's own styling</span>
+        <button type="button" class="toggle-btn" id="bookCssToggleBtn" aria-pressed="false" title="Use the formatting the book itself defines (fonts, indents, drop caps) instead of this app's plain layout">Off</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Stats Panel ===================== -->
+  <div class="panel-overlay" id="statsOverlay"></div>
+  <div class="panel" id="statsPanel" aria-label="Reading stats">
+    <div class="panel-head"><h2>Reading stats</h2><button id="statsCloseBtn" aria-label="Close">✕</button></div>
+    <div class="panel-body">
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-value" id="statTotalTime">0m</div><div class="stat-label">Total time read</div></div>
+        <div class="stat-card"><div class="stat-value" id="statStreak">0</div><div class="stat-label">Day streak</div></div>
+        <div class="stat-card"><div class="stat-value" id="statBookCount">0</div><div class="stat-label">Books in library</div></div>
+        <div class="stat-card"><div class="stat-value" id="statFinishedCount">0</div><div class="stat-label">Books finished</div></div>
       </div>
     </div>
   </div>
@@ -843,6 +903,83 @@ function sanitizeChapterHtml(html){
   return div.innerHTML;
 }
 
+/* === Book-CSS sanitizer/scoper (for the "book's own styling" setting) === */
+/* Splits a CSS string into its top-level rule/at-rule blocks, tracking
+   brace nesting and string literals so a "{" inside a quoted content value
+   doesn't miscount. Each returned chunk is either "selector{decls}" or
+   "@rule ... {...}" (a stray unterminated fragment, if any, is dropped). */
+function splitTopLevelCssRules(css){
+  const rules=[];
+  let depth=0, buf='', inStr=null;
+  for(let i=0;i<css.length;i++){
+    const ch=css[i];
+    if(inStr){
+      buf+=ch;
+      if(ch===inStr && css[i-1]!=='\\') inStr=null;
+      continue;
+    }
+    if(ch==='"' || ch==="'"){ inStr=ch; buf+=ch; continue; }
+    if(ch==='{'){ depth++; buf+=ch; continue; }
+    if(ch==='}'){
+      depth--; buf+=ch;
+      if(depth<=0){ rules.push(buf); buf=''; depth=0; }
+      continue;
+    }
+    buf+=ch;
+  }
+  return rules;
+}
+
+/* Prefixes every selector with scopeClass so injected book CSS can only
+   ever affect elements rendered inside it (in practice: .reader-page,
+   shared by both #chapterContainer and the hidden pagination-measuring
+   element, so measured and displayed text see the same rules). @font-face,
+   @page and @namespace are dropped outright (no font-file inlining here,
+   and @page has no meaning inside a scrolling div); @media/@supports are
+   kept with their inner rules recursively scoped; @keyframes is kept
+   verbatim since its "selectors" are keyframe offsets, not real selectors. */
+function scopeCssRules(css, scopeClass){
+  return splitTopLevelCssRules(css).map(rule=>{
+    const braceIdx=rule.indexOf('{');
+    if(braceIdx===-1) return '';
+    const head=rule.slice(0, braceIdx).trim();
+    const body=rule.slice(braceIdx);
+    if(head.startsWith('@')){
+      const atName=head.split(/[\s(]/)[0].toLowerCase();
+      if(atName==='@media' || atName==='@supports'){
+        const inner=body.slice(1, body.lastIndexOf('}'));
+        return head+'{'+scopeCssRules(inner, scopeClass)+'}';
+      }
+      if(atName==='@keyframes' || atName==='@-webkit-keyframes') return rule;
+      return '';
+    }
+    if(!head) return '';
+    const scopedSelectors=head.split(',').map(s=>scopeClass+' '+s.trim()).join(', ');
+    return scopedSelectors+body;
+  }).join('\n');
+}
+
+/* Entry point: strips comments/@import, blocks legacy CSS expression()
+   attacks, inlines url(...) references to zip-resident assets the same way
+   inlineUrl does for <img src> (or drops them to 'none' when there's no zip
+   to resolve against — the backup-import path), then scopes every
+   selector. cssDir is the directory the CSS itself lives in, used to
+   resolve its own relative url()s. */
+function sanitizeBookCss(cssText, cssDir, zip){
+  let css=String(cssText||'').replace(/\/\*[\s\S]*?\*\//g, '');
+  css=css.replace(/@import[^;]*;/gi, '');
+  css=css.replace(/expression\s*\(/gi, '/*blocked*/(');
+  css=css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (m, q, url)=>{
+    if(/^(data:|https?:)/i.test(url)) return m;
+    if(!zip) return 'none';
+    const resolved=resolvePath(cssDir, url.split('#')[0].split('?')[0]);
+    const bytes=zip.getFile(resolved);
+    if(!bytes) return 'none';
+    return 'url("data:'+guessMime(resolved)+';base64,'+bytesToBase64(bytes)+'")';
+  });
+  return scopeCssRules(css, '.reader-page');
+}
+
 const BLOCK_ANCHOR_SELECTOR='p, h1, h2, h3, h4, h5, h6, li, blockquote, figure, img, table, pre';
 
 function parseChapterXhtml(xhtmlText, chapterHref, zip){
@@ -853,6 +990,15 @@ function parseChapterXhtml(xhtmlText, chapterHref, zip){
     body=htmlDoc.body;
   }
   if(!body) body=document.createElement('body');
+
+  /* Captured before stripUnsafeContent removes <link>/<style> from body —
+     used to rebuild the book's own typography when "book's own styling" is
+     turned on in Settings (see sanitizeBookCss). Reading these is safe:
+     they're just text content at this point, nothing has been connected to
+     a live document or executed. */
+  const styleHrefs=Array.from(body.ownerDocument.querySelectorAll('link[rel~="stylesheet"]'))
+    .map(l=>l.getAttribute('href')).filter(Boolean);
+  const inlineCss=Array.from(body.ownerDocument.querySelectorAll('style')).map(s=>s.textContent).join('\n');
 
   stripUnsafeContent(body);
 
@@ -908,7 +1054,7 @@ function parseChapterXhtml(xhtmlText, chapterHref, zip){
 
   const titleText=(body.ownerDocument.querySelector('title') && body.ownerDocument.querySelector('title').textContent.trim()) || null;
 
-  return {html: body.innerHTML, idMap, title: titleText, anchorCount: anchorCounter};
+  return {html: body.innerHTML, idMap, title: titleText, anchorCount: anchorCounter, chapterDir, styleHrefs, inlineCss};
 }
 
 function resolveTocTarget(hrefWithFragment, baseDir, hrefToChapterIndex, chapterIdMaps){
@@ -991,8 +1137,13 @@ async function parseEpub(arrayBuffer){
 
   const titleNode=opfDoc.getElementsByTagNameNS('http://purl.org/dc/elements/1.1/','title')[0];
   const creatorNode=opfDoc.getElementsByTagNameNS('http://purl.org/dc/elements/1.1/','creator')[0];
+  const languageNode=opfDoc.getElementsByTagNameNS('http://purl.org/dc/elements/1.1/','language')[0];
   const title=(titleNode && titleNode.textContent.trim()) || 'Untitled';
   const author=(creatorNode && creatorNode.textContent.trim()) || 'Unknown author';
+  /* Used to set lang="" on the rendered chapter so CSS hyphenation (see the
+     Hyphenate setting) uses the book's own language dictionary rather than
+     always assuming English. */
+  const language=(languageNode && languageNode.textContent.trim()) || null;
 
   const manifest={};
   opfDoc.querySelectorAll('manifest > item').forEach(item=>{
@@ -1021,6 +1172,13 @@ async function parseEpub(arrayBuffer){
   const chapters=[];
   const hrefToChapterIndex={};
   const chapterIdMaps=[];
+  const chapterDirs=[];
+  /* Aggregated, sanitized, .reader-page-scoped CSS from every stylesheet
+     any chapter links to (deduped by resolved path — most chapters in a
+     real EPUB share one stylesheet) plus any inline <style> blocks. Used
+     when the "book's own styling" setting is on (see sanitizeBookCss). */
+  let bookCss='';
+  const seenCssHrefs=new Set();
   for(const idref of spineIds){
     const item=manifest[idref];
     if(!item) continue;
@@ -1031,6 +1189,15 @@ async function parseEpub(arrayBuffer){
     hrefToChapterIndex[item.href]=chapterIndex;
     chapters.push({title: parsed.title || ('Chapter '+(chapterIndex+1)), html: parsed.html});
     chapterIdMaps.push(parsed.idMap);
+    chapterDirs.push(parsed.chapterDir);
+    parsed.styleHrefs.forEach(href=>{
+      const resolved=resolvePath(parsed.chapterDir, href);
+      if(seenCssHrefs.has(resolved)) return;
+      seenCssHrefs.add(resolved);
+      const cssText=zip.getText(resolved);
+      if(cssText) bookCss += sanitizeBookCss(cssText, resolved.includes('/') ? resolved.slice(0, resolved.lastIndexOf('/')) : '', zip) + '\n';
+    });
+    if(parsed.inlineCss.trim()) bookCss += sanitizeBookCss(parsed.inlineCss, parsed.chapterDir, zip) + '\n';
   }
   if(chapters.length===0) throw new Error('No readable chapters were found in this EPUB.');
 
@@ -1048,7 +1215,7 @@ async function parseEpub(arrayBuffer){
     toc=chapters.map((c,i)=>({label:c.title, chapterIndex:i, anchorId:null}));
   }
 
-  return {title, author, coverDataUrl, chapters, toc};
+  return {title, author, language, coverDataUrl, chapters, toc, hrefToChapterIndex, chapterIdMaps, chapterDirs, bookCss};
 }
 
 /* === SECTION: TXT PARSER === */
@@ -1233,6 +1400,7 @@ function paginateChapter(chapterIndex){
   const m=getPageMetrics();
   const measure=getMeasureEl();
   measure.style.width=m.width+'px';
+  measure.lang=(state.currentBook.language || ''); // keep hyphenation-affected measurements in sync with what's actually displayed
   measure.innerHTML='';
 
   const source=document.createElement('div');
@@ -1310,7 +1478,13 @@ let pagesCache={bookId:null, chapterIndex:null, cacheKey:null, pages:null};
 
 function pagesCacheKey(){
   const m=getPageMetrics();
-  return state.fontScale+'|'+Math.round(m.width)+'|'+Math.round(m.height);
+  /* Every reader-visible setting that can change line-wrapping/metrics
+     (and therefore where page breaks fall) must be part of this key —
+     font family, justification, and hyphenation all affect measured
+     widths just as much as font size does. */
+  return [state.fontScale, Math.round(m.width), Math.round(m.height),
+    state.fontFamily, state.textAlign, state.hyphenate?1:0,
+    (state.useBookCss && state.currentBook && state.currentBook.bookCss) ? 1:0].join('|');
 }
 
 function ensurePages(chapterIndex){
@@ -1355,7 +1529,11 @@ function displayPage(chapterIndex, pageIndex){
   state.currentPageIndex=clamped;
   state.totalPagesInChapter=pages.length;
   positionChapterContainer(getPageMetrics());
-  document.getElementById('chapterContainer').innerHTML=pages[clamped].html;
+  const container=document.getElementById('chapterContainer');
+  container.innerHTML=pages[clamped].html;
+  /* So CSS hyphenation (Settings > Hyphenate) breaks words using the
+     book's own language rules instead of always assuming English. */
+  container.lang=(state.currentBook && state.currentBook.language) || '';
   reapplyHighlightsForCurrentChapter();
   updateBottomBar();
   updateBookmarkButtonState();
@@ -1408,6 +1586,41 @@ function goToChapterAnchor(chapterIndex, anchorId){
   updateReaderTitle();
 }
 
+/* Handles a click on an <a href> found inside the rendered chapter (e.g. a
+   footnote or cross-reference) — previously these were left untouched and
+   a click on one would try to navigate the browser to the link's original
+   EPUB-relative path, which resolves to nothing real since the book only
+   ever exists in memory/IndexedDB, not as files on disk. Genuinely
+   external links open in a new tab instead of leaving (or failing to
+   leave) the app; unresolvable in-book links (pointing at something that
+   isn't one of this book's own chapters — e.g. an appendix asset that was
+   skipped during import) just say so rather than silently doing nothing. */
+function handleInBookLinkClick(hrefAttr){
+  if(!hrefAttr) return;
+  if(/^https?:\/\//i.test(hrefAttr)){
+    window.open(hrefAttr, '_blank', 'noopener');
+    return;
+  }
+  if(/^mailto:/i.test(hrefAttr)) return;
+  const book=state.currentBook;
+  if(!book || !book.hrefToChapterIndex){ showToast("This book doesn't support in-book links"); return; }
+  const [pathPart, fragment]=hrefAttr.split('#');
+  if(!pathPart){
+    /* A same-document fragment link (e.g. "#fn3") — resolveTocTarget can't
+       handle this: resolvePath('', '') resolves to '' rather than "the
+       current chapter", so it would never match hrefToChapterIndex.
+       Resolve directly against the current chapter's own id map instead. */
+    const idMap=(book.chapterIdMaps && book.chapterIdMaps[state.currentChapterIndex]) || {};
+    const anchorId = (fragment && idMap[fragment]!==undefined) ? idMap[fragment] : null;
+    goToChapterAnchor(state.currentChapterIndex, anchorId);
+    return;
+  }
+  const baseDir=(book.chapterDirs && book.chapterDirs[state.currentChapterIndex]) || '';
+  const target=resolveTocTarget(hrefAttr, baseDir, book.hrefToChapterIndex, book.chapterIdMaps || []);
+  if(target) goToChapterAnchor(target.chapterIndex, target.anchorId);
+  else showToast("This link doesn't point to readable content in this book");
+}
+
 /* The saved/bookmarked position is simply the first anchor on the current
    page — no geometry math needed, since pages are pre-computed ranges. */
 function getTopAnchorOfCurrentPage(){
@@ -1444,11 +1657,14 @@ function updateBottomBar(){
   const pageIndicator=document.getElementById('pageIndicator');
   const percentIndicator=document.getElementById('percentIndicator');
   const fill=document.getElementById('chapterProgressFill');
+  const timeLeft=document.getElementById('timeLeftIndicator');
   if(!state.currentBook) return;
   const {overallPage, total, pct}=computeOverallProgress();
   pageIndicator.textContent=overallPage+' / '+total;
   percentIndicator.textContent=Math.round(pct)+'%';
   fill.style.width=pct+'%';
+  const estMs=estimateTimeLeftMs(state.currentBook, overallPage, total);
+  timeLeft.textContent = estMs!=null ? '· ~'+formatDuration(estMs)+' left' : '';
 }
 
 const handleViewportChange=debounce(()=>{
@@ -1731,15 +1947,29 @@ function sanitizeImportedBook(raw){
   const rawFontScale=raw.settings && num(raw.settings.fontScale, null);
   const fontScale=FONT_SCALE_STEPS.includes(rawFontScale) ? rawFontScale : 1.0;
   const progressPercent=num(raw.progressPercent, null);
+  const hrefToChapterIndex=(raw.hrefToChapterIndex && typeof raw.hrefToChapterIndex==='object' && !Array.isArray(raw.hrefToChapterIndex))
+    ? Object.fromEntries(Object.entries(raw.hrefToChapterIndex).map(([k,v])=>[k, clampChapter(v)]))
+    : null;
+  const chapterIdMaps=Array.isArray(raw.chapterIdMaps)
+    ? raw.chapterIdMaps.map(m=> (m && typeof m==='object') ? Object.fromEntries(Object.entries(m).map(([k,v])=>[k, Math.trunc(num(v,0))])) : {})
+    : null;
+  const chapterDirs=Array.isArray(raw.chapterDirs) ? raw.chapterDirs.map(d=>str(d,'')) : null;
+  /* bookCss came from someone else's export, not this device's own EPUB
+     parse — re-run it through the sanitizer rather than trusting it was
+     safely scoped/sanitized on the way out. No zip here to resolve its
+     url()s against, so those just fall back to 'none' (see sanitizeBookCss). */
+  const bookCss=typeof raw.bookCss==='string' && raw.bookCss.trim() ? sanitizeBookCss(raw.bookCss, '', null) : '';
   return {
     id: str(raw.id, uid()),
     title: str(raw.title, 'Untitled'),
     author: str(raw.author, 'Unknown author'),
+    language: str(raw.language, null),
     coverDataUrl: (typeof raw.coverDataUrl==='string' && /^data:image\//i.test(raw.coverDataUrl)) ? raw.coverDataUrl : null,
-    chapters, toc,
+    chapters, toc, hrefToChapterIndex, chapterIdMaps, chapterDirs, bookCss,
     addedAt: num(raw.addedAt, Date.now()),
     lastOpenedAt: num(raw.lastOpenedAt, undefined),
     position, settings:{fontScale}, bookmarks, highlights,
+    readingMs: num(raw.readingMs, 0),
     progressPercent: (progressPercent!=null && progressPercent>=0 && progressPercent<=100) ? progressPercent : undefined
   };
 }
@@ -1789,6 +2019,10 @@ let state={
   theme:'light',
   themeManualOverride:false,
   fontScale:1.0,
+  fontFamily:"Georgia, 'Times New Roman', serif",
+  textAlign:'left',
+  hyphenate:false,
+  useBookCss:true,
   searchScope:'book'
 };
 
@@ -1961,12 +2195,14 @@ async function openBook(id){
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     state.currentBook=book;
     applyFontScale(book.settings.fontScale || state.fontScale, false);
+    updateBookCssStyleElement();
     showScreen('reader');
     updateReaderTitle();
     const pos=book.position || {chapterIndex:0, anchorId:0};
     goToChapterAnchor(pos.chapterIndex||0, pos.anchorId);
     book.lastOpenedAt=Date.now();
     persistCurrentBook();
+    beginReadingSession();
   }catch(err){
     /* Without this, a failure here (e.g. dbGet rejecting because IndexedDB
        itself failed to open) would be a silent unhandled rejection — the
@@ -1988,6 +2224,7 @@ function updateReaderTitle(){
 
 async function closeReader(){
   if(state.currentBook){
+    flushReadingSession();
     saveCurrentPosition();
     /* Flush immediately rather than relying on persistCurrentBook's debounce —
        reopening the same book right away could otherwise read a stale record
@@ -2022,11 +2259,18 @@ async function parseFileToBookData(file){
 function makeBookRecord(parsed, opened){
   return {
     id:uid(), title:parsed.title, author:parsed.author, coverDataUrl:parsed.coverDataUrl,
-    chapters:parsed.chapters, toc:parsed.toc,
+    chapters:parsed.chapters, toc:parsed.toc, language: parsed.language || null,
+    /* Only present for EPUBs (txt books have neither in-book links to
+       resolve nor any stylesheet to offer) — see resolveTocTarget's use in
+       handleInBookLinkClick and sanitizeBookCss's use in applyBookCssSetting. */
+    hrefToChapterIndex: parsed.hrefToChapterIndex || null,
+    chapterIdMaps: parsed.chapterIdMaps || null,
+    chapterDirs: parsed.chapterDirs || null,
+    bookCss: parsed.bookCss || '',
     addedAt:Date.now(), lastOpenedAt: opened ? Date.now() : undefined,
     position:{chapterIndex:0, anchorId:0},
     settings:{fontScale: state.fontScale},
-    bookmarks:[], highlights:[]
+    bookmarks:[], highlights:[], readingMs:0
   };
 }
 
@@ -2225,12 +2469,42 @@ function renderHighlightsList(){
     const chTitle=(state.currentBook.chapters[hl.chapterIndex]||{}).title || ('Chapter '+(hl.chapterIndex+1));
     const row=document.createElement('div'); row.className='list-entry';
     row.innerHTML='<div class="row1"><span><span class="hl-color-dot" style="background:'+escapeHtml(hl.color)+'"></span>'+escapeHtml(chTitle)+'</span><button type="button" class="del">Remove</button></div>'+
-      '<div class="excerpt">“'+escapeHtml(hl.text||'')+'”</div>';
+      '<div class="excerpt">“'+escapeHtml(hl.text||'')+'”</div>'+
+      '<div class="hl-note-row">'+
+        (hl.note ? '<div class="hl-note-text">'+escapeHtml(hl.note)+'</div>' : '<span></span>')+
+        '<button type="button" class="hl-note-btn">'+(hl.note ? 'Edit note' : 'Add note')+'</button>'+
+      '</div>';
     row.querySelector('.row1 span').addEventListener('click', ()=>{ goToChapterAnchor(hl.chapterIndex, hl.anchorId); closePanel('highlights'); });
     row.querySelector('.excerpt').addEventListener('click', ()=>{ goToChapterAnchor(hl.chapterIndex, hl.anchorId); closePanel('highlights'); });
     row.querySelector('.del').addEventListener('click', (e)=>{ e.stopPropagation(); removeHighlight(hl.id); });
+    row.querySelector('.hl-note-btn').addEventListener('click', (e)=>{ e.stopPropagation(); openHighlightNoteEditor(row, hl); });
     list.appendChild(row);
   });
+}
+
+/* setHighlightNote already persisted hl.note with nowhere in the UI to
+   actually set it — this is that missing editor: an inline textarea
+   appended under the highlight's row, rather than a native prompt(), to
+   match the rest of the app's custom panel/modal style. */
+function openHighlightNoteEditor(row, hl){
+  if(row.querySelector('.hl-note-edit')) return;
+  const editWrap=document.createElement('div');
+  editWrap.className='hl-note-edit';
+  editWrap.innerHTML='<textarea placeholder="Add a note…"></textarea>'+
+    '<div class="modal-actions">'+
+      '<button type="button" class="cancel-note">Cancel</button>'+
+      '<button type="button" class="save-note btn-primary">Save</button>'+
+    '</div>';
+  const textarea=editWrap.querySelector('textarea');
+  textarea.value=hl.note||'';
+  editWrap.querySelector('.cancel-note').addEventListener('click', (e)=>{ e.stopPropagation(); editWrap.remove(); });
+  editWrap.querySelector('.save-note').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    setHighlightNote(hl.id, textarea.value.trim());
+    renderHighlightsList();
+  });
+  row.appendChild(editWrap);
+  textarea.focus();
 }
 
 function openSearch(scope){
@@ -2242,6 +2516,23 @@ function openSearch(scope){
   document.getElementById('searchResults').innerHTML='';
   openPanel('search');
   document.getElementById('searchInput').focus();
+}
+
+/* Wraps the first case-insensitive occurrence of query in <mark
+   class="searchhit"> so a match is visually findable within its excerpt,
+   instead of reading identically to the surrounding text. Matching and
+   slicing both happen on the raw (unescaped) string, with each of the
+   three resulting pieces escaped independently before being reassembled —
+   escaping the whole excerpt first and matching against HTML entities
+   would risk the offsets landing wrong wherever the raw text contains
+   &, <, >, " or '. */
+function highlightMatchHtml(text, query){
+  if(!query) return escapeHtml(text);
+  const idx=text.toLowerCase().indexOf(query.toLowerCase());
+  if(idx===-1) return escapeHtml(text);
+  return escapeHtml(text.slice(0, idx))
+    + '<mark class="searchhit">'+escapeHtml(text.slice(idx, idx+query.length))+'</mark>'
+    + escapeHtml(text.slice(idx+query.length));
 }
 
 async function runSearch(query){
@@ -2260,7 +2551,7 @@ async function runSearch(query){
     row.type='button'; row.className='list-entry';
     row.style.cssText='width:100%;background:none;border:none;cursor:pointer;';
     const heading = r.type==='book' ? r.bookTitle : (state.searchScope==='library' ? r.bookTitle+' — '+(r.chapterTitle||'') : (r.chapterTitle||''));
-    row.innerHTML='<div class="row1"><strong>'+escapeHtml(heading)+'</strong></div><div class="excerpt">'+escapeHtml(r.excerpt||'')+'</div>';
+    row.innerHTML='<div class="row1"><strong>'+escapeHtml(heading)+'</strong></div><div class="excerpt">'+highlightMatchHtml(r.excerpt||'', query.trim())+'</div>';
     row.addEventListener('click', async ()=>{
       closePanel('search');
       if(state.searchScope==='library' && (!state.currentBook || state.currentBook.id!==r.bookId)) await openBook(r.bookId);
@@ -2287,6 +2578,97 @@ function hideSelectionToolbar(){
 
 function toggleReaderChrome(){
   document.getElementById('readerScreen').classList.toggle('reader-chrome-hidden');
+}
+
+/* === SECTION: READING STATS === */
+
+/* Cross-book aggregate stats (total time, day streak) live in one small
+   localStorage blob — this is aggregate app-level data, not any single
+   book's data, so it doesn't belong in the IndexedDB books store and
+   doesn't need a DB schema/version migration to add. Per-book reading
+   time (book.readingMs) lives on the book record itself instead, right
+   alongside position — see flushReadingSession. */
+function loadStats(){
+  try{
+    const parsed=JSON.parse(localStorage.getItem('ereader-stats'));
+    if(parsed && typeof parsed==='object') return Object.assign({totalMs:0, days:{}}, parsed);
+  }catch(e){ /* corrupt/missing — start fresh */ }
+  return {totalMs:0, days:{}};
+}
+function saveStats(stats){ localStorage.setItem('ereader-stats', JSON.stringify(stats)); }
+
+function dateKey(d){ return d.toISOString().slice(0,10); }
+
+function computeStreak(days){
+  let streak=0;
+  const d=new Date();
+  if(!days[dateKey(d)]) d.setDate(d.getDate()-1); // today not read yet — count backward from yesterday
+  while(days[dateKey(d)] > 0){
+    streak++;
+    d.setDate(d.getDate()-1);
+  }
+  return streak;
+}
+
+function recordReadingTime(elapsedMs){
+  const stats=loadStats();
+  stats.totalMs=(stats.totalMs||0)+elapsedMs;
+  const key=dateKey(new Date());
+  stats.days=stats.days||{};
+  stats.days[key]=(stats.days[key]||0)+elapsedMs;
+  saveStats(stats);
+}
+
+function formatDuration(ms){
+  const mins=Math.round(ms/60000);
+  if(mins<60) return mins+'m';
+  const hours=Math.floor(mins/60);
+  const remMins=mins%60;
+  return hours+'h'+(remMins ? ' '+remMins+'m' : '');
+}
+
+/* Tracks wall-clock time actually spent with a book open and the tab
+   visible — flushed (paused) whenever the tab is hidden or the reader is
+   closed, resumed when it becomes visible again while still in the
+   reader, so backgrounded time never counts. See wireEvents'
+   beforeunload/visibilitychange listeners and closeReader/openBook. */
+let readingSessionStart=null;
+
+function beginReadingSession(){
+  if(document.visibilityState==='visible') readingSessionStart=Date.now();
+}
+
+function flushReadingSession(){
+  if(readingSessionStart==null) return;
+  const elapsed=Date.now()-readingSessionStart;
+  readingSessionStart=null;
+  if(elapsed<=0) return;
+  if(state.currentBook){
+    state.currentBook.readingMs=(state.currentBook.readingMs||0)+elapsed;
+    persistCurrentBook();
+  }
+  recordReadingTime(elapsed);
+}
+
+/* Rough per-book estimate: this book's own observed ms-per-page so far,
+   projected across its remaining pages — adapts to how fast this reader
+   is actually reading this particular book rather than assuming a fixed
+   words-per-minute figure. Returns null until there's at least a little
+   reading history for the book, so a fresh open never shows a wild guess. */
+function estimateTimeLeftMs(book, overallPage, totalPages){
+  if(!book.readingMs || book.readingMs<60000 || overallPage<=0 || totalPages<=0) return null;
+  const msPerPage=book.readingMs/overallPage;
+  const pagesLeft=Math.max(0, totalPages-overallPage);
+  return msPerPage*pagesLeft;
+}
+
+async function renderStatsPanel(){
+  const stats=loadStats();
+  document.getElementById('statTotalTime').textContent=formatDuration(stats.totalMs||0);
+  document.getElementById('statStreak').textContent=String(computeStreak(stats.days||{}));
+  const books=state.library && state.library.length ? state.library : await dbGetAll();
+  document.getElementById('statBookCount').textContent=String(books.length);
+  document.getElementById('statFinishedCount').textContent=String(books.filter(b=>bookProgressPercent(b)>=99).length);
 }
 
 /* === SECTION: THEME/FONT/INSTALL === */
@@ -2346,6 +2728,152 @@ function stepFontScale(dir){
   if(idx===-1) idx=FONT_SCALE_STEPS.findIndex(s=>s>=state.fontScale);
   idx=Math.max(0, Math.min(FONT_SCALE_STEPS.length-1, idx+dir));
   applyFontScale(FONT_SCALE_STEPS[idx], true);
+}
+
+/* Always-available font choices that don't depend on what's installed on
+   this particular device — the serif one matches the app's original
+   hardcoded default, so anyone who never touches this setting sees no
+   change. */
+const BASELINE_FONT_OPTIONS=[
+  {label:'Serif (default)', value:"Georgia, 'Times New Roman', serif"},
+  {label:'Sans-serif', value:"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"},
+  {label:'Monospace', value:"ui-monospace, Menlo, Consolas, 'Courier New', monospace"}
+];
+
+/* Common cross-platform font names to probe for — actual local font
+   enumeration (the Font Access API) is Chrome-only and permission-gated,
+   which doesn't fit a project that targets evergreen browsers generally,
+   so this uses the standard canvas-measurement detection trick instead:
+   compare rendered width of "<candidate>, <generic>" against plain
+   "<generic>" — if they differ, the browser actually had the candidate
+   installed rather than silently falling back. */
+const FONT_DETECTION_CANDIDATES=[
+  'Iowan Old Style','Palatino','Palatino Linotype','Book Antiqua','Cambria','Constantia','Garamond',
+  'Baskerville','Hoefler Text','Charter','Bookman Old Style','PT Serif','Noto Serif','Merriweather',
+  'Helvetica Neue','Verdana','Tahoma','Trebuchet MS','Segoe UI','Calibri','Candara','Corbel',
+  'Century Gothic','Futura','Gill Sans','Optima','Avenir','Avenir Next','Roboto','Noto Sans','PT Sans',
+  'Lato','Open Sans','Lucida Grande','Lucida Sans Unicode','Consolas','Menlo','Monaco','Comic Sans MS'
+];
+
+function detectAvailableFonts(candidates){
+  const testString='mmmmmmmmmmlli0123';
+  const testSize='72px';
+  const baselineFonts=['monospace','sans-serif','serif'];
+  const canvas=document.createElement('canvas');
+  const ctx=canvas.getContext('2d');
+  function widthWith(fontStack){ ctx.font=testSize+' '+fontStack; return ctx.measureText(testString).width; }
+  const baselineWidths=baselineFonts.map(f=>widthWith(f));
+  return candidates.filter(font=>
+    baselineFonts.some((baseFont,i)=> widthWith('"'+font+'", '+baseFont) !== baselineWidths[i])
+  );
+}
+
+function populateFontFamilySelect(){
+  const select=document.getElementById('fontFamilySelect');
+  select.innerHTML='';
+  BASELINE_FONT_OPTIONS.forEach(opt=>{
+    const o=document.createElement('option');
+    o.value=opt.value; o.textContent=opt.label;
+    select.appendChild(o);
+  });
+  let detected=[];
+  try{ detected=detectAvailableFonts(FONT_DETECTION_CANDIDATES); }
+  catch(e){ /* canvas unavailable for some reason — the baseline options above still work fine */ }
+  detected.forEach(font=>{
+    const o=document.createElement('option');
+    o.value='"'+font+'", '+BASELINE_FONT_OPTIONS[0].value;
+    o.textContent=font;
+    select.appendChild(o);
+  });
+  select.value=state.fontFamily;
+  if(select.value!==state.fontFamily){
+    /* A stored preference that isn't one of this device's options (e.g. a
+       backup restored onto a different machine that lacks that font) —
+       fall back to the default rather than leaving the dropdown showing
+       nothing selected. */
+    select.selectedIndex=0;
+    setFontFamily(select.value, false);
+  }
+}
+
+function setFontFamily(value, repaginate){
+  state.fontFamily=value;
+  localStorage.setItem('ereader-font-family', value);
+  document.documentElement.style.setProperty('--reader-font-family', value);
+  if(repaginate!==false && state.screen==='reader') repaginateKeepingPosition();
+}
+
+function updateToggleButton(id, on){
+  const btn=document.getElementById(id);
+  if(!btn) return;
+  btn.textContent = on ? 'On' : 'Off';
+  btn.classList.toggle('on', on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+function setTextAlign(justify){
+  state.textAlign = justify ? 'justify' : 'left';
+  localStorage.setItem('ereader-text-align', state.textAlign);
+  document.body.classList.toggle('justify-text', justify);
+  updateToggleButton('justifyToggleBtn', justify);
+  if(state.screen==='reader') repaginateKeepingPosition();
+}
+function toggleJustify(){ setTextAlign(state.textAlign!=='justify'); }
+
+function setHyphenate(on){
+  state.hyphenate=on;
+  localStorage.setItem('ereader-hyphenate', on ? '1' : '0');
+  document.body.classList.toggle('hyphenate-text', on);
+  updateToggleButton('hyphenateToggleBtn', on);
+  if(state.screen==='reader') repaginateKeepingPosition();
+}
+function toggleHyphenate(){ setHyphenate(!state.hyphenate); }
+
+/* Injects the current book's own sanitized/scoped stylesheet (see
+   sanitizeBookCss) into a single shared <style> element, or clears it —
+   called whenever a book is opened and whenever the toggle changes. Scoped
+   under .reader-page, so it reaches both the live #chapterContainer and
+   the hidden pagination-measuring element (see getMeasureEl) the same way. */
+function updateBookCssStyleElement(){
+  let styleEl=document.getElementById('bookCssStyle');
+  if(!styleEl){
+    styleEl=document.createElement('style');
+    styleEl.id='bookCssStyle';
+    document.head.appendChild(styleEl);
+  }
+  styleEl.textContent = (state.useBookCss && state.currentBook && state.currentBook.bookCss) ? state.currentBook.bookCss : '';
+}
+
+function setUseBookCss(on){
+  state.useBookCss=on;
+  localStorage.setItem('ereader-use-book-css', on ? '1' : '0');
+  updateToggleButton('bookCssToggleBtn', on);
+  updateBookCssStyleElement();
+  if(state.screen==='reader') repaginateKeepingPosition();
+}
+function toggleUseBookCss(){ setUseBookCss(!state.useBookCss); }
+
+/* Loads the font/justify/hyphenate/book-styling preferences saved in
+   initTheme's style of localStorage keys — these are device-level reading
+   preferences like theme, not tied to any one book. Called once from
+   boot(), before wireEvents so the settings panel reflects them the first
+   time it's opened. */
+function initTextSettings(){
+  const storedFont=localStorage.getItem('ereader-font-family');
+  state.fontFamily = storedFont || BASELINE_FONT_OPTIONS[0].value;
+  document.documentElement.style.setProperty('--reader-font-family', state.fontFamily);
+  populateFontFamilySelect();
+
+  state.textAlign = localStorage.getItem('ereader-text-align')==='justify' ? 'justify' : 'left';
+  document.body.classList.toggle('justify-text', state.textAlign==='justify');
+  updateToggleButton('justifyToggleBtn', state.textAlign==='justify');
+
+  state.hyphenate = localStorage.getItem('ereader-hyphenate')==='1';
+  document.body.classList.toggle('hyphenate-text', state.hyphenate);
+  updateToggleButton('hyphenateToggleBtn', state.hyphenate);
+
+  state.useBookCss = localStorage.getItem('ereader-use-book-css') !== '0'; // default on
+  updateToggleButton('bookCssToggleBtn', state.useBookCss);
 }
 
 function buildIconDataUrl(size){
@@ -2503,14 +3031,23 @@ function wireEvents(){
   document.getElementById('tocCloseBtn').addEventListener('click', ()=>closePanel('toc'));
   document.getElementById('tocOverlay').addEventListener('click', ()=>closePanel('toc'));
 
-  /* -- Settings panel (font size + theme) -- */
+  /* -- Settings panel (font size/family, theme, justify, hyphenate, book styling) -- */
   document.getElementById('settingsBtn').addEventListener('click', ()=>openPanel('settings'));
   document.getElementById('librarySettingsBtn').addEventListener('click', ()=>openPanel('settings'));
   document.getElementById('settingsCloseBtn').addEventListener('click', ()=>closePanel('settings'));
   document.getElementById('settingsOverlay').addEventListener('click', ()=>closePanel('settings'));
   document.getElementById('fontIncBtn').addEventListener('click', ()=>stepFontScale(1));
   document.getElementById('fontDecBtn').addEventListener('click', ()=>stepFontScale(-1));
+  document.getElementById('fontFamilySelect').addEventListener('change', (e)=>setFontFamily(e.target.value));
   document.getElementById('themeCycleBtn').addEventListener('click', cycleTheme);
+  document.getElementById('justifyToggleBtn').addEventListener('click', toggleJustify);
+  document.getElementById('hyphenateToggleBtn').addEventListener('click', toggleHyphenate);
+  document.getElementById('bookCssToggleBtn').addEventListener('click', toggleUseBookCss);
+
+  /* -- Stats panel -- */
+  document.getElementById('statsBtn').addEventListener('click', ()=>{ renderStatsPanel(); openPanel('stats'); });
+  document.getElementById('statsCloseBtn').addEventListener('click', ()=>closePanel('stats'));
+  document.getElementById('statsOverlay').addEventListener('click', ()=>closePanel('stats'));
 
   /* -- Bookmarks panel -- */
   document.getElementById('bookmarkToggleBtn').addEventListener('click', toggleBookmarkAtCurrentPosition);
@@ -2537,9 +3074,6 @@ function wireEvents(){
   });
 
   /* -- Page navigation: edge taps, swipe, tap-to-toggle chrome, keyboard -- */
-  document.getElementById('edgeNext').addEventListener('click', nextPage);
-  document.getElementById('edgePrev').addEventListener('click', prevPage);
-
   const viewport=document.getElementById('readerViewport');
   let touchStartX=null, touchStartY=null, touchStartTime=0;
   viewport.addEventListener('touchstart', (e)=>{
@@ -2557,10 +3091,24 @@ function wireEvents(){
     touchStartX=null;
   }, {passive:true});
   viewport.addEventListener('click', (e)=>{
-    if(e.target.id==='edgeNext' || e.target.id==='edgePrev') return;
     if(e.target.closest('#selectionToolbar')) return;
+    const link=e.target.closest('a[href]');
+    if(link && document.getElementById('chapterContainer').contains(link)){
+      e.preventDefault();
+      handleInBookLinkClick(link.getAttribute('href'));
+      return;
+    }
     const sel=window.getSelection();
     if(sel && !sel.isCollapsed) return;
+    /* Edge-zone tap-to-turn-page, computed from click position now that
+       .reader-edge is pointer-events:none (see its CSS) rather than from
+       which element got hit — this is what lets a link or other content
+       rendered near the page margin stay clickable instead of always
+       being swallowed by an edge-tap zone sitting on top of it. */
+    const rect=viewport.getBoundingClientRect();
+    const xRatio=(e.clientX-rect.left)/rect.width;
+    if(xRatio<=0.22){ prevPage(); return; }
+    if(xRatio>=0.78){ nextPage(); return; }
     toggleReaderChrome();
   });
 
@@ -2599,14 +3147,23 @@ function wireEvents(){
   });
 
   /* -- Save reading position before the page unloads or is backgrounded -- */
-  window.addEventListener('beforeunload', ()=>{ if(state.currentBook) saveCurrentPosition(); });
+  window.addEventListener('beforeunload', ()=>{
+    if(state.currentBook) saveCurrentPosition();
+    flushReadingSession();
+  });
   document.addEventListener('visibilitychange', ()=>{
-    if(document.visibilityState==='hidden' && state.currentBook) saveCurrentPosition();
+    if(document.visibilityState==='hidden'){
+      if(state.currentBook) saveCurrentPosition();
+      flushReadingSession();
+    }else if(document.visibilityState==='visible' && state.screen==='reader' && state.currentBook){
+      beginReadingSession();
+    }
   });
 }
 
 async function boot(){
   initTheme();
+  initTextSettings();
   setupInstallability();
   applyFontScale(state.fontScale, false);
   wireEvents();
