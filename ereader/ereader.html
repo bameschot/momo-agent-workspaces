@@ -643,6 +643,56 @@ async function dbGetAll(){
   });
 }
 
+/* Visits every book one at a time via a cursor, instead of getAll()'s
+   single call that materializes every full book record (complete chapter
+   HTML, inlined cover/chapter images, bookCss...) simultaneously — for a
+   large library that can be hundreds of MB held in memory at once, and is
+   the root cause behind real out-of-memory tab crashes on
+   memory-constrained (mobile) devices. callback must be synchronous and
+   must not yield to a macrotask (e.g. setTimeout) before returning: an
+   IndexedDB transaction can go inactive across such a yield, and calling
+   cursor.continue() afterward would throw. If a caller needs to pace UI
+   updates during a long scan, do that via a separate timer reading a
+   shared counter (see exportLibraryBackup) rather than inside callback. */
+async function dbForEachBook(callback){
+  const db=await dbOpen();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction('books','readonly');
+    const req=tx.objectStore('books').openCursor();
+    req.onsuccess=()=>{
+      const cursor=req.result;
+      if(cursor){
+        callback(cursor.value);
+        cursor.continue();
+      }
+    };
+    req.onerror=()=>reject(req.error);
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error);
+  });
+}
+
+/* The lightweight subset of every book's record actually needed to render
+   the library screen (tiles/rows/recent/recently-added, stats counts, and
+   title+author dedup checks on import) — NOT full chapter HTML, embedded
+   images, bookCss, or highlight text. Used anywhere the app previously
+   held dbGetAll()'s full result for the whole session or a whole loop;
+   anything that genuinely needs a specific book's full content still
+   fetches it individually via dbGet(id) when that book is actually opened
+   or processed. */
+async function dbGetLibrarySummaries(){
+  const summaries=[];
+  await dbForEachBook(book=>{
+    summaries.push({
+      id:book.id, title:book.title, author:book.author, coverDataUrl:book.coverDataUrl,
+      addedAt:book.addedAt, lastOpenedAt:book.lastOpenedAt, progressPercent:book.progressPercent,
+      position:book.position, chapterCount:(book.chapters ? book.chapters.length : 0),
+      format:inferBookFormat(book)
+    });
+  });
+  return summaries;
+}
+
 async function dbDelete(id){
   const db=await dbOpen();
   return new Promise((resolve,reject)=>{
@@ -2063,16 +2113,27 @@ function searchInBook(book, query){
 
 async function searchLibrary(query){
   const q=query.toLowerCase();
-  const books=state.library && state.library.length ? state.library : await dbGetAll();
+  const summaries=state.library && state.library.length ? state.library : await dbGetLibrarySummaries();
   const results=[];
-  books.forEach(book=>{
-    if(book.title.toLowerCase().includes(q) || book.author.toLowerCase().includes(q)){
-      results.push({bookId:book.id, bookTitle:book.title, type:'book', excerpt: book.author});
+  /* state.library now only holds lightweight summaries (see
+     dbGetLibrarySummaries) — body-text search needs each book's full
+     chapter HTML, fetched one at a time here rather than assumed already
+     resident. Sequential (not Promise.all) so at most one book's full
+     content is ever in memory at once, same reasoning as everywhere else
+     in this file that touches the whole library — this does make a
+     library-wide search a little slower on a large library than an
+     in-memory scan would be, which is the accepted tradeoff. */
+  for(const summary of summaries){
+    if(summary.title.toLowerCase().includes(q) || summary.author.toLowerCase().includes(q)){
+      results.push({bookId:summary.id, bookTitle:summary.title, type:'book', excerpt: summary.author});
     }
-    searchInBook(book, query).slice(0,5).forEach(h=>{
-      results.push({bookId:book.id, bookTitle:book.title, type:'text', chapterIndex:h.chapterIndex, anchorId:h.anchorId, excerpt:h.excerpt});
-    });
-  });
+    const full=await dbGet(summary.id);
+    if(full){
+      searchInBook(full, query).slice(0,5).forEach(h=>{
+        results.push({bookId:summary.id, bookTitle:summary.title, type:'text', chapterIndex:h.chapterIndex, anchorId:h.anchorId, excerpt:h.excerpt});
+      });
+    }
+  }
   return results.slice(0,80);
 }
 
@@ -2246,7 +2307,6 @@ function inferBookFormat(book){
   if(book.format==='epub' || book.format==='txt') return book.format;
   return (book.hrefToChapterIndex && typeof book.hrefToChapterIndex==='object') ? 'epub' : 'txt';
 }
-function isEpubSourcedBook(book){ return inferBookFormat(book)==='epub'; }
 
 function safeFilenameSegment(s){
   return String(s||'').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g,' ').trim().slice(0,120) || 'book';
@@ -2264,34 +2324,40 @@ function uniqueEpubFilename(title, usedNames){
    the end — for a very large library, holding every book's full content
    (parsed + regenerated forms) in memory simultaneously is exactly the
    kind of thing that crashed the JSON backup export before that was
-   fixed (see exportLibraryBackup). Each book is discarded once its .epub
-   bytes have been appended to the outer zip. */
+   fixed (see exportLibraryBackup). Starts from the lightweight library
+   summaries (dbGetLibrarySummaries), not dbGetAll(), so even the initial
+   epub-only filtering step never materializes every book's full content
+   at once — each book's full record is fetched individually, right before
+   it's needed, and left to be GC'd once its .epub bytes are appended to
+   the outer zip. */
 async function downloadLibraryAsEpubZip(){
   showLoading(true, 'Preparing EPUBs…');
   try{
-    const books=await dbGetAll();
-    const epubBooks=books.filter(isEpubSourcedBook);
-    if(epubBooks.length===0){
-      showToast(books.length===0
+    const summaries=await dbGetLibrarySummaries();
+    const epubSummaries=summaries.filter(s=>s.format==='epub');
+    if(epubSummaries.length===0){
+      showToast(summaries.length===0
         ? 'Your library is empty — nothing to download'
         : "No EPUB books in your library to download (text-file imports aren't included)");
       return;
     }
     const outerZip=new ZipWriter();
     const usedNames=new Set();
-    for(let i=0;i<epubBooks.length;i++){
-      showLoading(true, 'Preparing EPUBs… ('+(i+1)+' of '+epubBooks.length+')');
-      const book=epubBooks[i];
+    let included=0;
+    for(let i=0;i<epubSummaries.length;i++){
+      showLoading(true, 'Preparing EPUBs… ('+(i+1)+' of '+epubSummaries.length+')');
+      const book=await dbGet(epubSummaries[i].id);
+      if(!book) continue; // deleted between listing and now — skip rather than fail the whole export
       const name=uniqueEpubFilename(book.title, usedNames);
       const epubBlob=await buildEpubBlobForBook(book);
       const epubBytes=new Uint8Array(await epubBlob.arrayBuffer());
       outerZip.addEntry(name, epubBytes);
-      epubBooks[i]=null;
+      included++;
       await new Promise(r=>setTimeout(r, 0));
     }
     const filename='ereader-epubs-'+new Date().toISOString().slice(0,10)+'.zip';
     downloadBlob(filename, outerZip.finish());
-    showToast('Downloaded '+epubBooks.length+' EPUB'+(epubBooks.length===1?'':'s')+' as a zip');
+    showToast('Downloaded '+included+' EPUB'+(included===1?'':'s')+' as a zip');
   }catch(err){
     console.error('EPUB zip export failed', err);
     showToast('Could not build the EPUB zip: '+(err && err.message ? err.message : 'unknown error'));
@@ -2304,9 +2370,15 @@ async function downloadLibraryAsEpubZip(){
 
 async function exportLibraryBackup(){
   showLoading(true, 'Preparing backup…');
+  let progressTimer=null;
   try{
-    const books=await dbGetAll();
-    if(books.length===0){ showToast('Your library is empty — nothing to back up'); return; }
+    const db=await dbOpen();
+    const total=await new Promise((resolve,reject)=>{
+      const req=db.transaction('books','readonly').objectStore('books').count();
+      req.onsuccess=()=>resolve(req.result);
+      req.onerror=()=>reject(req.error);
+    });
+    if(total===0){ showToast('Your library is empty — nothing to back up'); return; }
     /* Built as an array of chunks fed straight to Blob, rather than one
        JSON.stringify(hugeObject) call producing a single JS string — a
        large library (many books, each carrying full chapter HTML plus
@@ -2314,17 +2386,30 @@ async function exportLibraryBackup(){
        maximum string length and crash the tab outright, or at minimum
        double memory use by holding the whole serialized copy alongside
        the original data. Blob concatenates its parts internally without
-       ever materializing one combined string, and nulling out each book
-       as it's consumed lets that memory be reclaimed as the loop goes
-       rather than held until the very end. */
+       ever materializing one combined string. Reads via dbForEachBook's
+       cursor rather than dbGetAll(), so not even the *input* side ever
+       holds every book's full content simultaneously — each book is
+       serialized and immediately eligible for GC before the next one is
+       even read off disk. */
     const chunks=['{"app":"ereader-backup","version":1,"exportedAt":'+Date.now()+',"books":['];
-    for(let i=0;i<books.length;i++){
-      showLoading(true, 'Preparing backup… ('+(i+1)+' of '+books.length+')');
-      if(i>0) chunks.push(',');
-      chunks.push(JSON.stringify(books[i]));
-      books[i]=null;
-      await new Promise(r=>setTimeout(r, 0));
-    }
+    let done=0;
+    /* Progress text updates on a plain interval rather than inside the
+       cursor callback itself — that callback must stay fully synchronous
+       (see dbForEachBook's doc comment): an IndexedDB transaction can go
+       inactive across a yield like setTimeout, and cursor.continue() would
+       throw afterward. The cursor mechanism already turns through the
+       event loop once per record, which is enough for this interval to
+       actually get a chance to run and paint. */
+    progressTimer=setInterval(()=>{
+      showLoading(true, 'Preparing backup… ('+done+' of '+total+')');
+    }, 120);
+    await dbForEachBook(book=>{
+      if(done>0) chunks.push(',');
+      chunks.push(JSON.stringify(book));
+      done++;
+    });
+    clearInterval(progressTimer);
+    progressTimer=null;
     chunks.push(']}');
     const blob=new Blob(chunks, {type:'application/json'});
     const filename='ereader-backup-'+new Date().toISOString().slice(0,10)+'.json';
@@ -2334,6 +2419,7 @@ async function exportLibraryBackup(){
     console.error('Backup export failed', err);
     showToast('Could not create backup: '+(err && err.message ? err.message : 'unknown error'));
   }finally{
+    if(progressTimer) clearInterval(progressTimer);
     showLoading(false);
   }
 }
@@ -2412,7 +2498,7 @@ async function importLibraryBackup(file){
   if(!payload || !Array.isArray(payload.books)){ showToast('That file is not a valid backup'); return; }
 
   showLoading(true, 'Restoring 0 of '+payload.books.length+'…');
-  const existing=await dbGetAll();
+  const existing=await dbGetLibrarySummaries();
   const existingIds=new Set(existing.map(b=>b.id));
   const existingTitles=new Set(existing.map(b=>(b.title+'|'+b.author).toLowerCase()));
   let added=0, skipped=0, invalid=0;
@@ -2469,9 +2555,13 @@ function bookProgressPercent(book){
      don't have one yet, so fall back to a coarse chapter-count estimate —
      the only thing available without paginating the whole book. */
   if(typeof book.progressPercent==='number') return book.progressPercent;
-  if(!book.chapters || book.chapters.length===0) return 0;
+  /* Accepts either a full book record (.chapters array) or a lightweight
+     library summary (.chapterCount — see dbGetLibrarySummaries), since
+     state.library now always holds the latter. */
+  const chapterCount=book.chapters ? book.chapters.length : (book.chapterCount||0);
+  if(chapterCount===0) return 0;
   const idx=(book.position && typeof book.position.chapterIndex==='number') ? book.position.chapterIndex : 0;
-  return Math.round(((idx+1)/book.chapters.length)*100);
+  return Math.round(((idx+1)/chapterCount)*100);
 }
 
 function placeholderColor(title){
@@ -2482,7 +2572,7 @@ function placeholderColor(title){
 
 async function refreshLibraryFromDb(){
   try{
-    state.library=await dbGetAll();
+    state.library=await dbGetLibrarySummaries();
   }catch(err){
     /* Without this, a rejection here (e.g. IndexedDB itself failing to
        open) would be an unhandled rejection on every caller — including
@@ -2803,13 +2893,11 @@ async function handleFolderImport(fileList){
   let imported=0, skipped=0, failed=0;
   try{
     /* Only the title+author of each existing book is needed for the dedup
-       key set below — not the array of full book objects returned by
-       dbGetAll() (each of which carries its complete chapter HTML and any
-       embedded cover/image data). Building the Set inline lets that array be
-       collected immediately instead of holding every existing book's full
-       content in memory for the entire, potentially very long, import loop
-       (a real problem once a library has hundreds of books). */
-    const seenKeys=new Set((await dbGetAll()).map(b=>(b.title+'|'+b.author).toLowerCase()));
+       key set below — dbGetLibrarySummaries() (see its own doc comment)
+       never materializes full book records (complete chapter HTML,
+       embedded cover/image data) at all, rather than loading them all and
+       immediately discarding everything but two strings per book. */
+    const seenKeys=new Set((await dbGetLibrarySummaries()).map(b=>(b.title+'|'+b.author).toLowerCase()));
 
     for(let i=0;i<files.length;i++){
       const file=files[i];
@@ -3125,7 +3213,7 @@ async function renderStatsPanel(){
   const stats=loadStats();
   document.getElementById('statTotalTime').textContent=formatDuration(stats.totalMs||0);
   document.getElementById('statStreak').textContent=String(computeStreak(stats.days||{}));
-  const books=state.library && state.library.length ? state.library : await dbGetAll();
+  const books=state.library && state.library.length ? state.library : await dbGetLibrarySummaries();
   document.getElementById('statBookCount').textContent=String(books.length);
   document.getElementById('statFinishedCount').textContent=String(books.filter(b=>bookProgressPercent(b)>=99).length);
 }
