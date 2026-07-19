@@ -300,12 +300,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
         <button id="librarySettingsBtn" title="Display settings" aria-label="Display settings">Aa</button>
         <button id="statsBtn" title="Reading stats" aria-label="Reading stats">📊</button>
         <button id="searchLibraryBtn" title="Search library" aria-label="Search library">🔍</button>
-        <button id="backupExportBtn" title="Export library backup">⇩ Backup</button>
-        <button id="backupImportBtn" title="Import library backup">⇧ Restore</button>
-        <button id="downloadEpubsBtn" title="Download every EPUB in your library as a single .zip file (text-file imports aren't included)">📦 Download EPUBs</button>
-        <button id="importFolderBtn" title="Select multiple books at once (on Android, pick a couple hundred at a time — selecting too many at once can silently fail)">📁 Import multiple</button>
-        <button id="uploadAllBtn" title="Upload every book in a folder at once, including subfolders (desktop browsers only — 500+ files is fine)">🗂️ Upload all</button>
-        <button id="uploadBtn" class="btn-primary" title="Upload a book">+ Add book</button>
+        <button id="importExportBtn" class="btn-primary" title="Import/Export" aria-label="Import and export options">⇅ Import/Export</button>
       </div>
     </div>
     <div id="libraryBody">
@@ -408,6 +403,20 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
         <div class="stat-card"><div class="stat-value" id="statBookCount">0</div><div class="stat-label">Books in library</div></div>
         <div class="stat-card"><div class="stat-value" id="statFinishedCount">0</div><div class="stat-label">Books finished</div></div>
       </div>
+    </div>
+  </div>
+
+  <!-- ===================== Import/Export Panel ===================== -->
+  <div class="panel-overlay" id="importExportOverlay"></div>
+  <div class="panel" id="importExportPanel" aria-label="Import/Export">
+    <div class="panel-head"><h2>Import/Export</h2><button id="importExportCloseBtn" aria-label="Close">✕</button></div>
+    <div class="panel-body">
+      <button type="button" class="list-entry btn-primary" id="uploadBtn">+ Add book</button>
+      <button type="button" class="list-entry" id="importFolderBtn" title="Select multiple books at once (on Android, pick a couple hundred at a time — selecting too many at once can silently fail)">📁 Import multiple</button>
+      <button type="button" class="list-entry" id="uploadAllBtn" title="Upload every book in a folder at once, including subfolders (desktop browsers only — 500+ files is fine)">🗂️ Upload all (folder)</button>
+      <button type="button" class="list-entry" id="backupExportBtn">⇩ Backup library (JSON)</button>
+      <button type="button" class="list-entry" id="backupImportBtn">⇧ Restore backup</button>
+      <button type="button" class="list-entry" id="downloadEpubsBtn" title="Download every EPUB in your library as a single .zip file (text-file imports aren't included)">📦 Download EPUBs (.zip)</button>
     </div>
   </div>
 
@@ -3457,6 +3466,18 @@ function wireEvents(){
   document.getElementById('statsBtn').addEventListener('click', ()=>{ renderStatsPanel(); openPanel('stats'); });
   document.getElementById('statsCloseBtn').addEventListener('click', ()=>closePanel('stats'));
   document.getElementById('statsOverlay').addEventListener('click', ()=>closePanel('stats'));
+
+  /* -- Import/Export panel -- */
+  document.getElementById('importExportBtn').addEventListener('click', ()=>openPanel('importExport'));
+  document.getElementById('importExportCloseBtn').addEventListener('click', ()=>closePanel('importExport'));
+  document.getElementById('importExportOverlay').addEventListener('click', ()=>closePanel('importExport'));
+  /* Each action button inside keeps its own existing click listener (file
+     picker trigger, backup export, etc.) — this just closes the panel
+     afterward, via bubbling, so picking an action doesn't leave the menu
+     sitting open behind the native file dialog or the loading spinner. */
+  document.getElementById('importExportPanel').addEventListener('click', (e)=>{
+    if(e.target.closest('.list-entry')) closePanel('importExport');
+  });
 
   /* -- Bookmarks panel -- */
   document.getElementById('bookmarkToggleBtn').addEventListener('click', toggleBookmarkAtCurrentPosition);
