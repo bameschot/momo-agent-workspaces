@@ -309,6 +309,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
     </div>
     <div id="libraryBody">
       <div id="recentRow" class="recent-row"></div>
+      <div id="recentlyAddedRow"></div>
       <div id="libraryGroups"></div>
       <div id="libraryEmpty" class="empty-state">
         <p>Your library is empty.<br>Tap <strong>+ Add book</strong> to upload an EPUB or text file, <strong>Import multiple</strong> to select several at once, or <strong>Upload all</strong> to import a whole folder.</p>
@@ -2121,9 +2122,11 @@ function renderBookRow(book){
 
 function renderLibrary(){
   const recentRow=document.getElementById('recentRow');
+  const recentlyAddedRow=document.getElementById('recentlyAddedRow');
   const groupsEl=document.getElementById('libraryGroups');
   const empty=document.getElementById('libraryEmpty');
   recentRow.innerHTML='';
+  recentlyAddedRow.innerHTML='';
   groupsEl.innerHTML='';
   empty.style.display = state.library.length===0 ? 'block' : 'none';
 
@@ -2142,6 +2145,28 @@ function renderLibrary(){
     recentRow.appendChild(scroller);
   }else{
     recentRow.classList.remove('show');
+  }
+
+  /* Recently Added: the last 10 books by import time, in a <details>
+     collapsed by default (reusing the author-index's accordion look) —
+     a quick way to jump to something just imported without expanding or
+     scrolling the whole author list, but without permanently taking up
+     screen space the way Continue Reading does. */
+  const recentlyAdded=[...state.library]
+    .filter(b=>typeof b.addedAt==='number')
+    .sort((a,b)=>b.addedAt-a.addedAt)
+    .slice(0,10);
+  if(recentlyAdded.length){
+    const details=document.createElement('details');
+    details.className='author-entry';
+    const summary=document.createElement('summary');
+    summary.innerHTML='<span>Recently Added</span><span class="count">'+recentlyAdded.length+'</span>';
+    const bookList=document.createElement('div');
+    bookList.className='author-books';
+    recentlyAdded.forEach(book=>bookList.appendChild(renderBookRow(book)));
+    details.appendChild(summary);
+    details.appendChild(bookList);
+    recentlyAddedRow.appendChild(details);
   }
 
   /* Author index: a plain alphabetical list of authors (Unknown pinned last);
