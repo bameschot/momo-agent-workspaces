@@ -2502,7 +2502,9 @@ async function boot(){
   setupInstallability();
   applyFontScale(state.fontScale, false);
   wireEvents();
+  showLoading(true, 'Loading your library…');
   await refreshLibraryFromDb();
+  showLoading(false);
   showScreen('library');
 }
 
