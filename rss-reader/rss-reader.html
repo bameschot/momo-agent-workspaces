@@ -35,8 +35,8 @@
 
   /* Top bar */
   header.topbar{
-    display:flex; align-items:center; gap:.75rem; padding:.65rem 1rem;
-    background:var(--surface); border-bottom:1px solid var(--border); flex-wrap:wrap;
+    display:flex; align-items:center; gap:.5rem; padding:.6rem .75rem;
+    background:var(--surface); border-bottom:1px solid var(--border); flex-wrap:nowrap;
   }
   header.topbar h1{ font-size:1.05rem; margin:0; display:flex; align-items:center; gap:.4rem; white-space:nowrap; }
   .spacer{ flex:1; }
@@ -56,16 +56,30 @@
   .btn:disabled{ opacity:.5; cursor:not-allowed; }
 
   /* Layout */
-  .layout{ flex:1; display:flex; min-height:0; }
-  aside.sidebar{
-    width:19rem; flex:none; border-right:1px solid var(--border); overflow:hidden;
-    transition:width .2s ease, max-height .2s ease, border-color .2s ease;
+  .layout{ flex:1; display:flex; flex-direction:column; min-height:0; }
+
+  .menu-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:35;
+    opacity:0; pointer-events:none; transition:opacity .2s ease;
   }
-  aside.sidebar.collapsed{ width:0; border-right-width:0; }
-  .sidebar-inner{
-    width:19rem; height:100%; overflow-y:auto; background:var(--surface);
+  .menu-backdrop.open{ opacity:1; pointer-events:auto; }
+
+  aside.sidebar{
+    position:fixed; top:0; left:0; bottom:0; width:min(20rem, 85vw); z-index:40;
+    background:var(--surface); box-shadow:2px 0 16px rgba(0,0,0,.3);
+    transform:translateX(-100%); transition:transform .2s ease;
     display:flex; flex-direction:column;
   }
+  aside.sidebar.open{ transform:translateX(0); }
+  .sidebar-inner{
+    width:100%; height:100%; overflow-y:auto;
+    display:flex; flex-direction:column;
+  }
+  .drawer-header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:.75rem 1rem; border-bottom:1px solid var(--border); flex:none;
+  }
+
   main.content{ flex:1; overflow-y:auto; padding:1rem 1.25rem 2rem; min-width:0; }
 
   .menu-nav{ display:flex; flex-direction:column; padding:.5rem; border-bottom:1px solid var(--border); }
@@ -162,31 +176,35 @@
 
   input[type=file]{ display:none; }
 
-  @media (max-width: 700px){
-    .layout{ flex-direction:column; }
-    aside.sidebar{ width:auto; max-height:45vh; border-right:none; border-bottom:1px solid var(--border); }
-    aside.sidebar.collapsed{ max-height:0; border-bottom-width:0; }
-    .sidebar-inner{ width:auto; }
+  @media (max-width: 480px){
+    header.topbar{ gap:.3rem; padding:.5rem .55rem; }
+    header.topbar h1 .brand-text{ display:none; }
+    header.topbar .btn.icon{ padding:.4rem .45rem; }
   }
 </style>
 </head>
 <body>
 
 <header class="topbar">
-  <button class="btn icon" id="btn-toggle-sidebar" title="Toggle menu" aria-label="Toggle menu" aria-expanded="true">☰</button>
-  <h1>📰 RSS Reader <span id="global-badge" class="badge" hidden>0</span></h1>
+  <button class="btn icon" id="btn-toggle-sidebar" title="Menu" aria-label="Toggle menu" aria-expanded="false">☰</button>
+  <h1>📰 <span class="brand-text">RSS Reader</span> <span id="global-badge" class="badge" hidden>0</span></h1>
   <div class="spacer"></div>
-  <button class="btn primary" id="btn-install" hidden>⤓ Install App</button>
-  <button class="btn" id="btn-refresh" title="Refresh all feeds now">⟳ Refresh</button>
-  <button class="btn" id="btn-export">⭳ Export</button>
-  <button class="btn" id="btn-import">⭱ Import</button>
+  <button class="btn icon primary" id="btn-install" title="Install App" aria-label="Install App" hidden>⤓</button>
+  <button class="btn icon" id="btn-refresh" title="Refresh all feeds" aria-label="Refresh all feeds">⟳</button>
+  <button class="btn icon" id="btn-export" title="Export settings &amp; feeds" aria-label="Export settings and feeds">⭳</button>
+  <button class="btn icon" id="btn-import" title="Import settings &amp; feeds" aria-label="Import settings and feeds">⭱</button>
   <input type="file" id="file-import" accept="application/json,.json">
-  <button class="btn icon" id="btn-theme" title="Toggle theme">🌓</button>
+  <button class="btn icon" id="btn-theme" title="Toggle theme" aria-label="Toggle theme">🌓</button>
 </header>
 
 <div class="layout">
+  <div class="menu-backdrop" id="menu-backdrop"></div>
   <aside class="sidebar" id="sidebar">
    <div class="sidebar-inner">
+    <div class="drawer-header">
+      <strong>Menu</strong>
+      <button class="btn icon" id="btn-close-sidebar" title="Close menu" aria-label="Close menu">✕</button>
+    </div>
     <nav class="menu-nav">
       <button type="button" data-section="manage">📋 Manage Feeds</button>
       <button type="button" data-section="add">➕ Add Feed</button>
@@ -271,7 +289,6 @@ function defaultState(){
       pollIntervalMinutes: 15,
       defaultProxyTemplate: DEFAULT_PROXY_TEMPLATE,
       notificationsEnabled: false,
-      sidebarCollapsed: false,
       selectedFeedId: null
     },
     feeds: []
@@ -342,20 +359,27 @@ document.getElementById('btn-theme').addEventListener('click', () => {
   toast(`Theme: ${state.settings.theme}`);
 });
 
-/* ---------- Sidebar collapse ---------- */
+/* ---------- Menu drawer (overlay) ---------- */
+
+let menuOpen = false;
 
 function applySidebar(){
   const sidebar = document.getElementById('sidebar');
+  const backdrop = document.getElementById('menu-backdrop');
   const toggleBtn = document.getElementById('btn-toggle-sidebar');
-  sidebar.classList.toggle('collapsed', !!state.settings.sidebarCollapsed);
-  toggleBtn.setAttribute('aria-expanded', String(!state.settings.sidebarCollapsed));
+  sidebar.classList.toggle('open', menuOpen);
+  backdrop.classList.toggle('open', menuOpen);
+  toggleBtn.setAttribute('aria-expanded', String(menuOpen));
 }
 
-document.getElementById('btn-toggle-sidebar').addEventListener('click', () => {
-  state.settings.sidebarCollapsed = !state.settings.sidebarCollapsed;
+function setMenuOpen(open){
+  menuOpen = open;
   applySidebar();
-  saveState();
-});
+}
+
+document.getElementById('btn-toggle-sidebar').addEventListener('click', () => setMenuOpen(!menuOpen));
+document.getElementById('btn-close-sidebar').addEventListener('click', () => setMenuOpen(false));
+document.getElementById('menu-backdrop').addEventListener('click', () => setMenuOpen(false));
 
 /* ---------- Menu nav (accordion) ---------- */
 
@@ -941,6 +965,7 @@ document.getElementById('form-add-feed').addEventListener('submit', async (e) =>
   renderFeedList();
   renderItems();
   updateGlobalBadge();
+  setMenuOpen(false);
   if (!result.ok) toast(`Could not load feed: ${result.error}`);
 });
 
