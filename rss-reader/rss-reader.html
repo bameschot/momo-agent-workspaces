@@ -157,6 +157,11 @@
     box-shadow:var(--shadow);
   }
   article.item.unread{ border-left:3px solid var(--accent); }
+  .new-pill{
+    display:inline-flex; align-items:center; background:var(--accent); color:#fff;
+    font-size:.62rem; font-weight:700; letter-spacing:.03em; text-transform:uppercase;
+    border-radius:999px; padding:.1rem .5rem; margin-left:.45rem; vertical-align:middle;
+  }
   article.item h3{ margin:0 0 .3rem; font-size:.98rem; }
   article.item h3 a{ text-decoration:none; }
   article.item h3 a:hover{ text-decoration:underline; }
@@ -634,8 +639,13 @@ async function refreshFeed(feed){
     const known = new Set(feed.knownItemIds || []);
     const newItems = wasFirstFetch ? [] : items.filter(it => !known.has(it.id));
 
-    feed.items = items; // cached for rendering, not persisted
+    feed.items = items;
     feed.knownItemIds = items.map(it => it.id);
+
+    const currentIds = new Set(feed.knownItemIds);
+    const stillNew = new Set((feed.newItemIds || []).filter(id => currentIds.has(id)));
+    newItems.forEach(it => stillNew.add(it.id));
+    feed.newItemIds = Array.from(stillNew);
 
     if (newItems.length > 0){
       feed.unreadCount = (feed.unreadCount || 0) + newItems.length;
@@ -783,7 +793,10 @@ function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr){
   chip.addEventListener('click', () => {
     setSelectedFeed(feedId);
     const feed = state.feeds.find(f => f.id === feedId);
-    if (feed) feed.unreadCount = 0;
+    if (feed){
+      feed.unreadCount = 0;
+      feed.newItemIds = [];
+    }
     saveState();
     renderFeedList();
     renderItems();
@@ -832,8 +845,9 @@ function renderItems(){
 
   let allItems = [];
   for (const feed of feeds){
+    const newIds = feed.newItemIds || [];
     for (const item of (feed.items || [])){
-      allItems.push({ ...item, feedTitle: feed.title || feed.url });
+      allItems.push({ ...item, feedTitle: feed.title || feed.url, isNew: newIds.includes(item.id) });
     }
   }
 
@@ -854,10 +868,11 @@ function renderItems(){
 
   for (const item of allItems){
     const el = document.createElement('article');
-    el.className = 'item';
+    el.className = 'item' + (item.isNew ? ' unread' : '');
     const dateStr = item.date && !isNaN(Date.parse(item.date)) ? new Date(item.date).toLocaleString() : '';
+    const newPill = item.isNew ? '<span class="new-pill">New</span>' : '';
     el.innerHTML = `
-      <h3>${item.link ? `<a href="${escapeHtml(item.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>` : escapeHtml(item.title)}</h3>
+      <h3>${item.link ? `<a href="${escapeHtml(item.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>` : escapeHtml(item.title)}${newPill}</h3>
       <div class="meta">${escapeHtml(item.feedTitle)}${dateStr ? ' · ' + escapeHtml(dateStr) : ''}</div>
       <div class="desc">${escapeHtml(item.desc || '').slice(0, 500)}</div>
     `;
@@ -956,6 +971,7 @@ document.getElementById('form-add-feed').addEventListener('submit', async (e) =>
     lastFetchedAt: null,
     lastError: null,
     knownItemIds: [],
+    newItemIds: [],
     unreadCount: 0,
     items: []
   };
@@ -1013,6 +1029,7 @@ document.getElementById('file-import').addEventListener('change', async (e) => {
       f.items = [];
       if (!f.id) f.id = uuid();
       if (!Array.isArray(f.knownItemIds)) f.knownItemIds = [];
+      if (!Array.isArray(f.newItemIds)) f.newItemIds = [];
       if (typeof f.unreadCount !== 'number') f.unreadCount = 0;
     }
     state = parsed;
