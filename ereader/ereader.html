@@ -2514,53 +2514,138 @@ function sanitizeImportedBook(raw){
   };
 }
 
-async function importLibraryBackup(file){
-  let text;
-  try{
-    const buf=await file.arrayBuffer();
-    const bytes=new Uint8Array(buf);
-    /* Sniff the gzip magic number (0x1f 0x8b) rather than trusting the file
-       extension, so both compressed (.json.gz) and old plain-JSON (.json)
-       backups import correctly regardless of what they're named. */
-    if(bytes.length>=2 && bytes[0]===0x1f && bytes[1]===0x8b){
-      if(typeof DecompressionStream!=='function'){
-        showToast('This browser can\'t read compressed backups — try a newer browser');
-        return;
-      }
-      const stream=new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'));
-      text=await new Response(stream).text();
-    }else{
-      text=new TextDecoder('utf-8').decode(buf);
-    }
-  }catch(e){ showToast('Could not read that file'); return; }
-  let payload;
-  try{ payload=JSON.parse(text); }catch(e){ showToast('That file is not a valid backup'); return; }
-  if(!payload || !Array.isArray(payload.books)){ showToast('That file is not a valid backup'); return; }
+/* Incrementally splits a backup's `"books":[...]` array into individual
+   book JSON substrings as decompressed text arrives in chunks, instead of
+   requiring the whole backup to exist as one big JS string (via
+   Response.text()) that then gets handed to a single JSON.parse call —
+   that combination held the entire decompressed library (which can be
+   many times the size of the compressed download) as a string AND as a
+   fully-parsed object tree at the same time, which is exactly the kind of
+   double residency that crashed backup *export* before that was fixed,
+   just mirrored on the import side. Tracks object/array nesting depth and
+   string-literal state (respecting escaped quotes) to find each top-level
+   element's exact boundaries; whenever depth returns to zero right after
+   an element was opened, that element's source text is complete and handed
+   to onBook, which parses and stores just that one book before the next
+   chunk is even read. This is a purpose-built scanner for this app's own
+   backup shape (a flat array of book objects), not a general JSON parser —
+   it only recognizes object/array elements, which is the only kind this
+   app's exporter ever produces. */
+function createBackupBookScanner(onBook){
+  const ARRAY_MARKER='"books":[';
+  let foundArray=false, done=false;
+  let preambleTail='';
+  let depth=0, inString=false, escaped=false, inElement=false;
+  let elementChars=[];
 
-  showLoading(true, 'Restoring 0 of '+payload.books.length+'…');
-  const existing=await dbGetLibrarySummaries();
-  const existingIds=new Set(existing.map(b=>b.id));
-  const existingTitles=new Set(existing.map(b=>(b.title+'|'+b.author).toLowerCase()));
-  let added=0, skipped=0, invalid=0;
-  for(let i=0;i<payload.books.length;i++){
-    showLoading(true, 'Restoring '+(i+1)+' of '+payload.books.length+'…');
-    const book=sanitizeImportedBook(payload.books[i]);
-    if(!book){ invalid++; continue; }
-    const key=(book.title+'|'+book.author).toLowerCase();
-    if(existingTitles.has(key)){ skipped++; continue; }
-    if(existingIds.has(book.id)) book.id=uid();
-    await dbPut(book);
-    existingIds.add(book.id);
-    existingTitles.add(key);
-    added++;
-    await new Promise(r=>requestAnimationFrame(r));
+  async function scanArrayText(text){
+    for(let i=0;i<text.length && !done;i++){
+      const ch=text[i];
+      if(inElement) elementChars.push(ch);
+      if(inString){
+        if(escaped) escaped=false;
+        else if(ch==='\\') escaped=true;
+        else if(ch==='"') inString=false;
+        continue;
+      }
+      if(ch==='"'){ inString=true; continue; }
+      if(ch==='{' || ch==='['){
+        if(depth===0 && !inElement){ inElement=true; elementChars=[ch]; }
+        depth++;
+        continue;
+      }
+      if(ch==='}' || ch===']'){
+        depth--;
+        if(depth===0 && inElement){
+          inElement=false;
+          await onBook(elementChars.join(''));
+          elementChars=[];
+        }else if(depth<0){
+          done=true;
+        }
+      }
+    }
   }
-  showLoading(false);
-  await refreshLibraryFromDb();
-  const parts=['Restored '+added+' book'+(added===1?'':'s')];
-  if(skipped) parts.push(skipped+' duplicate'+(skipped===1?'':'s')+' skipped');
-  if(invalid) parts.push(invalid+' invalid entr'+(invalid===1?'y':'ies')+' skipped');
-  showToast(parts.join(', '));
+
+  return {
+    async feed(chunk){
+      if(done) return;
+      if(!foundArray){
+        const combined=preambleTail+chunk;
+        const idx=combined.indexOf(ARRAY_MARKER);
+        if(idx===-1){ preambleTail=combined.slice(-(ARRAY_MARKER.length-1)); return; }
+        foundArray=true;
+        await scanArrayText(combined.slice(idx+ARRAY_MARKER.length));
+      }else{
+        await scanArrayText(chunk);
+      }
+    },
+    hasFoundArray(){ return foundArray; }
+  };
+}
+
+async function importLibraryBackup(file){
+  showLoading(true, 'Reading backup…');
+  try{
+    /* Only the first two bytes are needed to sniff the gzip magic number
+       (0x1f 0x8b) — read via file.slice() rather than file.arrayBuffer()
+       so checking the format never requires reading the whole file into
+       memory just to look at its header. */
+    const header=new Uint8Array(await file.slice(0,2).arrayBuffer());
+    const isGzip=header.length>=2 && header[0]===0x1f && header[1]===0x8b;
+    if(isGzip && typeof DecompressionStream!=='function'){
+      showToast('This browser can\'t read compressed backups — try a newer browser');
+      return;
+    }
+    let byteStream=file.stream();
+    if(isGzip) byteStream=byteStream.pipeThrough(new DecompressionStream('gzip'));
+
+    const existing=await dbGetLibrarySummaries();
+    const existingIds=new Set(existing.map(b=>b.id));
+    const existingTitles=new Set(existing.map(b=>(b.title+'|'+b.author).toLowerCase()));
+    let added=0, skipped=0, invalid=0;
+
+    const scanner=createBackupBookScanner(async (rawBookText)=>{
+      let raw=null;
+      try{ raw=JSON.parse(rawBookText); }catch(e){ invalid++; return; }
+      const book=sanitizeImportedBook(raw);
+      if(!book){ invalid++; return; }
+      const key=(book.title+'|'+book.author).toLowerCase();
+      if(existingTitles.has(key)){ skipped++; return; }
+      if(existingIds.has(book.id)) book.id=uid();
+      await dbPut(book);
+      existingIds.add(book.id);
+      existingTitles.add(key);
+      added++;
+      showLoading(true, 'Restoring… ('+(added+skipped+invalid)+' so far)');
+    });
+
+    /* Decoded via TextDecoder({stream:true}) rather than the newer
+       TextDecoderStream, consistent with the hand-written-over-convenience-
+       API approach the rest of this file already takes for text decoding
+       (see the ZIP reader's getText) — {stream:true} carries any multi-byte
+       UTF-8 sequence split across a chunk boundary over to the next
+       decode() call instead of corrupting it. */
+    const decoder=new TextDecoder('utf-8');
+    const reader=byteStream.getReader();
+    for(let r=await reader.read(); !r.done; r=await reader.read()){
+      await scanner.feed(decoder.decode(r.value, {stream:true}));
+    }
+    await scanner.feed(decoder.decode());
+
+    if(!scanner.hasFoundArray()){ showToast('That file is not a valid backup'); return; }
+
+    await refreshLibraryFromDb();
+    const parts=['Restored '+added+' book'+(added===1?'':'s')];
+    if(skipped) parts.push(skipped+' duplicate'+(skipped===1?'':'s')+' skipped');
+    if(invalid) parts.push(invalid+' invalid entr'+(invalid===1?'y':'ies')+' skipped');
+    showToast(parts.join(', '));
+  }catch(err){
+    console.error('Backup import failed', err);
+    showToast('Could not restore that backup: '+(err && err.message ? err.message : 'unknown error'));
+  }finally{
+    showLoading(false);
+  }
 }
 
 /* === SECTION: STATE + UI RENDERING === */
