@@ -24,6 +24,7 @@
     }
   }
   *{box-sizing:border-box;}
+  [hidden]{ display:none !important; }
   html,body{height:100%;}
   body{
     margin:0; background:var(--bg); color:var(--text);
@@ -38,8 +39,12 @@
     display:flex; align-items:center; gap:.5rem; padding:.6rem .75rem;
     background:var(--surface); border-bottom:1px solid var(--border); flex-wrap:nowrap;
   }
-  header.topbar h1{ font-size:1.05rem; margin:0; display:flex; align-items:center; gap:.4rem; white-space:nowrap; }
+  header.topbar h1{
+    font-size:1.05rem; margin:0; display:flex; align-items:center; gap:.4rem;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;
+  }
   .spacer{ flex:1; }
+  header.topbar .btn.icon{ flex:none; }
   .badge{
     display:inline-flex; align-items:center; justify-content:center; min-width:1.3rem; height:1.3rem;
     padding:0 .35rem; border-radius:999px; background:var(--accent); color:#fff; font-size:.72rem; font-weight:700;
@@ -178,7 +183,6 @@
 
   @media (max-width: 480px){
     header.topbar{ gap:.3rem; padding:.5rem .55rem; }
-    header.topbar h1 .brand-text{ display:none; }
     header.topbar .btn.icon{ padding:.4rem .45rem; }
   }
 </style>
@@ -187,12 +191,12 @@
 
 <header class="topbar">
   <button class="btn icon" id="btn-toggle-sidebar" title="Menu" aria-label="Toggle menu" aria-expanded="false">☰</button>
-  <h1>📰 <span class="brand-text">RSS Reader</span> <span id="global-badge" class="badge" hidden>0</span></h1>
+  <h1>RSS Reader <span id="global-badge" class="badge" hidden>0</span></h1>
   <div class="spacer"></div>
-  <button class="btn icon primary" id="btn-install" title="Install App" aria-label="Install App" hidden>⤓</button>
-  <button class="btn icon" id="btn-refresh" title="Refresh all feeds" aria-label="Refresh all feeds">⟳</button>
-  <button class="btn icon" id="btn-export" title="Export settings &amp; feeds" aria-label="Export settings and feeds">⭳</button>
-  <button class="btn icon" id="btn-import" title="Import settings &amp; feeds" aria-label="Import settings and feeds">⭱</button>
+  <button class="btn icon primary" id="btn-install" title="Install App" aria-label="Install App" hidden>⬇️</button>
+  <button class="btn icon" id="btn-refresh" title="Refresh all feeds" aria-label="Refresh all feeds">🔄</button>
+  <button class="btn icon" id="btn-export" title="Export settings &amp; feeds" aria-label="Export settings and feeds">📤</button>
+  <button class="btn icon" id="btn-import" title="Import settings &amp; feeds" aria-label="Import settings and feeds">📥</button>
   <input type="file" id="file-import" accept="application/json,.json">
   <button class="btn icon" id="btn-theme" title="Toggle theme" aria-label="Toggle theme">🌓</button>
 </header>
