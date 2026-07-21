@@ -2379,19 +2379,6 @@ async function exportLibraryBackup(){
       req.onerror=()=>reject(req.error);
     });
     if(total===0){ showToast('Your library is empty — nothing to back up'); return; }
-    /* Built as an array of chunks fed straight to Blob, rather than one
-       JSON.stringify(hugeObject) call producing a single JS string — a
-       large library (many books, each carrying full chapter HTML plus
-       inlined cover/image data) can otherwise exceed the JS engine's
-       maximum string length and crash the tab outright, or at minimum
-       double memory use by holding the whole serialized copy alongside
-       the original data. Blob concatenates its parts internally without
-       ever materializing one combined string. Reads via dbForEachBook's
-       cursor rather than dbGetAll(), so not even the *input* side ever
-       holds every book's full content simultaneously — each book is
-       serialized and immediately eligible for GC before the next one is
-       even read off disk. */
-    const chunks=['{"app":"ereader-backup","version":1,"exportedAt":'+Date.now()+',"books":['];
     let done=0;
     /* Progress text updates on a plain interval rather than inside the
        cursor callback itself — that callback must stay fully synchronous
@@ -2403,27 +2390,54 @@ async function exportLibraryBackup(){
     progressTimer=setInterval(()=>{
       showLoading(true, 'Preparing backup… ('+done+' of '+total+')');
     }, 120);
-    await dbForEachBook(book=>{
-      if(done>0) chunks.push(',');
-      chunks.push(JSON.stringify(book));
-      done++;
+    const encoder=new TextEncoder();
+    /* Encodes and enqueues each book's JSON straight into a ReadableStream as
+       the cursor scan visits it, rather than collecting every chunk into an
+       array and handing the whole thing to Blob first. That older approach
+       meant the entire uncompressed backup had to sit fully materialized in
+       memory for the whole time it was then being read back out and gzipped
+       (see below) — on top of the compressed output being built at the same
+       time. For a large library, that doubled residency was enough extra
+       push to crash a memory-constrained tab ("Aw, Snap!") even though a
+       plain uncompressed download of the same library didn't. Streaming
+       lets each book's encoded bytes be produced, compressed, and freed
+       before the next book is even read off disk. */
+    const jsonStream=new ReadableStream({
+      async start(controller){
+        try{
+          controller.enqueue(encoder.encode('{"app":"ereader-backup","version":1,"exportedAt":'+Date.now()+',"books":['));
+          await dbForEachBook(book=>{
+            if(done>0) controller.enqueue(encoder.encode(','));
+            controller.enqueue(encoder.encode(JSON.stringify(book)));
+            done++;
+          });
+          controller.enqueue(encoder.encode(']}'));
+          controller.close();
+        }catch(err){
+          controller.error(err);
+        }
+      }
     });
-    clearInterval(progressTimer);
-    progressTimer=null;
-    chunks.push(']}');
-    const blob=new Blob(chunks, {type:'application/json'});
     const dateStamp=new Date().toISOString().slice(0,10);
     /* Backups are mostly chapter HTML/text, which gzips very well — compress
        with the browser-native CompressionStream rather than pulling in a
-       library (see CLAUDE.md's no-dependencies rule). Falls back to a plain
-       .json download on the rare browser that lacks the API. */
+       library (see CLAUDE.md's no-dependencies rule), piped directly onto
+       the stream above so the raw JSON is never fully resident at once.
+       Falls back to a plain .json download on the rare browser that lacks
+       the API — that fallback has no compression stage to stream into, so
+       it just drains the stream into one Blob as before. */
     if(typeof CompressionStream==='function'){
-      const compressedStream=blob.stream().pipeThrough(new CompressionStream('gzip'));
+      const compressedStream=jsonStream.pipeThrough(new CompressionStream('gzip'));
       const compressedBlob=await new Response(compressedStream).blob();
       downloadBlob('ereader-backup-'+dateStamp+'.json.gz', compressedBlob);
     }else{
-      downloadBlob('ereader-backup-'+dateStamp+'.json', blob);
+      const chunks=[];
+      const reader=jsonStream.getReader();
+      for(let r=await reader.read(); !r.done; r=await reader.read()) chunks.push(r.value);
+      downloadBlob('ereader-backup-'+dateStamp+'.json', new Blob(chunks, {type:'application/json'}));
     }
+    clearInterval(progressTimer);
+    progressTimer=null;
     showToast('Backup downloaded');
   }catch(err){
     console.error('Backup export failed', err);
