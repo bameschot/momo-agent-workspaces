@@ -20,12 +20,25 @@
   --danger:#dc2626; --overlay:rgba(0,0,0,.4);
   --font-scale:1;
   --reader-font-family:Georgia,'Times New Roman',serif;
+  /* Shared radius scale — every rounded corner in the app should reference
+     one of these three rather than a one-off value, so a future radius
+     tweak changes everything at once instead of missing spots. */
+  --radius-sm:.5rem; --radius-md:.6rem; --radius-lg:.75rem; --radius-pill:2rem;
+  /* Elevation (box-shadow) as a single color token, not a literal rgba()
+     repeated with slightly different opacities at each call site — see the
+     dark-theme override below for why this needs to vary by theme. */
+  --shadow-color:rgba(0,0,0,.3);
+  --hl-yellow:#fde047;
   color-scheme: light;
 }
 :root[data-theme="dark"]{
   --bg:#121212; --surface:#1c1c1c; --text:#e5e5e5; --muted:#9ca3af;
   --accent:#a78bfa; --border:#2a2a2a; --progress:#a78bfa;
   --danger:#f87171; --overlay:rgba(0,0,0,.6);
+  /* A flat black shadow at the light theme's opacity all but disappears
+     against near-black surfaces — bump it darker/denser so elevated panels
+     and popovers still read as "lifted" here. */
+  --shadow-color:rgba(0,0,0,.6);
   color-scheme: dark;
 }
 :root[data-theme="sepia"]{
@@ -44,15 +57,35 @@ body{
 }
 button{
   font:inherit; color:inherit; background:none; border:none; cursor:pointer;
-  padding:.5rem; border-radius:.5rem;
+  padding:.5rem; border-radius:var(--radius-sm);
 }
 button:focus-visible, a:focus-visible, [tabindex]:focus-visible{
   outline:2px solid var(--accent); outline-offset:2px;
 }
 button:active{background:var(--border);}
+/* hover:hover excludes touch devices — without it, a tapped element would
+   stay stuck in its "hover" look until some unrelated element is touched
+   next, since touchscreens have no real pointer to leave the element with. */
+@media (hover:hover){
+  button:not(.btn-primary):not(.btn-danger):not(.toggle-btn):not(.theme-cycle-btn):hover{
+    background:var(--border);
+  }
+  .btn-primary:hover, .btn-danger:hover, .toggle-btn.on:hover{ filter:brightness(1.08); }
+  .toggle-btn:not(.on):hover, .theme-cycle-btn:hover{ background:var(--border); }
+  .list-entry:hover, .toc-entry:hover, .book-row:hover{ background:var(--border); }
+}
+/* Unified footprint for every icon-only button (library iconbar, reader
+   topbar, panel close buttons) — previously some sized themselves off
+   glyph width while others were individually hard-pinned to their own
+   one-off dimensions, so the same kind of control read as different sizes
+   depending on which screen it was on. */
+.icon-btn{
+  width:2.25rem; height:2.25rem; padding:0; flex:none;
+  display:inline-flex; align-items:center; justify-content:center;
+}
 input[type="text"], input[type="search"]{
   font:inherit; color:var(--text); background:var(--bg);
-  border:1px solid var(--border); border-radius:.5rem; padding:.5rem .75rem;
+  border:1px solid var(--border); border-radius:var(--radius-sm); padding:.5rem .75rem;
 }
 h1,h2,h3{margin:0;}
 #app{
@@ -100,7 +133,7 @@ h1,h2,h3{margin:0;}
 .author-books{padding:.1rem 0 .6rem;}
 .book-row{
   display:flex; align-items:center; gap:.75rem; width:100%; text-align:left;
-  padding:.5rem .25rem; border-radius:.5rem; background:none;
+  padding:.5rem .25rem; border-radius:var(--radius-sm); background:none;
 }
 .book-row .cover-mini{
   width:2.25rem; height:3.1rem; flex:none; border-radius:.25rem; overflow:hidden;
@@ -112,11 +145,11 @@ h1,h2,h3{margin:0;}
 .book-row .info .rt{display:block; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .book-row .info .rp{display:block; font-size:.8rem; color:var(--muted);}
 .book-row .del{flex:none; color:var(--danger); font-size:.85rem; padding:.4rem .6rem;}
-.book-tile{background:none; text-align:left; padding:0; border-radius:.6rem; position:relative;}
+.book-tile{background:none; text-align:left; padding:0; border-radius:var(--radius-md); position:relative;}
 .book-tile .cover{
-  width:100%; aspect-ratio:2/3; border-radius:.5rem; overflow:hidden; position:relative;
+  width:100%; aspect-ratio:2/3; border-radius:var(--radius-sm); overflow:hidden; position:relative;
   background:var(--accent); display:flex; align-items:center; justify-content:center;
-  box-shadow:0 1px 4px rgba(0,0,0,.25);
+  box-shadow:0 1px 4px var(--shadow-color);
 }
 .book-tile .cover img{width:100%;height:100%;object-fit:cover;display:block;}
 .book-tile .cover .initial{color:#fff; font-size:2rem; font-weight:700;}
@@ -133,7 +166,7 @@ h1,h2,h3{margin:0;}
 /* ---------- Reader screen ---------- */
 #readerScreen{background:var(--bg);}
 .reader-topbar{
-  display:flex; align-items:center; gap:.25rem; padding:.6rem .75rem;
+  display:flex; align-items:center; flex-wrap:wrap; gap:.25rem; padding:.6rem .75rem;
   border-bottom:1px solid var(--border); transition:transform .2s, opacity .2s;
 }
 .reader-topbar .title{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.9rem; font-weight:600; text-align:center;}
@@ -185,7 +218,7 @@ body.hyphenate-text .reader-page{hyphens:auto; -webkit-hyphens:auto; overflow-wr
 .progress-scrubber.dragging .progress-fill{background:var(--accent);}
 #scrubPreview{
   position:absolute; z-index:20; display:none; background:var(--surface);
-  border:1px solid var(--border); border-radius:.5rem; box-shadow:0 2px 10px rgba(0,0,0,.3);
+  border:1px solid var(--border); border-radius:var(--radius-sm); box-shadow:0 2px 10px var(--shadow-color);
   padding:.35rem .6rem; font-size:.75rem; color:var(--text); white-space:nowrap;
   bottom:100%; margin-bottom:.5rem; left:0; transform:translateX(-50%); pointer-events:none;
 }
@@ -209,7 +242,7 @@ body.hyphenate-text .reader-page{hyphens:auto; -webkit-hyphens:auto; overflow-wr
 /* selection toolbar */
 #selectionToolbar{
   position:absolute; z-index:20; display:none; background:var(--surface);
-  border:1px solid var(--border); border-radius:.6rem; box-shadow:0 2px 10px rgba(0,0,0,.3);
+  border:1px solid var(--border); border-radius:var(--radius-md); box-shadow:0 2px 10px var(--shadow-color);
   padding:.35rem; gap:.35rem; align-items:center;
 }
 #selectionToolbar.show{display:flex;}
@@ -222,7 +255,7 @@ body.hyphenate-text .reader-page{hyphens:auto; -webkit-hyphens:auto; overflow-wr
 .panel{
   position:fixed; top:0; right:0; height:100%; width:min(22rem,88vw);
   background:var(--surface); z-index:31; display:flex; flex-direction:column;
-  transform:translateX(100%); transition:transform .25s ease; box-shadow:-2px 0 12px rgba(0,0,0,.3);
+  transform:translateX(100%); transition:transform .25s ease; box-shadow:-2px 0 12px var(--shadow-color);
   /* fixed elements don't inherit #app's safe-area padding — apply their own */
   padding-top:env(safe-area-inset-top, 0px);
   padding-right:env(safe-area-inset-right, 0px);
@@ -235,13 +268,18 @@ body.hyphenate-text .reader-page{hyphens:auto; -webkit-hyphens:auto; overflow-wr
 .panel .panel-foot{padding:.75rem 1rem; border-top:1px solid var(--border);}
 
 .toc-entry, .list-entry{
-  display:block; width:100%; text-align:left; padding:.6rem .4rem; border-radius:.5rem;
+  display:block; width:100%; text-align:left; padding:.6rem .4rem; border-radius:var(--radius-sm);
   border-bottom:1px solid var(--border);
 }
 .toc-entry.current{color:var(--accent); font-weight:600;}
 .list-entry .row1{display:flex; justify-content:space-between; gap:.5rem; align-items:baseline;}
 .list-entry .excerpt{color:var(--muted); font-size:.82rem; margin-top:.2rem; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;}
 .list-entry .del{color:var(--danger); font-size:.75rem; flex:none;}
+/* Fixed-width leading glyph column so mixed icon styles (plain "+", arrows,
+   full-color emoji) still line up into one visually even column instead of
+   each row indenting its label by however wide that row's own glyph happens
+   to render. */
+.entry-icon{display:inline-block; width:1.4rem; text-align:center; margin-right:.25rem;}
 .hl-color-dot{display:inline-block; width:.7rem; height:.7rem; border-radius:50%; margin-right:.4rem;}
 .hl-note-row{margin-top:.4rem; display:flex; align-items:flex-start; justify-content:space-between; gap:.5rem;}
 .hl-note-text{color:var(--text); font-size:.82rem; font-style:italic; flex:1;}
@@ -249,26 +287,26 @@ body.hyphenate-text .reader-page{hyphens:auto; -webkit-hyphens:auto; overflow-wr
 .hl-note-edit{width:100%; margin-top:.4rem;}
 .hl-note-edit textarea{
   width:100%; font:inherit; font-size:.85rem; color:var(--text); background:var(--bg);
-  border:1px solid var(--border); border-radius:.5rem; padding:.5rem; resize:vertical; min-height:3.5rem;
+  border:1px solid var(--border); border-radius:var(--radius-sm); padding:.5rem; resize:vertical; min-height:3.5rem;
 }
 .hl-note-edit .modal-actions{display:flex; justify-content:flex-end; gap:.5rem; margin-top:.4rem;}
 
 .setting-row{display:flex; align-items:center; justify-content:space-between; padding:.85rem .2rem; border-bottom:1px solid var(--border); gap:.75rem;}
 .stepper{display:flex; align-items:center; gap:.5rem;}
-.stepper button{width:2.2rem; height:2.2rem; border:1px solid var(--border); border-radius:.5rem;}
+.stepper button{width:2.2rem; height:2.2rem; border:1px solid var(--border); border-radius:var(--radius-sm);}
 .theme-cycle-btn, .toggle-btn{
-  border:1px solid var(--border); border-radius:.5rem; padding:.4rem 1rem;
+  border:1px solid var(--border); border-radius:var(--radius-sm); padding:.4rem 1rem;
   font-size:.85rem; min-width:5.5rem; text-align:center; color:var(--accent);
 }
 .toggle-btn.on{background:var(--accent); color:#fff; border-color:var(--accent);}
 .font-select{
   font:inherit; font-size:.85rem; color:var(--text); background:var(--bg);
-  border:1px solid var(--border); border-radius:.5rem; padding:.4rem .5rem; max-width:11rem;
+  border:1px solid var(--border); border-radius:var(--radius-sm); padding:.4rem .5rem; max-width:11rem;
 }
 
 /* ---------- Stats panel ---------- */
 .stats-grid{display:grid; grid-template-columns:1fr 1fr; gap:.75rem; padding:.5rem 0 1rem;}
-.stat-card{background:var(--bg); border:1px solid var(--border); border-radius:.6rem; padding:.85rem;}
+.stat-card{background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-md); padding:.85rem;}
 .stat-card .stat-value{font-size:1.4rem; font-weight:700; color:var(--accent);}
 .stat-card .stat-label{font-size:.75rem; color:var(--muted); margin-top:.15rem;}
 
@@ -277,12 +315,12 @@ body.hyphenate-text .reader-page{hyphens:auto; -webkit-hyphens:auto; overflow-wr
 .search-scope{display:flex; gap:.4rem; margin-bottom:.5rem;}
 .search-scope button{border:1px solid var(--border); border-radius:1rem; padding:.3rem .8rem; font-size:.78rem;}
 .search-scope button.active{background:var(--accent); color:#fff; border-color:var(--accent);}
-mark.searchhit{background:#fde047; color:#1a1a1a;}
+mark.searchhit{background:var(--hl-yellow); color:#1a1a1a;}
 
 /* ---------- Upload / modals ---------- */
 .modal-overlay{position:fixed; inset:0; background:var(--overlay); z-index:40; display:none; align-items:center; justify-content:center; padding:1rem;}
 .modal-overlay.show{display:flex;}
-.modal{background:var(--surface); border-radius:.75rem; padding:1.25rem; max-width:26rem; width:100%;}
+.modal{background:var(--surface); border-radius:var(--radius-lg); padding:1.25rem; max-width:26rem; width:100%;}
 .modal h3{margin-bottom:.5rem;}
 .modal p{color:var(--muted); font-size:.9rem;}
 .modal .modal-actions{display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem;}
@@ -293,8 +331,8 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
   transform:translate(-50%, .5rem);
   max-width:calc(100vw - 2rem);
   background:var(--text); color:var(--bg);
-  padding:.6rem 1.1rem; border-radius:2rem; font-size:.85rem; text-align:center;
-  box-shadow:0 4px 14px rgba(0,0,0,.25);
+  padding:.6rem 1.1rem; border-radius:var(--radius-pill); font-size:.85rem; text-align:center;
+  box-shadow:0 4px 14px var(--shadow-color);
   z-index:70; opacity:0; pointer-events:none;
   transition:opacity .25s ease, transform .25s ease;
 }
@@ -318,10 +356,10 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
       <h1>My Books</h1>
       <div class="iconbar">
         <button id="installBtn" class="btn-primary" title="Install as an app" style="display:none;">⬇ Install</button>
-        <button id="librarySettingsBtn" title="Display settings" aria-label="Display settings">Aa</button>
-        <button id="statsBtn" title="Reading stats" aria-label="Reading stats">📊</button>
-        <button id="searchLibraryBtn" title="Search library" aria-label="Search library">🔍</button>
-        <button id="importExportBtn" class="btn-primary" title="Import/Export" aria-label="Import and export options">⇅</button>
+        <button id="librarySettingsBtn" class="icon-btn" title="Display settings" aria-label="Display settings">Aa</button>
+        <button id="statsBtn" class="icon-btn" title="Reading stats" aria-label="Reading stats">📊</button>
+        <button id="searchLibraryBtn" class="icon-btn" title="Search library" aria-label="Search library">🔍</button>
+        <button id="importExportBtn" class="icon-btn" title="Import/Export" aria-label="Import and export options">⇅</button>
       </div>
     </div>
     <div id="libraryBody">
@@ -341,21 +379,21 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
   <!-- ===================== Reader Screen ===================== -->
   <section id="readerScreen" class="screen" aria-label="Reader">
     <div class="reader-topbar">
-      <button id="backToLibraryBtn" aria-label="Back to library">←</button>
-      <button id="tocBtn" aria-label="Table of contents">☰</button>
+      <button id="backToLibraryBtn" class="icon-btn" aria-label="Back to library">←</button>
+      <button id="tocBtn" class="icon-btn" aria-label="Table of contents">☰</button>
       <div class="title" id="readerTitle"></div>
-      <button id="searchInBookBtn" aria-label="Search in book">🔍</button>
-      <button id="bookmarkToggleBtn" aria-label="Bookmark this page">☆</button>
-      <button id="bookmarksListBtn" aria-label="View bookmarks">🔖</button>
-      <button id="highlightsBtn" aria-label="Highlights">✎</button>
-      <button id="settingsBtn" aria-label="Settings">Aa</button>
+      <button id="searchInBookBtn" class="icon-btn" aria-label="Search in book">🔍</button>
+      <button id="bookmarkToggleBtn" class="icon-btn" aria-label="Bookmark this page">☆</button>
+      <button id="bookmarksListBtn" class="icon-btn" aria-label="View bookmarks">🔖</button>
+      <button id="highlightsBtn" class="icon-btn" aria-label="Highlights">✎</button>
+      <button id="settingsBtn" class="icon-btn" aria-label="Settings">Aa</button>
     </div>
     <div id="readerViewport">
       <div id="chapterContainer" class="reader-page"></div>
       <div class="reader-edge left" id="edgePrev" aria-hidden="true"></div>
       <div class="reader-edge right" id="edgeNext" aria-hidden="true"></div>
       <div id="selectionToolbar">
-        <button class="swatch" data-color="#fde047" style="background:#fde047" aria-label="Yellow highlight"></button>
+        <button class="swatch" data-color="#fde047" style="background:var(--hl-yellow)" aria-label="Yellow highlight"></button>
         <button class="swatch" data-color="#86efac" style="background:#86efac" aria-label="Green highlight"></button>
         <button class="swatch" data-color="#93c5fd" style="background:#93c5fd" aria-label="Blue highlight"></button>
         <button class="swatch" data-color="#fca5a5" style="background:#fca5a5" aria-label="Red highlight"></button>
@@ -376,14 +414,14 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
   <!-- ===================== TOC Panel ===================== -->
   <div class="panel-overlay" id="tocOverlay"></div>
   <div class="panel" id="tocPanel" aria-label="Table of contents">
-    <div class="panel-head"><h2>Contents</h2><button id="tocCloseBtn" aria-label="Close">✕</button></div>
+    <div class="panel-head"><h2>Contents</h2><button id="tocCloseBtn" class="icon-btn" aria-label="Close">✕</button></div>
     <div class="panel-body" id="tocList"></div>
   </div>
 
   <!-- ===================== Settings Panel ===================== -->
   <div class="panel-overlay" id="settingsOverlay"></div>
   <div class="panel" id="settingsPanel" aria-label="Settings">
-    <div class="panel-head"><h2>Display</h2><button id="settingsCloseBtn" aria-label="Close">✕</button></div>
+    <div class="panel-head"><h2>Display</h2><button id="settingsCloseBtn" class="icon-btn" aria-label="Close">✕</button></div>
     <div class="panel-body">
       <div class="setting-row">
         <span>Font size</span>
@@ -435,7 +473,7 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
   <!-- ===================== Stats Panel ===================== -->
   <div class="panel-overlay" id="statsOverlay"></div>
   <div class="panel" id="statsPanel" aria-label="Reading stats">
-    <div class="panel-head"><h2>Reading stats</h2><button id="statsCloseBtn" aria-label="Close">✕</button></div>
+    <div class="panel-head"><h2>Reading stats</h2><button id="statsCloseBtn" class="icon-btn" aria-label="Close">✕</button></div>
     <div class="panel-body">
       <div class="stats-grid">
         <div class="stat-card"><div class="stat-value" id="statTotalTime">0m</div><div class="stat-label">Total time read</div></div>
@@ -454,21 +492,21 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
   <!-- ===================== Import/Export Panel ===================== -->
   <div class="panel-overlay" id="importExportOverlay"></div>
   <div class="panel" id="importExportPanel" aria-label="Import/Export">
-    <div class="panel-head"><h2>Import/Export</h2><button id="importExportCloseBtn" aria-label="Close">✕</button></div>
+    <div class="panel-head"><h2>Import/Export</h2><button id="importExportCloseBtn" class="icon-btn" aria-label="Close">✕</button></div>
     <div class="panel-body">
-      <button type="button" class="list-entry btn-primary" id="uploadBtn">+ Add book</button>
+      <button type="button" class="list-entry btn-primary" id="uploadBtn"><span class="entry-icon">+</span>Add book</button>
       <button type="button" class="list-entry" id="importFolderBtn" title="Select multiple books at once (on Android, pick a couple hundred at a time — selecting too many at once can silently fail)">
-        <div class="row1"><span>📁 Import multiple</span></div>
+        <div class="row1"><span><span class="entry-icon">📁</span>Import multiple</span></div>
         <div class="excerpt">On Android, pick a couple hundred at a time — selecting too many at once can silently fail.</div>
       </button>
       <button type="button" class="list-entry" id="uploadAllBtn" title="Upload every book in a folder at once, including subfolders (desktop browsers only — 500+ files is fine)">
-        <div class="row1"><span>🗂️ Upload all (folder)</span></div>
+        <div class="row1"><span><span class="entry-icon">🗂️</span>Upload all (folder)</span></div>
         <div class="excerpt">Desktop browsers only. Includes subfolders — 500+ files is fine.</div>
       </button>
-      <button type="button" class="list-entry" id="backupExportBtn">⇩ Backup library (.json.gz)</button>
-      <button type="button" class="list-entry" id="backupImportBtn">⇧ Restore backup</button>
+      <button type="button" class="list-entry" id="backupExportBtn"><span class="entry-icon">⇩</span>Backup library (.json.gz)</button>
+      <button type="button" class="list-entry" id="backupImportBtn"><span class="entry-icon">⇧</span>Restore backup</button>
       <button type="button" class="list-entry" id="downloadEpubsBtn" title="Download every EPUB in your library as a single .zip file (text-file imports aren't included)">
-        <div class="row1"><span>📦 Download EPUBs (.zip)</span></div>
+        <div class="row1"><span><span class="entry-icon">📦</span>Download EPUBs (.zip)</span></div>
         <div class="excerpt">Text-file imports aren't included, only EPUBs.</div>
       </button>
     </div>
@@ -477,21 +515,21 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
   <!-- ===================== Bookmarks Panel ===================== -->
   <div class="panel-overlay" id="bookmarksOverlay"></div>
   <div class="panel" id="bookmarksPanel" aria-label="Bookmarks">
-    <div class="panel-head"><h2>Bookmarks</h2><button id="bookmarksCloseBtn" aria-label="Close">✕</button></div>
+    <div class="panel-head"><h2>Bookmarks</h2><button id="bookmarksCloseBtn" class="icon-btn" aria-label="Close">✕</button></div>
     <div class="panel-body" id="bookmarksList"></div>
   </div>
 
   <!-- ===================== Highlights Panel ===================== -->
   <div class="panel-overlay" id="highlightsOverlay"></div>
   <div class="panel" id="highlightsPanel" aria-label="Highlights">
-    <div class="panel-head"><h2>Highlights</h2><button id="highlightsCloseBtn" aria-label="Close">✕</button></div>
+    <div class="panel-head"><h2>Highlights</h2><button id="highlightsCloseBtn" class="icon-btn" aria-label="Close">✕</button></div>
     <div class="panel-body" id="highlightsList"></div>
   </div>
 
   <!-- ===================== Search Panel (in-book + library) ===================== -->
   <div class="panel-overlay" id="searchOverlay"></div>
   <div class="panel" id="searchPanel" aria-label="Search">
-    <div class="panel-head"><h2 id="searchTitle">Search</h2><button id="searchCloseBtn" aria-label="Close">✕</button></div>
+    <div class="panel-head"><h2 id="searchTitle">Search</h2><button id="searchCloseBtn" class="icon-btn" aria-label="Close">✕</button></div>
     <div class="panel-body">
       <input type="search" id="searchInput" placeholder="Search…">
       <div class="search-scope" id="searchScopeRow" style="display:none;">
@@ -3286,7 +3324,6 @@ async function runSearch(query){
   results.forEach(r=>{
     const row=document.createElement('button');
     row.type='button'; row.className='list-entry';
-    row.style.cssText='width:100%;background:none;border:none;cursor:pointer;';
     const heading = r.type==='book' ? r.bookTitle : (state.searchScope==='library' ? r.bookTitle+' — '+(r.chapterTitle||'') : (r.chapterTitle||''));
     row.innerHTML='<div class="row1"><strong>'+escapeHtml(heading)+'</strong></div><div class="excerpt">'+highlightMatchHtml(r.excerpt||'', query.trim())+'</div>';
     row.addEventListener('click', async ()=>{
@@ -3420,7 +3457,7 @@ async function renderStatsPanel(){
     mostReadWrap.style.display='block';
     mostRead.forEach(book=>{
       const row=document.createElement('button');
-      row.type='button'; row.className='list-entry'; row.style.cssText='width:100%;background:none;border:none;cursor:pointer;';
+      row.type='button'; row.className='list-entry';
       row.innerHTML='<div class="row1"><strong>'+escapeHtml(book.title)+'</strong><span>'+formatDuration(book.readingMs)+'</span></div>'+
         '<div class="excerpt">'+bookProgressPercent(book)+'% read</div>';
       row.addEventListener('click', async ()=>{ closePanel('stats'); await openBook(book.id); });
