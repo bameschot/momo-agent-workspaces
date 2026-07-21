@@ -294,7 +294,13 @@
 'use strict';
 
 const STORAGE_KEY = 'rss-reader-state';
-const DEFAULT_PROXY_TEMPLATE = 'https://api.allorigins.win/raw?url={url}';
+const FALLBACK_PROXY_TEMPLATES = [
+  'https://api.allorigins.win/raw?url={url}',
+  'https://corsproxy.io/?url={url}',
+  'https://api.codetabs.com/v1/proxy?quest={url}'
+];
+const DEFAULT_PROXY_TEMPLATE = FALLBACK_PROXY_TEMPLATES[0];
+const FETCH_TIMEOUT_MS = 15000;
 
 function defaultState(){
   return {
@@ -566,6 +572,12 @@ async function hashString(str){
   }
 }
 
+function stripHtml(html){
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  return (div.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
 async function parseFeedXml(xmlText){
   const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
   if (doc.querySelector('parsererror')) throw new Error('Could not parse feed XML.');
@@ -584,7 +596,7 @@ async function parseFeedXml(xmlText){
       const guid = textOf(findChild(it, ['guid']));
       const title = textOf(findChild(it, ['title'])) || '(untitled)';
       const date = textOf(findChild(it, ['pubdate', 'date'])) || '';
-      const desc = textOf(findChild(it, ['description', 'summary', 'encoded']));
+      const desc = stripHtml(textOf(findChild(it, ['description', 'summary', 'encoded'])));
       items.push({ id: guid || link, fallbackKey: title + '|' + date, title, link, date, desc });
     }
   } else if (rootName === 'feed'){
@@ -596,7 +608,7 @@ async function parseFeedXml(xmlText){
       const id = textOf(findChild(it, ['id']));
       const title = textOf(findChild(it, ['title'])) || '(untitled)';
       const date = textOf(findChild(it, ['updated', 'published'])) || '';
-      const desc = textOf(findChild(it, ['summary', 'content']));
+      const desc = stripHtml(textOf(findChild(it, ['summary', 'content'])));
       items.push({ id: id || link, fallbackKey: title + '|' + date, title, link, date, desc });
     }
   } else {
@@ -612,18 +624,66 @@ async function parseFeedXml(xmlText){
   return { feedTitle, items };
 }
 
-function buildFetchUrl(feed){
-  if (!feed.useProxy) return feed.url;
-  const template = (feed.proxyTemplate && feed.proxyTemplate.trim()) || state.settings.defaultProxyTemplate || DEFAULT_PROXY_TEMPLATE;
-  return template.replace('{url}', encodeURIComponent(feed.url));
+function buildFetchCandidates(feed){
+  const candidates = [];
+  if (!feed.useProxy){
+    candidates.push({ url: feed.url, viaProxy: false, template: null });
+  }
+  const preferred = (feed.proxyTemplate && feed.proxyTemplate.trim()) || state.settings.defaultProxyTemplate || DEFAULT_PROXY_TEMPLATE;
+  candidates.push({ url: preferred.replace('{url}', encodeURIComponent(feed.url)), viaProxy: true, template: preferred });
+  for (const template of FALLBACK_PROXY_TEMPLATES){
+    if (template === preferred) continue;
+    candidates.push({ url: template.replace('{url}', encodeURIComponent(feed.url)), viaProxy: true, template });
+  }
+  return candidates;
+}
+
+async function fetchWithTimeout(url){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try{
+    return await fetch(url, { cache: 'no-store', signal: controller.signal });
+  }catch(e){
+    if (e.name === 'AbortError') throw new Error('Timed out waiting for a response.');
+    throw e;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+function describeFetchError(e, candidate){
+  const via = candidate.viaProxy ? 'via proxy' : 'direct';
+  if (e.message === 'Timed out waiting for a response.') return new Error(`Timed out (${via}).`);
+  if (e.message && e.message.startsWith('HTTP ')) return new Error(`${e.message} (${via}).`);
+  if (e.message === 'Could not parse feed XML.' || e.message === 'Unrecognized feed format (not RSS or Atom).'){
+    return new Error(`Got a response but it wasn't a valid feed (${via}) — the site or proxy may be blocking automated requests.`);
+  }
+  return new Error(`Could not reach the feed (${via}) — likely blocked by the browser's cross-origin policy.`);
 }
 
 async function fetchFeed(feed){
-  const url = buildFetchUrl(feed);
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const text = await res.text();
-  return parseFeedXml(text);
+  const candidates = buildFetchCandidates(feed);
+  let lastError = null;
+
+  for (const candidate of candidates){
+    try{
+      const res = await fetchWithTimeout(candidate.url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      const parsed = await parseFeedXml(text);
+
+      if (candidate.viaProxy){
+        feed.useProxy = true;
+        const resolvedDefault = state.settings.defaultProxyTemplate || DEFAULT_PROXY_TEMPLATE;
+        feed.proxyTemplate = candidate.template === resolvedDefault ? null : candidate.template;
+      }
+      return parsed;
+    }catch(e){
+      lastError = describeFetchError(e, candidate);
+    }
+  }
+
+  throw lastError || new Error('Could not reach the feed.');
 }
 
 /* ---------- Refresh cycle ---------- */
