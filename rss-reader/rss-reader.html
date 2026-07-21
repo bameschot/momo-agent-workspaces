@@ -73,11 +73,9 @@
 
   ul.feed-list{ list-style:none; margin:0; padding:0; }
   ul.feed-list li{
-    display:flex; align-items:center; gap:.4rem; padding:.45rem .5rem; border-radius:.5rem; cursor:pointer;
+    display:flex; align-items:center; gap:.4rem; padding:.45rem .5rem; border-radius:.5rem;
     color:var(--text); font-size:.85rem;
   }
-  ul.feed-list li:hover{ background:var(--surface-2); }
-  ul.feed-list li.active{ background:var(--surface-2); font-weight:600; }
   ul.feed-list li .name{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   ul.feed-list li .err{ color:var(--danger); font-size:.75rem; cursor:help; }
   ul.feed-list li .unread{ background:var(--accent); color:#fff; border-radius:999px; font-size:.68rem; padding:.05rem .4rem; }
@@ -97,6 +95,25 @@
   }
   .settings-row.inline{ flex-direction:row; align-items:center; justify-content:space-between; }
   .hint{ font-size:.72rem; color:var(--muted); margin-top:.15rem; }
+
+  /* Filter bar */
+  .filter-bar{
+    display:flex; gap:.5rem; overflow-x:auto; overflow-y:hidden; padding:.2rem 0 .85rem;
+    position:sticky; top:0; background:var(--bg); z-index:5;
+  }
+  .filter-chip{
+    display:inline-flex; align-items:center; gap:.4rem; flex:none; white-space:nowrap;
+    padding:.4rem .75rem; border-radius:999px; border:1px solid var(--border);
+    background:var(--surface); color:var(--text); cursor:pointer; font-size:.82rem;
+  }
+  .filter-chip:hover{ border-color:var(--accent); }
+  .filter-chip.active{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .filter-chip .label{ max-width:10rem; overflow:hidden; text-overflow:ellipsis; }
+  .filter-chip .unread{
+    background:rgba(127,127,127,.25); border-radius:999px; font-size:.68rem; font-weight:700; padding:.05rem .4rem;
+  }
+  .filter-chip.active .unread{ background:rgba(255,255,255,.3); }
+  .filter-chip .err-dot{ width:.45rem; height:.45rem; border-radius:50%; background:var(--danger); flex:none; }
 
   /* Item list */
   .content-header{ display:flex; align-items:center; gap:.6rem; margin-bottom:1rem; flex-wrap:wrap; }
@@ -162,7 +179,7 @@
   <aside class="sidebar" id="sidebar">
    <div class="sidebar-inner">
     <div class="sidebar-section">
-      <h2>Feeds</h2>
+      <h2>Manage Feeds</h2>
       <ul class="feed-list" id="feed-list"></ul>
     </div>
 
@@ -208,6 +225,7 @@
   </aside>
 
   <main class="content">
+    <div class="filter-bar" id="filter-bar"></div>
     <div class="content-header">
       <h2 id="content-title">All feeds</h2>
     </div>
@@ -241,7 +259,8 @@ function defaultState(){
       pollIntervalMinutes: 15,
       defaultProxyTemplate: DEFAULT_PROXY_TEMPLATE,
       notificationsEnabled: false,
-      sidebarCollapsed: false
+      sidebarCollapsed: false,
+      selectedFeedId: null
     },
     feeds: []
   };
@@ -282,8 +301,14 @@ function saveState(){
 }
 
 let state = loadState();
-let selectedFeedId = null; // null = "All feeds"
+let selectedFeedId = state.settings.selectedFeedId || null; // null = "All feeds"
+if (selectedFeedId && !state.feeds.some(f => f.id === selectedFeedId)) selectedFeedId = null;
 let pollTimer = null;
+
+function setSelectedFeed(id){
+  selectedFeedId = id;
+  state.settings.selectedFeedId = id;
+}
 
 /* ---------- Theme ---------- */
 
@@ -613,19 +638,20 @@ function restartPolling(){
 
 /* ---------- Rendering ---------- */
 
-function renderFeedList(){
+function renderManageList(){
   const list = document.getElementById('feed-list');
   list.innerHTML = '';
 
-  const allLi = document.createElement('li');
-  allLi.className = selectedFeedId === null ? 'active' : '';
-  allLi.innerHTML = `<span class="name">📚 All feeds</span>`;
-  allLi.addEventListener('click', () => { selectedFeedId = null; renderItems(); renderFeedList(); });
-  list.appendChild(allLi);
+  if (state.feeds.length === 0){
+    const li = document.createElement('li');
+    li.textContent = 'No feeds yet — add one below.';
+    li.style.color = 'var(--muted)';
+    list.appendChild(li);
+    return;
+  }
 
   for (const feed of state.feeds){
     const li = document.createElement('li');
-    li.className = selectedFeedId === feed.id ? 'active' : '';
     const nameSpan = document.createElement('span');
     nameSpan.className = 'name';
     nameSpan.textContent = feed.title || feed.url;
@@ -655,24 +681,67 @@ function renderFeedList(){
       const confirmed = await confirmDialog('Remove feed?', `This will remove "${feed.title || feed.url}" and its history.`);
       if (!confirmed) return;
       state.feeds = state.feeds.filter(f => f.id !== feed.id);
-      if (selectedFeedId === feed.id) selectedFeedId = null;
+      if (selectedFeedId === feed.id) setSelectedFeed(null);
       saveState();
       renderFeedList();
       renderItems();
       updateGlobalBadge();
     });
     li.appendChild(del);
-
-    li.addEventListener('click', () => {
-      selectedFeedId = feed.id;
-      feed.unreadCount = 0;
-      saveState();
-      renderFeedList();
-      renderItems();
-      updateGlobalBadge();
-    });
     list.appendChild(li);
   }
+}
+
+function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr){
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'filter-chip' + (selectedFeedId === feedId ? ' active' : '');
+  if (titleAttr) chip.title = titleAttr;
+
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'label';
+  labelSpan.textContent = label;
+  chip.appendChild(labelSpan);
+
+  if (hasError){
+    const dot = document.createElement('span');
+    dot.className = 'err-dot';
+    chip.appendChild(dot);
+  }
+  if (unreadCount > 0){
+    const unread = document.createElement('span');
+    unread.className = 'unread';
+    unread.textContent = unreadCount > 99 ? '99+' : unreadCount;
+    chip.appendChild(unread);
+  }
+
+  chip.addEventListener('click', () => {
+    setSelectedFeed(feedId);
+    const feed = state.feeds.find(f => f.id === feedId);
+    if (feed) feed.unreadCount = 0;
+    saveState();
+    renderFeedList();
+    renderItems();
+    updateGlobalBadge();
+  });
+  return chip;
+}
+
+function renderFilterBar(){
+  const bar = document.getElementById('filter-bar');
+  bar.innerHTML = '';
+
+  const totalUnread = state.feeds.reduce((sum, f) => sum + (f.unreadCount || 0), 0);
+  bar.appendChild(makeFilterChip('📚 All feeds', null, totalUnread, false));
+
+  for (const feed of state.feeds){
+    bar.appendChild(makeFilterChip(feed.title || feed.url, feed.id, feed.unreadCount || 0, !!feed.lastError, feed.url));
+  }
+}
+
+function renderFeedList(){
+  renderManageList();
+  renderFilterBar();
 }
 
 function escapeHtml(str){
@@ -706,7 +775,7 @@ function renderItems(){
   if (feeds.length === 0 || allItems.length === 0){
     listEl.innerHTML = `<div class="empty"><span class="big">🗞️</span>${
       state.feeds.length === 0
-        ? 'No feeds yet. Add one from the sidebar to get started.'
+        ? 'No feeds yet. Open the menu (☰) to add one.'
         : 'No items loaded yet. Try refreshing.'
     }</div>`;
     return;
@@ -881,7 +950,7 @@ document.getElementById('file-import').addEventListener('change', async (e) => {
       if (typeof f.unreadCount !== 'number') f.unreadCount = 0;
     }
     state = parsed;
-    selectedFeedId = null;
+    setSelectedFeed(null);
     saveState();
     applyTheme();
     renderSettingsUI();
