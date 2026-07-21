@@ -125,6 +125,7 @@ h1,h2,h3{margin:0;}
 .book-tile .author{font-size:.75rem; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .book-tile .progress-track{height:3px; background:var(--border); border-radius:2px; margin-top:.3rem; overflow:hidden;}
 .book-tile .progress-fill{height:100%; background:var(--progress);}
+.book-tile .progress-pct{font-size:.7rem; color:var(--muted); margin-top:.15rem;}
 .book-tile .tile-menu-btn{position:absolute; top:.15rem; right:.15rem; background:rgba(0,0,0,.35); color:#fff; border-radius:50%; width:1.75rem; height:1.75rem; padding:0; display:flex; align-items:center; justify-content:center;}
 .empty-state{color:var(--muted); text-align:center; padding:3rem 1rem;}
 .dropzone-active #libraryBody{outline:2px dashed var(--accent); outline-offset:-.5rem;}
@@ -140,12 +141,12 @@ h1,h2,h3{margin:0;}
 .reader-chrome-hidden .reader-bottombar{transform:translateY(100%); opacity:0; pointer-events:none;}
 #readerViewport{
   flex:1; position:relative; overflow:hidden; user-select:text;
-  padding:2.5rem 1.5rem;
+  padding:2.5rem var(--reader-side-margin, 1.5rem);
 }
 /* Shared by #chapterContainer and the hidden pagination-measuring element so
    both measure/render text identically at the current font size. */
 .reader-page{
-  line-height:1.6;
+  line-height:var(--reader-line-height, 1.6);
   font-family:var(--reader-font-family);
   font-size:calc(1.05rem * var(--font-scale));
 }
@@ -397,6 +398,22 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
         <select id="fontFamilySelect" class="font-select" aria-label="Font"></select>
       </div>
       <div class="setting-row">
+        <span>Line spacing</span>
+        <div class="stepper">
+          <button id="lineHeightDecBtn" aria-label="Decrease line spacing">–</button>
+          <span id="lineHeightLabel" style="min-width:4.5rem; text-align:center;">Normal</span>
+          <button id="lineHeightIncBtn" aria-label="Increase line spacing">+</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span>Margins</span>
+        <div class="stepper">
+          <button id="marginDecBtn" aria-label="Narrower margins">–</button>
+          <span id="marginLabel" style="min-width:4.5rem; text-align:center;">Normal</span>
+          <button id="marginIncBtn" aria-label="Wider margins">+</button>
+        </div>
+      </div>
+      <div class="setting-row">
         <span>Theme</span>
         <button type="button" class="theme-cycle-btn" id="themeCycleBtn" aria-label="Switch theme (light, dark, sepia)">Light</button>
       </div>
@@ -425,6 +442,11 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
         <div class="stat-card"><div class="stat-value" id="statStreak">0</div><div class="stat-label">Day streak</div></div>
         <div class="stat-card"><div class="stat-value" id="statBookCount">0</div><div class="stat-label">Books in library</div></div>
         <div class="stat-card"><div class="stat-value" id="statFinishedCount">0</div><div class="stat-label">Books finished</div></div>
+        <div class="stat-card"><div class="stat-value" id="statAvgPerDay">0m</div><div class="stat-label">Avg / active day</div></div>
+      </div>
+      <div id="statMostReadWrap" style="display:none;">
+        <h3 style="margin:1rem 0 .5rem; font-size:.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:.04em;">Most read books</h3>
+        <div id="statMostRead"></div>
       </div>
     </div>
   </div>
@@ -435,11 +457,20 @@ mark.searchhit{background:#fde047; color:#1a1a1a;}
     <div class="panel-head"><h2>Import/Export</h2><button id="importExportCloseBtn" aria-label="Close">✕</button></div>
     <div class="panel-body">
       <button type="button" class="list-entry btn-primary" id="uploadBtn">+ Add book</button>
-      <button type="button" class="list-entry" id="importFolderBtn" title="Select multiple books at once (on Android, pick a couple hundred at a time — selecting too many at once can silently fail)">📁 Import multiple</button>
-      <button type="button" class="list-entry" id="uploadAllBtn" title="Upload every book in a folder at once, including subfolders (desktop browsers only — 500+ files is fine)">🗂️ Upload all (folder)</button>
+      <button type="button" class="list-entry" id="importFolderBtn" title="Select multiple books at once (on Android, pick a couple hundred at a time — selecting too many at once can silently fail)">
+        <div class="row1"><span>📁 Import multiple</span></div>
+        <div class="excerpt">On Android, pick a couple hundred at a time — selecting too many at once can silently fail.</div>
+      </button>
+      <button type="button" class="list-entry" id="uploadAllBtn" title="Upload every book in a folder at once, including subfolders (desktop browsers only — 500+ files is fine)">
+        <div class="row1"><span>🗂️ Upload all (folder)</span></div>
+        <div class="excerpt">Desktop browsers only. Includes subfolders — 500+ files is fine.</div>
+      </button>
       <button type="button" class="list-entry" id="backupExportBtn">⇩ Backup library (.json.gz)</button>
       <button type="button" class="list-entry" id="backupImportBtn">⇧ Restore backup</button>
-      <button type="button" class="list-entry" id="downloadEpubsBtn" title="Download every EPUB in your library as a single .zip file (text-file imports aren't included)">📦 Download EPUBs (.zip)</button>
+      <button type="button" class="list-entry" id="downloadEpubsBtn" title="Download every EPUB in your library as a single .zip file (text-file imports aren't included)">
+        <div class="row1"><span>📦 Download EPUBs (.zip)</span></div>
+        <div class="excerpt">Text-file imports aren't included, only EPUBs.</div>
+      </button>
     </div>
   </div>
 
@@ -570,6 +601,20 @@ function confirmDialog(title, body){
   });
 }
 
+/* Last-resort net: without this, any error/rejection thrown outside a
+   deliberately try/catch-wrapped flow fails completely silently — no toast,
+   no visible sign anything went wrong, just a stuck UI and a console line
+   nobody but a developer will ever see. This doesn't fix the underlying
+   failure, it just guarantees the user is told something did. */
+window.addEventListener('error', (e)=>{
+  console.error('Unhandled error', e.error || e.message);
+  showToast('Something went wrong: '+((e.error && e.error.message) || e.message || 'unknown error'));
+});
+window.addEventListener('unhandledrejection', (e)=>{
+  console.error('Unhandled promise rejection', e.reason);
+  showToast('Something went wrong: '+((e.reason && e.reason.message) || String(e.reason) || 'unknown error'));
+});
+
 function downloadBlob(filename, blob){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
@@ -687,7 +732,7 @@ async function dbGetLibrarySummaries(){
       id:book.id, title:book.title, author:book.author, coverDataUrl:book.coverDataUrl,
       addedAt:book.addedAt, lastOpenedAt:book.lastOpenedAt, progressPercent:book.progressPercent,
       position:book.position, chapterCount:(book.chapters ? book.chapters.length : 0),
-      format:inferBookFormat(book)
+      format:inferBookFormat(book), readingMs:book.readingMs||0
     });
   });
   return summaries;
@@ -1692,7 +1737,7 @@ function pagesCacheKey(){
      font family, justification, and hyphenation all affect measured
      widths just as much as font size does. */
   return [state.fontScale, Math.round(m.width), Math.round(m.height),
-    state.fontFamily, state.textAlign, state.hyphenate?1:0,
+    state.fontFamily, state.textAlign, state.hyphenate?1:0, state.lineHeight,
     (state.useBookCss && state.currentBook && state.currentBook.bookCss) ? 1:0].join('|');
 }
 
@@ -1953,6 +1998,15 @@ function removeBookmark(id){
   renderBookmarksList();
 }
 
+/* Used by the Bookmarks list panel's own delete control — unlike the ☆
+   toggle in the reader (an intentional, instantly-reversible un-bookmark of
+   the current page), a mis-tap here would silently drop a bookmark the
+   reader may have navigated away from and can't easily recreate. */
+async function removeBookmarkWithConfirm(bm){
+  const ok=await confirmDialog('Remove this bookmark?', 'This can\'t be undone.');
+  if(ok){ removeBookmark(bm.id); showToast('Bookmark removed'); }
+}
+
 function isCurrentPageBookmarked(){
   if(!state.currentBook) return false;
   const anchorId=getTopAnchorOfCurrentPage();
@@ -2080,6 +2134,14 @@ function removeHighlight(id){
     parent.removeChild(markEl);
   }
   renderHighlightsList();
+}
+
+/* Same rationale as removeBookmarkWithConfirm: this is the list panel's
+   delete control, and a highlight may carry a hand-written note that's
+   otherwise gone for good if tapped by mistake. */
+async function removeHighlightWithConfirm(hl){
+  const ok=await confirmDialog('Remove this highlight?', hl.note ? 'This will also delete its note. This can\'t be undone.' : 'This can\'t be undone.');
+  if(ok){ removeHighlight(hl.id); showToast('Highlight removed'); }
 }
 
 function setHighlightNote(id, note){
@@ -2664,7 +2726,9 @@ let state={
   textAlign:'left',
   hyphenate:false,
   useBookCss:true,
-  searchScope:'book'
+  searchScope:'book',
+  lineHeight:1.6,
+  marginRem:1.5
 };
 
 function showScreen(name){
@@ -2728,7 +2792,8 @@ function renderBookTile(book){
     '</div>'+
     '<div class="title">'+escapeHtml(book.title)+'</div>'+
     '<div class="author">'+escapeHtml(book.author)+'</div>'+
-    '<div class="progress-track"><div class="progress-fill" style="width:'+pct+'%"></div></div>';
+    '<div class="progress-track"><div class="progress-fill" style="width:'+pct+'%"></div></div>'+
+    (book.lastOpenedAt ? '<div class="progress-pct">'+pct+'% read</div>' : '');
   if(!book.coverDataUrl) tile.querySelector('.cover').style.background=placeholderColor(book.title);
   tile.addEventListener('click', ()=>openBook(book.id));
 
@@ -3126,7 +3191,7 @@ function renderBookmarksList(){
       '<div class="excerpt">'+escapeHtml(bm.excerpt||'')+'</div>';
     row.querySelector('.row1 strong').addEventListener('click', ()=>{ goToChapterAnchor(bm.chapterIndex, bm.anchorId); closePanel('bookmarks'); });
     row.querySelector('.excerpt').addEventListener('click', ()=>{ goToChapterAnchor(bm.chapterIndex, bm.anchorId); closePanel('bookmarks'); });
-    row.querySelector('.del').addEventListener('click', (e)=>{ e.stopPropagation(); removeBookmark(bm.id); });
+    row.querySelector('.del').addEventListener('click', (e)=>{ e.stopPropagation(); removeBookmarkWithConfirm(bm); });
     list.appendChild(row);
   });
 }
@@ -3148,7 +3213,7 @@ function renderHighlightsList(){
       '</div>';
     row.querySelector('.row1 span').addEventListener('click', ()=>{ goToChapterAnchor(hl.chapterIndex, hl.anchorId); closePanel('highlights'); });
     row.querySelector('.excerpt').addEventListener('click', ()=>{ goToChapterAnchor(hl.chapterIndex, hl.anchorId); closePanel('highlights'); });
-    row.querySelector('.del').addEventListener('click', (e)=>{ e.stopPropagation(); removeHighlight(hl.id); });
+    row.querySelector('.del').addEventListener('click', (e)=>{ e.stopPropagation(); removeHighlightWithConfirm(hl); });
     row.querySelector('.hl-note-btn').addEventListener('click', (e)=>{ e.stopPropagation(); openHighlightNoteEditor(row, hl); });
     list.appendChild(row);
   });
@@ -3341,6 +3406,27 @@ async function renderStatsPanel(){
   const books=state.library && state.library.length ? state.library : await dbGetLibrarySummaries();
   document.getElementById('statBookCount').textContent=String(books.length);
   document.getElementById('statFinishedCount').textContent=String(books.filter(b=>bookProgressPercent(b)>=99).length);
+
+  const activeDays=Object.keys(stats.days||{}).length;
+  document.getElementById('statAvgPerDay').textContent=formatDuration(activeDays>0 ? (stats.totalMs||0)/activeDays : 0);
+
+  const mostReadWrap=document.getElementById('statMostReadWrap');
+  const mostReadList=document.getElementById('statMostRead');
+  const mostRead=[...books].filter(b=>b.readingMs>0).sort((a,b)=>b.readingMs-a.readingMs).slice(0,5);
+  mostReadList.innerHTML='';
+  if(mostRead.length===0){
+    mostReadWrap.style.display='none';
+  }else{
+    mostReadWrap.style.display='block';
+    mostRead.forEach(book=>{
+      const row=document.createElement('button');
+      row.type='button'; row.className='list-entry'; row.style.cssText='width:100%;background:none;border:none;cursor:pointer;';
+      row.innerHTML='<div class="row1"><strong>'+escapeHtml(book.title)+'</strong><span>'+formatDuration(book.readingMs)+'</span></div>'+
+        '<div class="excerpt">'+bookProgressPercent(book)+'% read</div>';
+      row.addEventListener('click', async ()=>{ closePanel('stats'); await openBook(book.id); });
+      mostReadList.appendChild(row);
+    });
+  }
 }
 
 /* === SECTION: THEME/FONT/INSTALL === */
@@ -3501,6 +3587,42 @@ function setHyphenate(on){
 }
 function toggleHyphenate(){ setHyphenate(!state.hyphenate); }
 
+const LINE_HEIGHT_STEPS=[{value:1.3, label:'Compact'}, {value:1.6, label:'Normal'}, {value:1.9, label:'Relaxed'}, {value:2.2, label:'Loose'}];
+
+function applyLineHeight(value, repaginate){
+  state.lineHeight=value;
+  localStorage.setItem('ereader-line-height', String(value));
+  document.documentElement.style.setProperty('--reader-line-height', value);
+  const step=LINE_HEIGHT_STEPS.find(s=>s.value===value);
+  document.getElementById('lineHeightLabel').textContent = step ? step.label : value;
+  if(repaginate!==false && state.screen==='reader') repaginateKeepingPosition();
+}
+
+function stepLineHeight(dir){
+  let idx=LINE_HEIGHT_STEPS.findIndex(s=>s.value===state.lineHeight);
+  if(idx===-1) idx=LINE_HEIGHT_STEPS.findIndex(s=>s.value>=state.lineHeight);
+  idx=Math.max(0, Math.min(LINE_HEIGHT_STEPS.length-1, idx+dir));
+  applyLineHeight(LINE_HEIGHT_STEPS[idx].value, true);
+}
+
+const MARGIN_STEPS=[{value:0.75, label:'Narrow'}, {value:1.5, label:'Normal'}, {value:2.25, label:'Wide'}, {value:3, label:'Extra wide'}];
+
+function applyMargin(value, repaginate){
+  state.marginRem=value;
+  localStorage.setItem('ereader-margin', String(value));
+  document.documentElement.style.setProperty('--reader-side-margin', value+'rem');
+  const step=MARGIN_STEPS.find(s=>s.value===value);
+  document.getElementById('marginLabel').textContent = step ? step.label : (value+'rem');
+  if(repaginate!==false && state.screen==='reader') repaginateKeepingPosition();
+}
+
+function stepMargin(dir){
+  let idx=MARGIN_STEPS.findIndex(s=>s.value===state.marginRem);
+  if(idx===-1) idx=MARGIN_STEPS.findIndex(s=>s.value>=state.marginRem);
+  idx=Math.max(0, Math.min(MARGIN_STEPS.length-1, idx+dir));
+  applyMargin(MARGIN_STEPS[idx].value, true);
+}
+
 /* Injects the current book's own sanitized/scoped stylesheet (see
    sanitizeBookCss) into a single shared <style> element, or clears it —
    called whenever a book is opened and whenever the toggle changes. Scoped
@@ -3546,6 +3668,12 @@ function initTextSettings(){
 
   state.useBookCss = localStorage.getItem('ereader-use-book-css') !== '0'; // default on
   updateToggleButton('bookCssToggleBtn', state.useBookCss);
+
+  const storedLineHeight=parseFloat(localStorage.getItem('ereader-line-height'));
+  applyLineHeight(LINE_HEIGHT_STEPS.some(s=>s.value===storedLineHeight) ? storedLineHeight : 1.6, false);
+
+  const storedMargin=parseFloat(localStorage.getItem('ereader-margin'));
+  applyMargin(MARGIN_STEPS.some(s=>s.value===storedMargin) ? storedMargin : 1.5, false);
 }
 
 function buildIconDataUrl(size){
@@ -3712,6 +3840,10 @@ function wireEvents(){
   document.getElementById('fontIncBtn').addEventListener('click', ()=>stepFontScale(1));
   document.getElementById('fontDecBtn').addEventListener('click', ()=>stepFontScale(-1));
   document.getElementById('fontFamilySelect').addEventListener('change', (e)=>setFontFamily(e.target.value));
+  document.getElementById('lineHeightIncBtn').addEventListener('click', ()=>stepLineHeight(1));
+  document.getElementById('lineHeightDecBtn').addEventListener('click', ()=>stepLineHeight(-1));
+  document.getElementById('marginIncBtn').addEventListener('click', ()=>stepMargin(1));
+  document.getElementById('marginDecBtn').addEventListener('click', ()=>stepMargin(-1));
   document.getElementById('themeCycleBtn').addEventListener('click', cycleTheme);
   document.getElementById('justifyToggleBtn').addEventListener('click', toggleJustify);
   document.getElementById('hyphenateToggleBtn').addEventListener('click', toggleHyphenate);
@@ -3803,6 +3935,12 @@ function wireEvents(){
     if(e.key==='ArrowRight') nextPage();
     else if(e.key==='ArrowLeft') prevPage();
     else if(e.key==='Escape') closeReader();
+    /* Only plain, unmodified keys — Ctrl/Cmd/Alt combos are left alone so
+       browser shortcuts (e.g. Cmd+F find-in-page) keep working normally. */
+    else if(e.ctrlKey || e.metaKey || e.altKey) return;
+    else if(e.key==='t' || e.key==='T') document.getElementById('tocBtn').click();
+    else if(e.key==='/') { e.preventDefault(); document.getElementById('searchInBookBtn').click(); }
+    else if(e.key==='b' || e.key==='B') document.getElementById('bookmarksListBtn').click();
   });
 
   /* -- Bottom progress bar: tap-to-jump / drag-to-scrub --
