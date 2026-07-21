@@ -1943,10 +1943,18 @@ function getTopAnchorOfCurrentPage(){
    of its cache key) and relocates to the same anchor — this is what makes
    resuming correct regardless of what font size is active when a book is
    reopened, or when the font size is changed mid-read. */
-function repaginateKeepingPosition(){
+async function repaginateKeepingPosition(){
   if(!state.currentBook) return;
-  const anchorId=getTopAnchorOfCurrentPage();
-  goToChapterAnchor(state.currentChapterIndex, anchorId);
+  showLoading(true, 'Updating layout…');
+  try{
+    /* Let the overlay actually paint before the potentially slow synchronous
+       pagination work below — see openBook for the same reasoning. */
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const anchorId=getTopAnchorOfCurrentPage();
+    goToChapterAnchor(state.currentChapterIndex, anchorId);
+  } finally {
+    showLoading(false);
+  }
 }
 
 /* Shared by updateBottomBar and saveCurrentPosition so the reader's own
