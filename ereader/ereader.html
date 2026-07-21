@@ -794,7 +794,17 @@ const MAXBITS=15;
 class BitReader{
   constructor(data){ this.data=data; this.pos=0; this.bitbuf=0; this.bitcnt=0; }
   readBit(){
-    if(this.bitcnt===0){ this.bitbuf=this.data[this.pos++]||0; this.bitcnt=8; }
+    if(this.bitcnt===0){
+      /* A truncated/corrupt DEFLATE stream used to fall through to `||0`
+         here, which manufactures an endless stream of zero bits — the
+         outer inflateRaw loop's `final` bit never becomes 1, so it spins
+         forever and freezes the tab on a single malformed EPUB. Throwing
+         the moment there's genuinely no more input turns that hang into an
+         immediate, catchable error instead. A well-formed stream never
+         reads past its own last byte, so this never fires on valid input. */
+      if(this.pos>=this.data.length) throw new Error('Corrupt or truncated compressed data');
+      this.bitbuf=this.data[this.pos++]; this.bitcnt=8;
+    }
     const bit=this.bitbuf & 1;
     this.bitbuf >>= 1; this.bitcnt--;
     return bit;
@@ -928,11 +938,17 @@ function inflateRaw(data, sizeHint){
     const type=br.readBits(2);
     if(type===0){
       br.alignByte();
-      const lo=data[br.pos]||0, hi=data[br.pos+1]||0;
+      /* Same rationale as BitReader.readBit()'s bounds check above: reading
+         past the real end of `data` used to silently substitute zero bytes
+         (via `||0`) rather than failing, so a truncated stored block would
+         quietly manufacture a zero-padded chapter instead of erroring. */
+      if(br.pos+4 > data.length) throw new Error('Corrupt or truncated compressed data');
+      const lo=data[br.pos], hi=data[br.pos+1];
       const len=lo | (hi<<8);
       br.pos += 4; // LEN + NLEN
+      if(br.pos+len > data.length) throw new Error('Corrupt or truncated compressed data');
       out.ensure(len);
-      for(let i=0;i<len;i++) out.writeByte(data[br.pos+i]||0);
+      for(let i=0;i<len;i++) out.writeByte(data[br.pos+i]);
       br.pos += len;
     }else if(type===1){
       const [lit,dist]=getFixedTables();
@@ -1999,7 +2015,17 @@ if(window.visualViewport){
    time would silently drop the pending save. */
 const persistCurrentBook=(function(){
   const flush=debounce(async function(book){
-    if(book) await dbPut(book);
+    if(!book) return;
+    try{
+      await dbPut(book);
+    }catch(err){
+      /* This debounced write backs position/bookmark/highlight saves and is
+         never awaited by its caller — without this, a failure here (quota
+         exceeded, blocked transaction) would silently drop the save while
+         the user goes on believing their spot or annotation was kept. */
+      console.error('Failed to save reading progress', err);
+      showToast('Could not save your reading progress: '+(err && err.message ? err.message : 'unknown error'));
+    }
   }, 300);
   return function(){ flush(state.currentBook); };
 })();
@@ -3001,7 +3027,15 @@ async function closeReader(){
     /* Flush immediately rather than relying on persistCurrentBook's debounce —
        reopening the same book right away could otherwise read a stale record
        from IndexedDB before the debounced write has had a chance to land. */
-    await dbPut(state.currentBook);
+    try{
+      await dbPut(state.currentBook);
+    }catch(err){
+      /* A failed save here (quota exceeded, blocked transaction) must not
+         trap the user on the reader screen with no way back — warn about
+         the lost save, but always still return to the library below. */
+      console.error('Failed to save reading position on close', err);
+      showToast('Could not save your reading position: '+(err && err.message ? err.message : 'unknown error'));
+    }
   }
   state.currentBook=null;
   showScreen('library');
