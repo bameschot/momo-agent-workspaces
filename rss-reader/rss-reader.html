@@ -59,6 +59,7 @@
   .btn.danger{ color:var(--danger); }
   .btn.icon{ padding:.4rem; }
   .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .btn.muted{ opacity:.4; }
 
   /* Layout */
   .layout{ flex:1; display:flex; flex-direction:column; min-height:0; }
@@ -216,6 +217,7 @@
   }
   .article-body{ flex:1; min-height:0; overflow-y:auto; padding:1rem 1.2rem 2rem; line-height:1.55; }
   .article-body img{ max-width:100%; height:auto; border-radius:.4rem; }
+  .article-body img.article-hero-img{ display:block; margin-bottom:.9rem; }
   .article-body pre{ overflow-x:auto; background:var(--surface-2); padding:.6rem .8rem; border-radius:.4rem; }
   .article-body table{ display:block; overflow-x:auto; border-collapse:collapse; max-width:100%; }
   .article-body blockquote{ margin:.5rem 0; padding:.3rem 0 .3rem .8rem; border-left:3px solid var(--border); color:var(--muted); }
@@ -278,6 +280,7 @@
           <summary>Custom proxy URL (optional)</summary>
           <input type="text" id="input-feed-proxy-url" placeholder="Leave blank to use the default proxy">
         </details>
+        <label class="check"><input type="checkbox" id="input-feed-show-images" checked> Show feed images in full articles</label>
         <button type="submit" class="btn primary">Add feed</button>
       </form>
       <p class="hint">If a feed fails to load, it's likely blocked by the browser's cross-origin policy — try enabling the proxy option above.</p>
@@ -643,6 +646,15 @@ function openArticleDialog(feed, item, cardEl){
     bodyEl.textContent = 'No content available for this article.';
   }
 
+  if (feed.showImages !== false && item.imageUrl){
+    const img = document.createElement('img');
+    img.className = 'article-hero-img';
+    img.src = item.imageUrl;
+    img.alt = '';
+    img.loading = 'lazy';
+    bodyEl.insertBefore(img, bodyEl.firstChild);
+  }
+
   if (markItemRead(feed, item.id)){
     saveState();
     renderFeedList();
@@ -690,6 +702,52 @@ function findAll(parent, names){
     if (names.includes(local)) out.push(child);
   }
   return out;
+}
+
+function findNamespacedChild(parent, prefixedNames){
+  // Matches by the full "prefix:local" tag name (e.g. "media:content"), so it never
+  // collides with an unprefixed element of the same local name (like Atom's <content>).
+  for (const child of parent.children){
+    const full = (child.tagName || '').toLowerCase();
+    if (prefixedNames.includes(full)) return child;
+  }
+  return null;
+}
+
+// Many feeds (most news publishers, including NOS-style feeds) supply the article
+// photo out-of-band via <enclosure> or Media RSS tags rather than embedding an <img>
+// in the description/content HTML — so the sanitizer never sees one to preserve.
+function extractItemImageUrl(it, baseUrl){
+  const enclosure = findChild(it, ['enclosure']);
+  if (enclosure){
+    const url = enclosure.getAttribute('url');
+    const type = (enclosure.getAttribute('type') || '').toLowerCase();
+    if (url && (!type || type.startsWith('image/'))){
+      const safe = safeUrl(url, baseUrl);
+      if (safe) return safe;
+    }
+  }
+
+  const media = findNamespacedChild(it, ['media:content', 'media:thumbnail']);
+  if (media){
+    const url = media.getAttribute('url');
+    const medium = (media.getAttribute('medium') || '').toLowerCase();
+    const type = (media.getAttribute('type') || '').toLowerCase();
+    const isThumbnail = media.tagName.toLowerCase() === 'media:thumbnail';
+    if (url && (isThumbnail || medium === 'image' || type.startsWith('image/') || !type)){
+      const safe = safeUrl(url, baseUrl);
+      if (safe) return safe;
+    }
+  }
+
+  const enclosureLink = findAll(it, ['link']).find(l =>
+    l.getAttribute('rel') === 'enclosure' && (l.getAttribute('type') || '').toLowerCase().startsWith('image/'));
+  if (enclosureLink){
+    const safe = safeUrl(enclosureLink.getAttribute('href'), baseUrl);
+    if (safe) return safe;
+  }
+
+  return null;
 }
 
 async function hashString(str){
@@ -826,7 +884,8 @@ async function parseFeedXml(xmlText){
       const previewRaw = textOf(descEl) || textOf(encodedEl);
       const desc = stripHtml(previewRaw);
       const contentHtml = sanitizeHtml(fullHtmlRaw, link);
-      items.push({ id: guid || link, fallbackKey: title + '|' + date, title, link, date, desc, contentHtml });
+      const imageUrl = extractItemImageUrl(it, link);
+      items.push({ id: guid || link, fallbackKey: title + '|' + date, title, link, date, desc, contentHtml, imageUrl });
     }
   } else if (rootName === 'feed'){
     feedTitle = textOf(findChild(root, ['title']));
@@ -843,7 +902,8 @@ async function parseFeedXml(xmlText){
       const previewRaw = textOf(summaryEl) || textOf(contentEl);
       const desc = stripHtml(previewRaw);
       const contentHtml = sanitizeHtml(fullHtmlRaw, link);
-      items.push({ id: id || link, fallbackKey: title + '|' + date, title, link, date, desc, contentHtml });
+      const imageUrl = extractItemImageUrl(it, link);
+      items.push({ id: id || link, fallbackKey: title + '|' + date, title, link, date, desc, contentHtml, imageUrl });
     }
   } else {
     throw new Error('Unrecognized feed format (not RSS or Atom).');
@@ -1073,6 +1133,20 @@ function renderManageList(){
       renderFeedList();
     });
     li.appendChild(pause);
+    const imgToggle = document.createElement('button');
+    imgToggle.className = 'btn icon' + (feed.showImages === false ? ' muted' : '');
+    imgToggle.textContent = '🖼';
+    imgToggle.title = feed.showImages === false
+      ? 'Show feed images in full articles'
+      : 'Hide feed images in full articles';
+    imgToggle.style.padding = '.15rem .35rem';
+    imgToggle.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      feed.showImages = feed.showImages === false;
+      saveState();
+      renderFeedList();
+    });
+    li.appendChild(imgToggle);
     const del = document.createElement('button');
     del.className = 'btn icon';
     del.textContent = '✕';
@@ -1351,6 +1425,7 @@ document.getElementById('form-add-feed').addEventListener('submit', async (e) =>
   const nameInput = document.getElementById('input-feed-name');
   const proxyCheck = document.getElementById('input-feed-proxy');
   const proxyUrlInput = document.getElementById('input-feed-proxy-url');
+  const showImagesCheck = document.getElementById('input-feed-show-images');
 
   const url = urlInput.value.trim();
   if (!url) return;
@@ -1365,6 +1440,7 @@ document.getElementById('form-add-feed').addEventListener('submit', async (e) =>
     title: nameInput.value.trim(),
     useProxy: proxyCheck.checked,
     proxyTemplate: proxyUrlInput.value.trim() || null,
+    showImages: showImagesCheck.checked,
     lastFetchedAt: null,
     lastError: null,
     knownItemIds: [],
@@ -1381,6 +1457,7 @@ document.getElementById('form-add-feed').addEventListener('submit', async (e) =>
   nameInput.value = '';
   proxyCheck.checked = false;
   proxyUrlInput.value = '';
+  showImagesCheck.checked = true;
 
   toast('Fetching new feed…');
   const result = await refreshFeed(feed);
@@ -1431,6 +1508,7 @@ document.getElementById('file-import').addEventListener('change', async (e) => {
       if (!Array.isArray(f.newItemIds)) f.newItemIds = [];
       if (typeof f.unreadCount !== 'number') f.unreadCount = 0;
       if (typeof f.refreshPaused !== 'boolean') f.refreshPaused = false;
+      if (typeof f.showImages !== 'boolean') f.showImages = true;
     }
     state = parsed;
     setSelectedFeed(null);
