@@ -154,7 +154,7 @@
 
   article.item{
     background:var(--surface); border:1px solid var(--border); border-radius:.7rem; padding:.9rem 1rem; margin-bottom:.7rem;
-    box-shadow:var(--shadow);
+    box-shadow:var(--shadow); cursor:pointer;
   }
   article.item.unread{ border-left:3px solid var(--accent); }
   .new-pill{
@@ -163,8 +163,6 @@
     border-radius:999px; padding:.1rem .5rem; margin-left:.45rem; vertical-align:middle;
   }
   article.item h3{ margin:0 0 .3rem; font-size:.98rem; }
-  article.item h3 a{ text-decoration:none; }
-  article.item h3 a:hover{ text-decoration:underline; }
   article.item .meta{ font-size:.75rem; color:var(--muted); margin-bottom:.4rem; }
   article.item .desc{ font-size:.85rem; color:var(--text); opacity:.9; line-height:1.45; }
   article.item .desc *{ max-width:100%; }
@@ -187,11 +185,30 @@
   .dialog-body h3{ margin-top:0; }
   .dialog-actions{ display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem; }
 
+  dialog#dialog-article{ max-width:92vw; width:92vw; height:88vh; padding:0; }
+  dialog#dialog-article[open]{ display:flex; flex-direction:column; }
+  .article-dialog{ display:flex; flex-direction:column; height:100%; min-height:0; }
+  .article-header{
+    flex:none; display:flex; align-items:center; justify-content:space-between; gap:.5rem;
+    padding:.9rem 1.1rem; border-bottom:1px solid var(--border);
+  }
+  .article-header h3{ margin:0; font-size:1.05rem; }
+  .article-meta{
+    flex:none; display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;
+    padding:.5rem 1.1rem; font-size:.8rem; color:var(--muted); border-bottom:1px solid var(--border);
+  }
+  .article-body{ flex:1; min-height:0; overflow-y:auto; padding:1rem 1.2rem 2rem; line-height:1.55; }
+  .article-body img{ max-width:100%; height:auto; border-radius:.4rem; }
+  .article-body pre{ overflow-x:auto; background:var(--surface-2); padding:.6rem .8rem; border-radius:.4rem; }
+  .article-body table{ display:block; overflow-x:auto; border-collapse:collapse; max-width:100%; }
+  .article-body blockquote{ margin:.5rem 0; padding:.3rem 0 .3rem .8rem; border-left:3px solid var(--border); color:var(--muted); }
+
   input[type=file]{ display:none; }
 
   @media (max-width: 480px){
     header.topbar{ gap:.3rem; padding:.5rem .55rem; }
     header.topbar .btn.icon{ padding:.4rem .45rem; }
+    dialog#dialog-article{ width:100vw; max-width:100vw; height:100dvh; border-radius:0; }
   }
 </style>
 </head>
@@ -287,6 +304,20 @@
       <button class="btn" id="dialog-cancel">Cancel</button>
       <button class="btn danger" id="dialog-ok">Confirm</button>
     </div>
+  </div>
+</dialog>
+
+<dialog id="dialog-article">
+  <div class="article-dialog">
+    <div class="article-header">
+      <h3 id="article-title"></h3>
+      <button class="btn icon" id="article-close" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="article-meta">
+      <span id="article-meta-text"></span>
+      <a id="article-open-original" target="_blank" rel="noopener noreferrer">Open original ↗</a>
+    </div>
+    <div class="article-body" id="article-body"></div>
   </div>
 </dialog>
 
@@ -531,6 +562,58 @@ function confirmDialog(title, message){
   });
 }
 
+/* ---------- Article reader dialog ---------- */
+
+function openArticleDialog(feed, item, cardEl){
+  document.getElementById('article-title').textContent = item.title || '(untitled)';
+  const dateStr = item.date && !isNaN(Date.parse(item.date)) ? new Date(item.date).toLocaleString() : '';
+  document.getElementById('article-meta-text').textContent =
+    [feed.title || feed.url, dateStr].filter(Boolean).join(' · ');
+
+  const openOriginal = document.getElementById('article-open-original');
+  const originalHref = safeUrl(item.link);
+  if (originalHref){
+    openOriginal.href = originalHref;
+    openOriginal.hidden = false;
+  } else {
+    openOriginal.hidden = true;
+  }
+
+  const bodyEl = document.getElementById('article-body');
+  if (item.contentHtml && item.contentHtml.trim()){
+    bodyEl.innerHTML = item.contentHtml;
+  } else if (item.desc && item.desc.trim()){
+    bodyEl.textContent = item.desc;
+  } else {
+    bodyEl.textContent = 'No content available for this article.';
+  }
+
+  if (markItemRead(feed, item.id)){
+    saveState();
+    renderFeedList();
+    updateGlobalBadge();
+    cardEl.classList.remove('unread');
+    const pill = cardEl.querySelector('.new-pill');
+    if (pill) pill.remove();
+  }
+
+  document.getElementById('dialog-article').showModal();
+}
+
+document.getElementById('item-list').addEventListener('click', (e) => {
+  const card = e.target.closest('article.item[data-item-id]');
+  if (!card) return;
+  const feed = state.feeds.find(f => f.id === card.dataset.feedId);
+  const item = feed && (feed.items || []).find(it => it.id === card.dataset.itemId);
+  if (feed && item) openArticleDialog(feed, item, card);
+});
+
+const articleDialog = document.getElementById('dialog-article');
+document.getElementById('article-close').addEventListener('click', () => articleDialog.close());
+articleDialog.addEventListener('click', (e) => {
+  if (e.target === articleDialog) articleDialog.close();
+});
+
 /* ---------- Feed parsing ---------- */
 
 function textOf(el){
@@ -573,6 +656,97 @@ function stripHtml(html){
   return (div.textContent || '').replace(/\s+/g, ' ').trim();
 }
 
+const SANITIZE_REMOVE_TAGS = new Set([
+  'script', 'style', 'iframe', 'object', 'embed', 'form', 'svg', 'video',
+  'audio', 'source', 'link', 'meta', 'base', 'noscript', 'input', 'button',
+  'select', 'textarea', 'canvas'
+]);
+const SANITIZE_ALLOWED_ATTRS = {
+  a: ['href', 'title'],
+  img: ['src', 'alt', 'title', 'width', 'height'],
+  th: ['colspan', 'rowspan'],
+  td: ['colspan', 'rowspan']
+};
+const SANITIZE_ALLOWED_TAGS = new Set([
+  'a', 'p', 'br', 'hr', 'b', 'strong', 'i', 'em', 'u', 's', 'strike', 'mark',
+  'small', 'sub', 'sup', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li',
+  'blockquote', 'pre', 'code', 'table', 'thead', 'tbody', 'tfoot', 'tr',
+  'th', 'td', 'img', 'div', 'span', 'figure', 'figcaption'
+]);
+
+function safeUrl(raw, baseUrl){
+  if (!raw) return null;
+  try{
+    const u = new URL(raw.trim(), baseUrl || undefined);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : null;
+  }catch(e){
+    return null;
+  }
+}
+
+function sanitizeElement(el, baseUrl){
+  const tag = el.tagName.toLowerCase();
+  const allowedAttrs = SANITIZE_ALLOWED_ATTRS[tag] || [];
+  for (const attr of Array.from(el.attributes)){
+    if (!allowedAttrs.includes(attr.name.toLowerCase())) el.removeAttribute(attr.name);
+  }
+  if (tag === 'a'){
+    const href = safeUrl(el.getAttribute('href'), baseUrl);
+    if (href){
+      el.setAttribute('href', href);
+      el.setAttribute('target', '_blank');
+      el.setAttribute('rel', 'noopener noreferrer');
+    } else {
+      el.removeAttribute('href');
+    }
+  }
+  if (tag === 'img'){
+    const src = safeUrl(el.getAttribute('src'), baseUrl);
+    if (src){
+      el.setAttribute('src', src);
+      for (const dim of ['width', 'height']){
+        const val = el.getAttribute(dim);
+        if (val && !/^\d+$/.test(val)) el.removeAttribute(dim);
+      }
+    } else {
+      el.remove();
+    }
+  }
+}
+
+function sanitizeWalk(node, baseUrl){
+  for (const child of Array.from(node.childNodes)){
+    if (child.nodeType === Node.COMMENT_NODE){
+      child.remove();
+      continue;
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) continue;
+
+    const tag = child.tagName.toLowerCase();
+    if (SANITIZE_REMOVE_TAGS.has(tag)){
+      child.remove();
+      continue;
+    }
+
+    sanitizeWalk(child, baseUrl);
+
+    if (SANITIZE_ALLOWED_TAGS.has(tag)){
+      sanitizeElement(child, baseUrl);
+    } else if (child.parentNode === node){
+      // Unknown but harmless tag: keep its content, drop the wrapper.
+      while (child.firstChild) node.insertBefore(child.firstChild, child);
+      child.remove();
+    }
+  }
+}
+
+function sanitizeHtml(html, baseUrl){
+  if (!html) return '';
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  sanitizeWalk(doc.body, baseUrl);
+  return doc.body.innerHTML.trim();
+}
+
 async function parseFeedXml(xmlText){
   const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
   if (doc.querySelector('parsererror')) throw new Error('Could not parse feed XML.');
@@ -591,8 +765,13 @@ async function parseFeedXml(xmlText){
       const guid = textOf(findChild(it, ['guid']));
       const title = textOf(findChild(it, ['title'])) || '(untitled)';
       const date = textOf(findChild(it, ['pubdate', 'date'])) || '';
-      const desc = stripHtml(textOf(findChild(it, ['description', 'summary', 'encoded'])));
-      items.push({ id: guid || link, fallbackKey: title + '|' + date, title, link, date, desc });
+      const encodedEl = findChild(it, ['encoded']);
+      const descEl = findChild(it, ['description', 'summary']);
+      const fullHtmlRaw = textOf(encodedEl) || textOf(descEl);
+      const previewRaw = textOf(descEl) || textOf(encodedEl);
+      const desc = stripHtml(previewRaw);
+      const contentHtml = sanitizeHtml(fullHtmlRaw, link);
+      items.push({ id: guid || link, fallbackKey: title + '|' + date, title, link, date, desc, contentHtml });
     }
   } else if (rootName === 'feed'){
     feedTitle = textOf(findChild(root, ['title']));
@@ -603,8 +782,13 @@ async function parseFeedXml(xmlText){
       const id = textOf(findChild(it, ['id']));
       const title = textOf(findChild(it, ['title'])) || '(untitled)';
       const date = textOf(findChild(it, ['updated', 'published'])) || '';
-      const desc = stripHtml(textOf(findChild(it, ['summary', 'content'])));
-      items.push({ id: id || link, fallbackKey: title + '|' + date, title, link, date, desc });
+      const contentEl = findChild(it, ['content']);
+      const summaryEl = findChild(it, ['summary']);
+      const fullHtmlRaw = textOf(contentEl) || textOf(summaryEl);
+      const previewRaw = textOf(summaryEl) || textOf(contentEl);
+      const desc = stripHtml(previewRaw);
+      const contentHtml = sanitizeHtml(fullHtmlRaw, link);
+      items.push({ id: id || link, fallbackKey: title + '|' + date, title, link, date, desc, contentHtml });
     }
   } else {
     throw new Error('Unrecognized feed format (not RSS or Atom).');
@@ -732,6 +916,15 @@ function notifyNewItems(feed, newItems){
       }
     }catch(e){ console.error('Notification failed', e); }
   }
+}
+
+function markItemRead(feed, itemId){
+  if (!feed) return false;
+  const idx = (feed.newItemIds || []).indexOf(itemId);
+  if (idx === -1) return false;
+  feed.newItemIds.splice(idx, 1);
+  feed.unreadCount = Math.max(0, (feed.unreadCount || 0) - 1);
+  return true;
 }
 
 function updateGlobalBadge(){
@@ -893,7 +1086,7 @@ function renderItems(){
   for (const feed of feeds){
     const newIds = feed.newItemIds || [];
     for (const item of (feed.items || [])){
-      allItems.push({ ...item, feedTitle: feed.title || feed.url, isNew: newIds.includes(item.id) });
+      allItems.push({ ...item, feedTitle: feed.title || feed.url, feedId: feed.id, isNew: newIds.includes(item.id) });
     }
   }
 
@@ -915,12 +1108,14 @@ function renderItems(){
   for (const item of allItems){
     const el = document.createElement('article');
     el.className = 'item' + (item.isNew ? ' unread' : '');
+    el.dataset.feedId = item.feedId;
+    el.dataset.itemId = item.id;
     const dateStr = item.date && !isNaN(Date.parse(item.date)) ? new Date(item.date).toLocaleString() : '';
     const newPill = item.isNew ? '<span class="new-pill">New</span>' : '';
     el.innerHTML = `
-      <h3>${item.link ? `<a href="${escapeHtml(item.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>` : escapeHtml(item.title)}${newPill}</h3>
+      <h3>${escapeHtml(item.title)}${newPill}</h3>
       <div class="meta">${escapeHtml(item.feedTitle)}${dateStr ? ' · ' + escapeHtml(dateStr) : ''}</div>
-      <div class="desc">${escapeHtml(item.desc || '').slice(0, 500)}</div>
+      <div class="desc">${escapeHtml(item.desc || '').slice(0, 250)}</div>
     `;
     listEl.appendChild(el);
   }
