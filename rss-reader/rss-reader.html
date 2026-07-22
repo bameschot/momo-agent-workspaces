@@ -680,7 +680,7 @@ function confirmDialog(title, message){
 
 function openArticleDialog(feed, item, cardEl){
   document.getElementById('article-title').textContent = item.title || '(untitled)';
-  const dateStr = item.date && !isNaN(Date.parse(item.date)) ? new Date(item.date).toLocaleString() : '';
+  const dateStr = item.date && !isNaN(Date.parse(item.date)) ? new Date(item.date).toLocaleString(undefined, { hour12: false }) : '';
   document.getElementById('article-meta-text').textContent =
     [feed.title || feed.url, dateStr].filter(Boolean).join(' · ');
 
@@ -1591,7 +1591,7 @@ function renderItems(){
     el.className = 'item' + (item.isNew ? ' unread' : '');
     el.dataset.feedId = item.feedId;
     el.dataset.itemId = item.id;
-    const dateStr = item.date && !isNaN(Date.parse(item.date)) ? new Date(item.date).toLocaleString() : '';
+    const dateStr = item.date && !isNaN(Date.parse(item.date)) ? new Date(item.date).toLocaleString(undefined, { hour12: false }) : '';
     const newPill = item.isNew ? '<span class="new-pill">New</span>' : '';
     el.innerHTML = `
       <h3>${escapeHtml(item.title)}${newPill}</h3>
