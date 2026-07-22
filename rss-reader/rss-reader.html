@@ -303,6 +303,12 @@
       </div>
       <div class="settings-row">
         <label for="input-default-proxy">Default CORS proxy template</label>
+        <select id="input-default-proxy-preset" aria-label="Default CORS proxy preset">
+          <option value="https://api.allorigins.win/raw?url={url}">AllOrigins</option>
+          <option value="https://corsproxy.io/?url={url}">corsproxy.io</option>
+          <option value="https://api.codetabs.com/v1/proxy?quest={url}">CodeTabs</option>
+          <option value="">Custom…</option>
+        </select>
         <input type="text" id="input-default-proxy" placeholder="https://example.com/proxy?url={url}">
         <span class="hint">"{url}" is replaced with the encoded feed URL. Used by feeds with the proxy checkbox on and no custom proxy of their own.</span>
       </div>
@@ -1313,10 +1319,18 @@ function renderItems(){
 function renderSettingsUI(){
   document.getElementById('input-poll-interval').value = String(state.settings.pollIntervalMinutes || 0);
   document.getElementById('input-default-proxy').value = state.settings.defaultProxyTemplate || '';
+  syncDefaultProxyPresetSelect();
   updateAutoRefreshUI();
   updateToastNotificationUI();
   updateNotificationUI();
   updateShowUnreadCountsUI();
+}
+
+function syncDefaultProxyPresetSelect(){
+  const select = document.getElementById('input-default-proxy-preset');
+  const current = state.settings.defaultProxyTemplate || '';
+  const match = Array.from(select.options).find(opt => opt.value !== '' && opt.value === current);
+  select.value = match ? match.value : '';
 }
 
 function updateAutoRefreshUI(){
@@ -1413,6 +1427,16 @@ document.getElementById('input-poll-interval').addEventListener('change', (e) =>
 
 document.getElementById('input-default-proxy').addEventListener('change', (e) => {
   state.settings.defaultProxyTemplate = e.target.value.trim() || DEFAULT_PROXY_TEMPLATE;
+  saveState();
+  syncDefaultProxyPresetSelect();
+  renderFeedList();
+});
+
+document.getElementById('input-default-proxy-preset').addEventListener('change', (e) => {
+  const value = e.target.value;
+  if (!value) return; // "Custom…" selected — leave the text input/state untouched
+  document.getElementById('input-default-proxy').value = value;
+  state.settings.defaultProxyTemplate = value;
   saveState();
   renderFeedList();
 });
