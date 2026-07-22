@@ -624,16 +624,26 @@ async function parseFeedXml(xmlText){
   return { feedTitle, items };
 }
 
+function withCacheBuster(url){
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}_cb=${Date.now()}`;
+}
+
 function buildFetchCandidates(feed){
   const candidates = [];
+  // Cache-bust every attempt: CORS proxies (and some origin CDNs) cache by
+  // exact URL, so an unchanged request URL can keep serving a stale feed
+  // body forever even with cache:'no-store' (which only affects the local
+  // browser cache, not the proxy/CDN in between).
+  const bustedUrl = withCacheBuster(feed.url);
   if (!feed.useProxy){
-    candidates.push({ url: feed.url, viaProxy: false, template: null });
+    candidates.push({ url: bustedUrl, viaProxy: false, template: null });
   }
   const preferred = (feed.proxyTemplate && feed.proxyTemplate.trim()) || state.settings.defaultProxyTemplate || DEFAULT_PROXY_TEMPLATE;
-  candidates.push({ url: preferred.replace('{url}', encodeURIComponent(feed.url)), viaProxy: true, template: preferred });
+  candidates.push({ url: preferred.replace('{url}', encodeURIComponent(bustedUrl)), viaProxy: true, template: preferred });
   for (const template of FALLBACK_PROXY_TEMPLATES){
     if (template === preferred) continue;
-    candidates.push({ url: template.replace('{url}', encodeURIComponent(feed.url)), viaProxy: true, template });
+    candidates.push({ url: template.replace('{url}', encodeURIComponent(bustedUrl)), viaProxy: true, template });
   }
   return candidates;
 }
