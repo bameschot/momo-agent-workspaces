@@ -284,6 +284,7 @@
       <button type="button" data-section="manage">📋 Manage Feeds</button>
       <button type="button" data-section="add">➕ Add Feed</button>
       <button type="button" data-section="settings">⚙️ Settings</button>
+      <button type="button" data-section="search">🔍 Search</button>
     </nav>
 
     <div class="sidebar-section" data-section="manage">
@@ -343,6 +344,14 @@
       <div class="settings-row inline">
         <label for="btn-show-unread-counts" style="font-size:.82rem;color:var(--text);">Show unread counts</label>
         <button class="btn" id="btn-show-unread-counts">On</button>
+      </div>
+    </div>
+
+    <div class="sidebar-section" data-section="search">
+      <div class="settings-row">
+        <label for="input-search-keywords">Keyword search</label>
+        <input type="text" id="input-search-keywords" placeholder='e.g. climate "breaking news" wor?d*'>
+        <span class="hint">Matches article title &amp; full text, case-insensitive. Space-separated words are OR'd together — use "quoted phrases" for an exact match. Wildcards: * = any characters, ? = single character.</span>
       </div>
     </div>
    </div>
@@ -414,7 +423,8 @@ function defaultState(){
       browserNotificationsEnabled: false,
       showUnreadCounts: true,
       filterBarCollapsed: false,
-      selectedFeedIds: []
+      selectedFeedIds: [],
+      searchKeywords: ''
     },
     feeds: []
   };
@@ -1491,6 +1501,38 @@ function escapeHtml(str){
   return div.innerHTML;
 }
 
+/* ---------- Search matching ---------- */
+
+function tokenizeSearchQuery(raw){
+  const tokens = [];
+  const remainder = raw.replace(/"([^"]*)"/g, (match, phrase) => {
+    const trimmed = phrase.trim();
+    if (trimmed) tokens.push(trimmed);
+    return ' ';
+  });
+  for (const word of remainder.split(/\s+/)){
+    const trimmed = word.trim();
+    if (trimmed) tokens.push(trimmed);
+  }
+  return tokens;
+}
+
+function wildcardTokenToRegex(token){
+  const escaped = token.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  const pattern = escaped.replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp(pattern, 'i');
+}
+
+function compileSearchTokens(raw){
+  return tokenizeSearchQuery(raw).map(wildcardTokenToRegex);
+}
+
+function itemMatchesSearch(item, regexes){
+  if (regexes.length === 0) return true;
+  const haystack = (item.title || '') + ' ' + stripHtml(item.contentHtml || item.desc || '');
+  return regexes.some(re => re.test(haystack));
+}
+
 function renderItems(){
   const titleEl = document.getElementById('content-title');
   const listEl = document.getElementById('item-list');
@@ -1518,12 +1560,23 @@ function renderItems(){
     }
   }
 
-  if (feeds.length === 0 || allItems.length === 0){
+  const hadItemsBeforeSearch = allItems.length > 0;
+  const searchRegexes = compileSearchTokens(state.settings.searchKeywords || '');
+  if (searchRegexes.length){
+    allItems = allItems.filter(item => itemMatchesSearch(item, searchRegexes));
+  }
+
+  if (feeds.length === 0 || !hadItemsBeforeSearch){
     listEl.innerHTML = `<div class="empty"><span class="big">🗞️</span>${
       state.feeds.length === 0
         ? 'No feeds yet. Open the menu (☰) to add one.'
         : 'No items loaded yet. Try refreshing.'
     }</div>`;
+    return;
+  }
+
+  if (allItems.length === 0){
+    listEl.innerHTML = `<div class="empty"><span class="big">🔍</span>No articles match your search.</div>`;
     return;
   }
 
@@ -1554,6 +1607,7 @@ function renderItems(){
 function renderSettingsUI(){
   document.getElementById('input-poll-interval').value = String(state.settings.pollIntervalMinutes || 0);
   document.getElementById('input-default-proxy').value = state.settings.defaultProxyTemplate || '';
+  document.getElementById('input-search-keywords').value = state.settings.searchKeywords || '';
   syncDefaultProxyPresetSelect();
   updateAutoRefreshUI();
   updateToastNotificationUI();
@@ -1674,6 +1728,16 @@ document.getElementById('input-default-proxy-preset').addEventListener('change',
   state.settings.defaultProxyTemplate = value;
   saveState();
   renderFeedList();
+});
+
+/* ---------- Search ---------- */
+
+let searchDebounceTimer = null;
+document.getElementById('input-search-keywords').addEventListener('input', (e) => {
+  state.settings.searchKeywords = e.target.value;
+  saveState();
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(renderItems, 200);
 });
 
 /* ---------- Add feed form ---------- */
