@@ -294,12 +294,7 @@
 'use strict';
 
 const STORAGE_KEY = 'rss-reader-state';
-const FALLBACK_PROXY_TEMPLATES = [
-  'https://api.allorigins.win/raw?url={url}',
-  'https://corsproxy.io/?url={url}',
-  'https://api.codetabs.com/v1/proxy?quest={url}'
-];
-const DEFAULT_PROXY_TEMPLATE = FALLBACK_PROXY_TEMPLATES[0];
+const DEFAULT_PROXY_TEMPLATE = 'https://api.allorigins.win/raw?url={url}';
 const FETCH_TIMEOUT_MS = 15000;
 
 function defaultState(){
@@ -629,23 +624,17 @@ function withCacheBuster(url){
   return `${url}${sep}_cb=${Date.now()}`;
 }
 
-function buildFetchCandidates(feed){
-  const candidates = [];
-  // Cache-bust every attempt: CORS proxies (and some origin CDNs) cache by
+function buildFetchCandidate(feed){
+  // Cache-bust every attempt: a CORS proxy (or an origin CDN) caches by
   // exact URL, so an unchanged request URL can keep serving a stale feed
   // body forever even with cache:'no-store' (which only affects the local
   // browser cache, not the proxy/CDN in between).
   const bustedUrl = withCacheBuster(feed.url);
   if (!feed.useProxy){
-    candidates.push({ url: bustedUrl, viaProxy: false, template: null });
+    return { url: bustedUrl, viaProxy: false };
   }
-  const preferred = (feed.proxyTemplate && feed.proxyTemplate.trim()) || state.settings.defaultProxyTemplate || DEFAULT_PROXY_TEMPLATE;
-  candidates.push({ url: preferred.replace('{url}', encodeURIComponent(bustedUrl)), viaProxy: true, template: preferred });
-  for (const template of FALLBACK_PROXY_TEMPLATES){
-    if (template === preferred) continue;
-    candidates.push({ url: template.replace('{url}', encodeURIComponent(bustedUrl)), viaProxy: true, template });
-  }
-  return candidates;
+  const template = (feed.proxyTemplate && feed.proxyTemplate.trim()) || state.settings.defaultProxyTemplate || DEFAULT_PROXY_TEMPLATE;
+  return { url: template.replace('{url}', encodeURIComponent(bustedUrl)), viaProxy: true };
 }
 
 async function fetchWithTimeout(url){
@@ -672,28 +661,15 @@ function describeFetchError(e, candidate){
 }
 
 async function fetchFeed(feed){
-  const candidates = buildFetchCandidates(feed);
-  let lastError = null;
-
-  for (const candidate of candidates){
-    try{
-      const res = await fetchWithTimeout(candidate.url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      const parsed = await parseFeedXml(text);
-
-      if (candidate.viaProxy){
-        feed.useProxy = true;
-        const resolvedDefault = state.settings.defaultProxyTemplate || DEFAULT_PROXY_TEMPLATE;
-        feed.proxyTemplate = candidate.template === resolvedDefault ? null : candidate.template;
-      }
-      return parsed;
-    }catch(e){
-      lastError = describeFetchError(e, candidate);
-    }
+  const candidate = buildFetchCandidate(feed);
+  try{
+    const res = await fetchWithTimeout(candidate.url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    return await parseFeedXml(text);
+  }catch(e){
+    throw describeFetchError(e, candidate);
   }
-
-  throw lastError || new Error('Could not reach the feed.');
 }
 
 /* ---------- Refresh cycle ---------- */
