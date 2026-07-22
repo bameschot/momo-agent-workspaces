@@ -571,13 +571,18 @@ document.querySelectorAll('.menu-nav button').forEach(btn => {
 
 /* ---------- Install (PWA) ---------- */
 
-const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">' +
-  '<rect width="24" height="24" rx="5" fill="#f26522"/>' +
-  '<circle cx="6.5" cy="18" r="2.2" fill="#fff"/>' +
-  '<path d="M6.5 11a6.5 6.5 0 0 1 6.5 6.5" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>' +
-  '<path d="M6.5 5.5a12 12 0 0 1 12 12" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>' +
-  '</svg>';
-const APP_ICON_URI = 'data:image/svg+xml,' + encodeURIComponent(APP_ICON_SVG);
+function buildIconDataUrl(size){
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#f26522';
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold ' + Math.round(size * 0.56) + 'px Georgia, serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('R', size / 2, size * 0.56);
+  return canvas.toDataURL('image/png');
+}
 
 function setupInstallability(){
   // The manifest itself is a real static file (manifest.json, linked in
@@ -587,8 +592,17 @@ function setupInstallability(){
   // manifest by URL later to check for updates, which a data: URI manifest
   // can't support (nothing for it to re-fetch). Favicon/apple-touch-icon
   // have no such constraint and can stay dynamically generated data: URIs.
-  document.getElementById('faviconLink').setAttribute('href', APP_ICON_URI);
-  document.getElementById('appleTouchIconLink').setAttribute('href', APP_ICON_URI);
+  //
+  // Icons are drawn with plain canvas primitives (flat fill + fillText),
+  // not rasterized from an SVG via drawImage: an <svg> with no explicit
+  // width/height attributes (only a viewBox) has an undefined intrinsic
+  // size, which previously made drawImage() paint the icon at the wrong
+  // scale, leaving ~98% of the canvas transparent — a broken icon that
+  // silently failed Android's WebAPK minting even though the manifest and
+  // service worker were otherwise correct.
+  const icon192 = buildIconDataUrl(192);
+  document.getElementById('faviconLink').setAttribute('href', icon192);
+  document.getElementById('appleTouchIconLink').setAttribute('href', icon192);
 }
 
 if ('serviceWorker' in navigator){
