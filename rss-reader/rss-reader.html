@@ -159,6 +159,7 @@
     display:inline-flex; align-items:center; gap:.4rem; flex:none; white-space:nowrap;
     padding:.4rem .75rem; border-radius:999px; border:1px solid var(--border);
     background:var(--surface); color:var(--text); cursor:pointer; font-size:.82rem;
+    user-select:none; -webkit-touch-callout:none;
   }
   .filter-chip:hover{ border-color:var(--accent); }
   .filter-chip.active{ background:var(--accent); border-color:var(--accent); color:#fff; }
@@ -167,6 +168,17 @@
     background:rgba(127,127,127,.25); border-radius:999px; font-size:.68rem; font-weight:700; padding:.05rem .4rem;
   }
   .filter-chip.active .unread{ background:rgba(255,255,255,.3); }
+  .filter-chip.multi-selected{
+    background:var(--surface-2); border-color:var(--accent-2); border-width:2px;
+    color:var(--accent-2); font-weight:600;
+  }
+  .filter-chip.multi-selected .unread{ background:rgba(127,127,127,.35); }
+  .filter-chip.just-added{ animation:chip-just-added .3s ease; }
+  @keyframes chip-just-added{
+    0%{ transform:scale(1); filter:brightness(1); }
+    35%{ transform:scale(1.12); filter:brightness(1.35); }
+    100%{ transform:scale(1); filter:brightness(1); }
+  }
   .filter-chip .err-dot{ width:.45rem; height:.45rem; border-radius:50%; background:var(--danger); flex:none; }
   .filter-chip .pause-icon{ font-size:.7rem; opacity:.7; }
 
@@ -253,6 +265,7 @@
   <div class="spacer"></div>
   <button class="btn icon primary" id="btn-install" title="Install App" aria-label="Install App" hidden>⬇️</button>
   <button class="btn icon" id="btn-refresh" title="Refresh all feeds" aria-label="Refresh all feeds">🔄</button>
+  <button class="btn icon" id="btn-clear-all-new" title="Clear all new flags" aria-label="Clear all new flags">✅</button>
   <button class="btn icon" id="btn-export" title="Export settings &amp; feeds" aria-label="Export settings and feeds">📤</button>
   <button class="btn icon" id="btn-import" title="Import settings &amp; feeds" aria-label="Import settings and feeds">📥</button>
   <input type="file" id="file-import" accept="application/json,.json">
@@ -401,7 +414,7 @@ function defaultState(){
       browserNotificationsEnabled: false,
       showUnreadCounts: true,
       filterBarCollapsed: false,
-      selectedFeedId: null
+      selectedFeedIds: []
     },
     feeds: []
   };
@@ -411,6 +424,10 @@ function migrateLegacySettings(settings){
   if (settings && typeof settings.notificationsEnabled === 'boolean' &&
       typeof settings.browserNotificationsEnabled !== 'boolean'){
     settings.browserNotificationsEnabled = settings.notificationsEnabled;
+  }
+  if (settings && !Array.isArray(settings.selectedFeedIds) &&
+      typeof settings.selectedFeedId === 'string'){
+    settings.selectedFeedIds = [settings.selectedFeedId];
   }
   return settings;
 }
@@ -451,13 +468,25 @@ function saveState(){
 }
 
 let state = loadState();
-let selectedFeedId = state.settings.selectedFeedId || null; // null = "All feeds"
-if (selectedFeedId && !state.feeds.some(f => f.id === selectedFeedId)) selectedFeedId = null;
+// selectedFeedIds: Set of feed ids. Empty set = "All feeds". Persisted as a plain array.
+let selectedFeedIds = new Set(
+  (state.settings.selectedFeedIds || []).filter(id => state.feeds.some(f => f.id === id))
+);
+state.settings.selectedFeedIds = Array.from(selectedFeedIds);
 let pollTimer = null;
+let justAddedFeedId = null; // transient: which chip should play the "just added" pulse on its next render only
 
-function setSelectedFeed(id){
-  selectedFeedId = id;
-  state.settings.selectedFeedId = id;
+function selectOnlyFeed(id){ // plain click: id === null clears to "All feeds"
+  selectedFeedIds.clear();
+  if (id !== null) selectedFeedIds.add(id);
+  state.settings.selectedFeedIds = Array.from(selectedFeedIds);
+}
+
+function toggleFeedInSelection(id){ // Ctrl/Cmd+click and long-press
+  if (id === null){ selectOnlyFeed(null); return; } // toggling "All feeds" doesn't make sense; treat as reset
+  if (selectedFeedIds.has(id)) selectedFeedIds.delete(id);
+  else selectedFeedIds.add(id);
+  state.settings.selectedFeedIds = Array.from(selectedFeedIds);
 }
 
 /* ---------- Theme ---------- */
@@ -1190,7 +1219,10 @@ function renderManageList(){
       const confirmed = await confirmDialog('Remove feed?', `This will remove "${feed.title || feed.url}" and its history.`);
       if (!confirmed) return;
       state.feeds = state.feeds.filter(f => f.id !== feed.id);
-      if (selectedFeedId === feed.id) setSelectedFeed(null);
+      if (selectedFeedIds.has(feed.id)){
+        selectedFeedIds.delete(feed.id);
+        state.settings.selectedFeedIds = Array.from(selectedFeedIds);
+      }
       saveState();
       renderFeedList();
       renderItems();
@@ -1295,7 +1327,21 @@ function buildProxyEditPanel(feed){
 function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr, isPaused){
   const chip = document.createElement('button');
   chip.type = 'button';
-  chip.className = 'filter-chip' + (selectedFeedId === feedId ? ' active' : '');
+
+  let stateClass = '';
+  if (selectedFeedIds.size === 0){
+    stateClass = feedId === null ? ' active' : '';
+  } else if (selectedFeedIds.size === 1){
+    stateClass = selectedFeedIds.has(feedId) ? ' active' : '';
+  } else {
+    stateClass = selectedFeedIds.has(feedId) ? ' multi-selected' : '';
+  }
+  let justAddedClass = '';
+  if (feedId !== null && justAddedFeedId === feedId){
+    justAddedClass = ' just-added';
+    justAddedFeedId = null; // one-shot: consume so a later render doesn't replay it
+  }
+  chip.className = 'filter-chip' + stateClass + justAddedClass;
   if (titleAttr) chip.title = titleAttr;
 
   const labelSpan = document.createElement('span');
@@ -1321,17 +1367,84 @@ function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr, isPause
     chip.appendChild(unread);
   }
 
-  chip.addEventListener('click', () => {
-    setSelectedFeed(feedId);
-    const feed = state.feeds.find(f => f.id === feedId);
+  function clearUnreadFor(id){
+    if (id === null) return;
+    const feed = state.feeds.find(f => f.id === id);
     if (feed){
       feed.unreadCount = 0;
       feed.newItemIds = [];
     }
+  }
+  function commit(){
     saveState();
     renderFeedList();
     renderItems();
     updateGlobalBadge();
+  }
+  function applyToggleGesture(){
+    const wasPresent = feedId !== null && selectedFeedIds.has(feedId);
+    toggleFeedInSelection(feedId);
+    if (feedId !== null && !wasPresent){
+      clearUnreadFor(feedId);
+      justAddedFeedId = feedId;
+    }
+    commit();
+  }
+
+  // --- Long-press (touch only) state, local to this chip instance ---
+  const LONG_PRESS_MS = 500;
+  const MOVE_THRESHOLD_PX = 10;
+  let longPressTimer = null;
+  let longPressFired = false;
+  let touchStartX = 0, touchStartY = 0;
+
+  chip.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    longPressFired = false;
+    clearTimeout(longPressTimer);
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null;
+      longPressFired = true;
+      applyToggleGesture();
+    }, LONG_PRESS_MS);
+  }, { passive: true });
+
+  chip.addEventListener('touchmove', (e) => {
+    if (longPressTimer === null) return;
+    const dx = e.touches[0].clientX - touchStartX;
+    const dy = e.touches[0].clientY - touchStartY;
+    if (Math.abs(dx) > MOVE_THRESHOLD_PX || Math.abs(dy) > MOVE_THRESHOLD_PX){
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  }, { passive: true });
+
+  chip.addEventListener('touchend', () => {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }, { passive: true });
+
+  chip.addEventListener('touchcancel', () => {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }, { passive: true });
+
+  chip.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  chip.addEventListener('click', (event) => {
+    if (longPressFired){
+      longPressFired = false;
+      return;
+    }
+    if (event.ctrlKey || event.metaKey){
+      applyToggleGesture();
+      return;
+    }
+    selectOnlyFeed(feedId);
+    clearUnreadFor(feedId);
+    commit();
   });
   return chip;
 }
@@ -1384,13 +1497,17 @@ function renderItems(){
   listEl.innerHTML = '';
 
   let feeds;
-  if (selectedFeedId === null){
+  if (selectedFeedIds.size === 0){
     titleEl.textContent = 'All feeds';
     feeds = state.feeds;
-  } else {
-    const feed = state.feeds.find(f => f.id === selectedFeedId);
+  } else if (selectedFeedIds.size === 1){
+    const onlyId = selectedFeedIds.values().next().value;
+    const feed = state.feeds.find(f => f.id === onlyId);
     titleEl.textContent = feed ? (feed.title || feed.url) : 'Feed';
     feeds = feed ? [feed] : [];
+  } else {
+    feeds = state.feeds.filter(f => selectedFeedIds.has(f.id));
+    titleEl.textContent = `${feeds.length} feeds selected`;
   }
 
   let allItems = [];
@@ -1653,7 +1770,10 @@ document.getElementById('file-import').addEventListener('change', async (e) => {
       if (typeof f.showImages !== 'boolean') f.showImages = true;
     }
     state = parsed;
-    setSelectedFeed(null);
+    selectedFeedIds = new Set(
+      (state.settings.selectedFeedIds || []).filter(id => state.feeds.some(f => f.id === id))
+    );
+    state.settings.selectedFeedIds = Array.from(selectedFeedIds);
     saveState();
     applyTheme();
     renderSettingsUI();
@@ -1671,6 +1791,24 @@ document.getElementById('file-import').addEventListener('change', async (e) => {
 /* ---------- Refresh button ---------- */
 
 document.getElementById('btn-refresh').addEventListener('click', () => refreshAllFeeds(true));
+
+/* ---------- Clear all new flags ---------- */
+
+document.getElementById('btn-clear-all-new').addEventListener('click', () => {
+  if (state.feeds.length === 0){
+    toast('No feeds yet.');
+    return;
+  }
+  for (const feed of state.feeds){
+    feed.unreadCount = 0;
+    feed.newItemIds = [];
+  }
+  saveState();
+  renderFeedList();
+  renderItems();
+  updateGlobalBadge();
+  toast('Cleared all new flags.');
+});
 
 /* ---------- Init ---------- */
 
