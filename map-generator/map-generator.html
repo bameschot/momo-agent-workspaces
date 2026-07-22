@@ -5311,6 +5311,12 @@ function setupInstallability(){
   document.getElementById('appleTouchIconLink').setAttribute('href', icon192);
 }
 
+if ('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((err) => console.error('Service worker registration failed', err));
+  });
+}
+
 let deferredInstallPrompt=null;
 window.addEventListener('beforeinstallprompt', (e)=>{
   e.preventDefault();
