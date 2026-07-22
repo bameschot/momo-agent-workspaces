@@ -1077,6 +1077,12 @@ function setupInstallability() {
   document.getElementById('apple-touch-icon-link').setAttribute('href', icon192);
 }
 
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((err) => console.error('Service worker registration failed', err));
+  });
+}
+
 // Registered at top level so it's listening before the browser evaluates
 // installability — Chrome only fires this once the page passes every
 // installability check (valid manifest, secure origin, etc).
