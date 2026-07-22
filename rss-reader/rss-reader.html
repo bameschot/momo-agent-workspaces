@@ -106,8 +106,14 @@
 
   ul.feed-list{ list-style:none; margin:0; padding:0; }
   ul.feed-list li{
-    display:flex; align-items:center; gap:.4rem; padding:.45rem .5rem; border-radius:.5rem;
+    padding:.45rem .5rem; border-radius:.5rem;
     color:var(--text); font-size:.85rem;
+  }
+  ul.feed-list li .feed-row{
+    display:flex; align-items:center; gap:.4rem;
+  }
+  ul.feed-list li .proxy-edit-panel{
+    margin-top:.5rem; padding-top:.5rem; border-top:1px solid var(--border);
   }
   ul.feed-list li.paused{ opacity:.55; }
   ul.feed-list li .name{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -123,7 +129,7 @@
   form.add-feed input[type=text], form.add-feed input[type=url]{
     background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:.4rem; padding:.4rem .5rem; width:100%;
   }
-  form.add-feed label.check{ display:flex; align-items:center; gap:.4rem; font-size:.8rem; color:var(--muted); }
+  label.check{ display:flex; align-items:center; gap:.4rem; font-size:.8rem; color:var(--muted); }
   details.proxy-adv{ font-size:.78rem; color:var(--muted); }
   details.proxy-adv input{ margin-top:.35rem; }
 
@@ -377,6 +383,11 @@
 
 const STORAGE_KEY = 'rss-reader-state';
 const DEFAULT_PROXY_TEMPLATE = 'https://api.allorigins.win/raw?url={url}';
+const CORS_PROXY_PRESETS = [
+  { label: 'AllOrigins', template: 'https://api.allorigins.win/raw?url={url}' },
+  { label: 'corsproxy.io', template: 'https://corsproxy.io/?url={url}' },
+  { label: 'CodeTabs', template: 'https://api.codetabs.com/v1/proxy?quest={url}' }
+];
 const FETCH_TIMEOUT_MS = 15000;
 
 function defaultState(){
@@ -1085,6 +1096,8 @@ function restartPolling(){
 
 /* ---------- Rendering ---------- */
 
+let expandedProxyFeedIds = new Set();
+
 function renderManageList(){
   const list = document.getElementById('feed-list');
   list.innerHTML = '';
@@ -1100,11 +1113,13 @@ function renderManageList(){
   for (const feed of state.feeds){
     const li = document.createElement('li');
     li.classList.toggle('paused', !!feed.refreshPaused);
+    const feedRow = document.createElement('div');
+    feedRow.className = 'feed-row';
     const nameSpan = document.createElement('span');
     nameSpan.className = 'name';
     nameSpan.textContent = feed.title || feed.url;
     nameSpan.title = feed.url;
-    li.appendChild(nameSpan);
+    feedRow.appendChild(nameSpan);
 
     const proxySpan = document.createElement('span');
     proxySpan.className = 'proxy-indicator';
@@ -1112,20 +1127,20 @@ function renderManageList(){
     proxySpan.classList.toggle('proxy-on', !!proxyTemplate);
     proxySpan.textContent = proxyTemplate ? 'Proxy' : 'Direct';
     proxySpan.title = proxyTemplate ? `Via proxy: ${proxyTemplate}` : 'Fetched directly (no proxy)';
-    li.appendChild(proxySpan);
+    feedRow.appendChild(proxySpan);
 
     if (feed.lastError){
       const err = document.createElement('span');
       err.className = 'err';
       err.textContent = '⚠';
       err.title = feed.lastError;
-      li.appendChild(err);
+      feedRow.appendChild(err);
     }
     if (state.settings.showUnreadCounts && feed.unreadCount > 0){
       const unread = document.createElement('span');
       unread.className = 'unread';
       unread.textContent = feed.unreadCount > 99 ? '99+' : feed.unreadCount;
-      li.appendChild(unread);
+      feedRow.appendChild(unread);
     }
     const pause = document.createElement('button');
     pause.className = 'btn icon';
@@ -1138,7 +1153,7 @@ function renderManageList(){
       saveState();
       renderFeedList();
     });
-    li.appendChild(pause);
+    feedRow.appendChild(pause);
     const imgToggle = document.createElement('button');
     imgToggle.className = 'btn icon' + (feed.showImages === false ? ' muted' : '');
     imgToggle.textContent = '🖼';
@@ -1152,7 +1167,19 @@ function renderManageList(){
       saveState();
       renderFeedList();
     });
-    li.appendChild(imgToggle);
+    feedRow.appendChild(imgToggle);
+    const gear = document.createElement('button');
+    gear.className = 'btn icon';
+    gear.textContent = '⚙';
+    gear.title = expandedProxyFeedIds.has(feed.id) ? 'Hide proxy settings' : 'Edit proxy settings for this feed';
+    gear.style.padding = '.15rem .35rem';
+    gear.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (expandedProxyFeedIds.has(feed.id)) expandedProxyFeedIds.delete(feed.id);
+      else expandedProxyFeedIds.add(feed.id);
+      renderFeedList();
+    });
+    feedRow.appendChild(gear);
     const del = document.createElement('button');
     del.className = 'btn icon';
     del.textContent = '✕';
@@ -1169,9 +1196,100 @@ function renderManageList(){
       renderItems();
       updateGlobalBadge();
     });
-    li.appendChild(del);
+    feedRow.appendChild(del);
+    li.appendChild(feedRow);
+    if (expandedProxyFeedIds.has(feed.id)){
+      li.appendChild(buildProxyEditPanel(feed));
+    }
     list.appendChild(li);
   }
+}
+
+async function applyFeedProxyChange(feed){
+  const result = await refreshFeed(feed);
+  saveState();
+  renderFeedList();
+  renderItems();
+  updateGlobalBadge();
+  if (!result.ok) toast(`Could not load feed: ${result.error}`);
+}
+
+function buildProxyEditPanel(feed){
+  const panel = document.createElement('div');
+  panel.className = 'proxy-edit-panel';
+
+  const checkLabel = document.createElement('label');
+  checkLabel.className = 'check';
+  const checkInput = document.createElement('input');
+  checkInput.type = 'checkbox';
+  checkInput.checked = !!feed.useProxy;
+  checkLabel.appendChild(checkInput);
+  checkLabel.appendChild(document.createTextNode(' Use CORS proxy for this feed'));
+  panel.appendChild(checkLabel);
+
+  const row = document.createElement('div');
+  row.className = 'settings-row';
+  const label = document.createElement('label');
+  label.textContent = 'Proxy template';
+  row.appendChild(label);
+
+  const select = document.createElement('select');
+  const defaultOpt = document.createElement('option');
+  defaultOpt.value = '';
+  defaultOpt.textContent = 'Use global default';
+  select.appendChild(defaultOpt);
+  for (const preset of CORS_PROXY_PRESETS){
+    const opt = document.createElement('option');
+    opt.value = preset.template;
+    opt.textContent = preset.label;
+    select.appendChild(opt);
+  }
+  const customOpt = document.createElement('option');
+  customOpt.value = 'custom';
+  customOpt.textContent = 'Custom…';
+  select.appendChild(customOpt);
+
+  const matchingPreset = feed.proxyTemplate
+    ? CORS_PROXY_PRESETS.find(p => p.template === feed.proxyTemplate)
+    : null;
+  select.value = !feed.proxyTemplate ? '' : (matchingPreset ? matchingPreset.template : 'custom');
+  row.appendChild(select);
+
+  const textInput = document.createElement('input');
+  textInput.type = 'text';
+  textInput.placeholder = 'https://example.com/proxy?url={url}';
+  textInput.value = select.value === 'custom' ? (feed.proxyTemplate || '') : '';
+  row.appendChild(textInput);
+
+  const hint = document.createElement('span');
+  hint.className = 'hint';
+  hint.textContent = '"{url}" is replaced with the encoded feed URL. "Use global default" inherits the app-wide proxy from Settings.';
+  row.appendChild(hint);
+
+  panel.appendChild(row);
+
+  checkInput.addEventListener('change', (ev) => {
+    ev.stopPropagation();
+    feed.useProxy = checkInput.checked;
+    applyFeedProxyChange(feed);
+  });
+
+  select.addEventListener('change', (ev) => {
+    ev.stopPropagation();
+    const value = select.value;
+    if (value === 'custom') return; // no-op, mirrors the global preset select's "Custom…" convention
+    feed.proxyTemplate = value || null;
+    textInput.value = value || '';
+    applyFeedProxyChange(feed);
+  });
+
+  textInput.addEventListener('change', (ev) => {
+    ev.stopPropagation();
+    feed.proxyTemplate = textInput.value.trim() || null;
+    applyFeedProxyChange(feed);
+  });
+
+  return panel;
 }
 
 function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr, isPaused){
