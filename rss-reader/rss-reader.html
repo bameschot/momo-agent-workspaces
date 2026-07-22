@@ -135,10 +135,19 @@
   .hint{ font-size:.72rem; color:var(--muted); margin-top:.15rem; }
 
   /* Filter bar */
+  .filter-bar-toggle{ display:flex; flex:none; margin-top:.2rem; }
+  .filter-bar-toggle button{
+    display:inline-flex; align-items:center; gap:.35rem; background:none; border:none;
+    color:var(--muted); font-size:.78rem; cursor:pointer; padding:.25rem .4rem; border-radius:.4rem;
+  }
+  .filter-bar-toggle button:hover{ background:var(--surface-2); color:var(--text); }
+  .filter-bar-toggle .chevron{ display:inline-block; transition:transform .15s ease; }
+  .filter-bar-toggle button.collapsed .chevron{ transform:rotate(-90deg); }
   .filter-bar{
     display:flex; flex-wrap:wrap; gap:.5rem; max-height:8.5rem; overflow-y:auto; overflow-x:hidden;
     padding:.2rem .1rem .85rem; flex:none;
   }
+  .filter-bar.collapsed{ display:none; }
   .filter-chip{
     display:inline-flex; align-items:center; gap:.4rem; flex:none; white-space:nowrap;
     padding:.4rem .75rem; border-radius:999px; border:1px solid var(--border);
@@ -312,6 +321,11 @@
   </aside>
 
   <main class="content">
+    <div class="filter-bar-toggle">
+      <button type="button" id="btn-toggle-filter-bar" aria-expanded="true">
+        <span class="chevron">▾</span> <span id="filter-bar-toggle-label">Feeds</span>
+      </button>
+    </div>
     <div class="filter-bar" id="filter-bar"></div>
     <div class="content-header">
       <h2 id="content-title">All feeds</h2>
@@ -366,6 +380,7 @@ function defaultState(){
       toastNotificationsEnabled: true,
       browserNotificationsEnabled: false,
       showUnreadCounts: true,
+      filterBarCollapsed: false,
       selectedFeedId: null
     },
     feeds: []
@@ -1133,7 +1148,26 @@ function renderFilterBar(){
   for (const feed of state.feeds){
     bar.appendChild(makeFilterChip(feed.title || feed.url, feed.id, feed.unreadCount || 0, !!feed.lastError, feed.url, !!feed.refreshPaused));
   }
+  applyFilterBarCollapse();
 }
+
+function applyFilterBarCollapse(){
+  const bar = document.getElementById('filter-bar');
+  const btn = document.getElementById('btn-toggle-filter-bar');
+  const label = document.getElementById('filter-bar-toggle-label');
+  const collapsed = !!state.settings.filterBarCollapsed;
+  bar.classList.toggle('collapsed', collapsed);
+  btn.classList.toggle('collapsed', collapsed);
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  btn.title = collapsed ? 'Show feed filters' : 'Hide feed filters';
+  label.textContent = collapsed ? `Feeds (${state.feeds.length})` : 'Feeds';
+}
+
+document.getElementById('btn-toggle-filter-bar').addEventListener('click', () => {
+  state.settings.filterBarCollapsed = !state.settings.filterBarCollapsed;
+  saveState();
+  applyFilterBarCollapse();
+});
 
 function renderFeedList(){
   renderManageList();
