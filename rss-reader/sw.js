@@ -14,7 +14,7 @@
 // cache version" step required to avoid serving a stale app shell.
 
 const CACHE_NAME = 'rss-reader-shell-v1';
-const SHELL_ASSETS = ['./rss-reader.html', './manifest.json'];
+const SHELL_ASSETS = ['./rss-reader.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
