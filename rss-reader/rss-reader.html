@@ -108,9 +108,15 @@
     display:flex; align-items:center; gap:.4rem; padding:.45rem .5rem; border-radius:.5rem;
     color:var(--text); font-size:.85rem;
   }
+  ul.feed-list li.paused{ opacity:.55; }
   ul.feed-list li .name{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   ul.feed-list li .err{ color:var(--danger); font-size:.75rem; cursor:help; }
   ul.feed-list li .unread{ background:var(--accent); color:#fff; border-radius:999px; font-size:.68rem; padding:.05rem .4rem; }
+  ul.feed-list li .proxy-indicator{
+    font-size:.65rem; text-transform:uppercase; letter-spacing:.03em; color:var(--muted);
+    border:1px solid var(--border); border-radius:.35rem; padding:.05rem .35rem; flex:none; cursor:help;
+  }
+  ul.feed-list li .proxy-indicator.proxy-on{ color:var(--accent-2); border-color:var(--accent-2); }
 
   form.add-feed{ display:flex; flex-direction:column; gap:.4rem; }
   form.add-feed input[type=text], form.add-feed input[type=url]{
@@ -130,7 +136,8 @@
 
   /* Filter bar */
   .filter-bar{
-    display:flex; gap:.5rem; overflow-x:auto; overflow-y:hidden; padding:.2rem 0 .85rem; flex:none;
+    display:flex; flex-wrap:wrap; gap:.5rem; max-height:8.5rem; overflow-y:auto; overflow-x:hidden;
+    padding:.2rem .1rem .85rem; flex:none;
   }
   .filter-chip{
     display:inline-flex; align-items:center; gap:.4rem; flex:none; white-space:nowrap;
@@ -145,6 +152,7 @@
   }
   .filter-chip.active .unread{ background:rgba(255,255,255,.3); }
   .filter-chip .err-dot{ width:.45rem; height:.45rem; border-radius:50%; background:var(--danger); flex:none; }
+  .filter-chip .pause-icon{ font-size:.7rem; opacity:.7; }
 
   /* Item list */
   .content-header{ display:flex; align-items:center; gap:.6rem; margin-bottom:1rem; flex-wrap:wrap; flex:none; }
@@ -267,6 +275,10 @@
     </div>
 
     <div class="sidebar-section" data-section="settings">
+      <div class="settings-row inline">
+        <label for="btn-auto-refresh" style="font-size:.82rem;color:var(--text);">Auto-refresh</label>
+        <button class="btn" id="btn-auto-refresh">On</button>
+      </div>
       <div class="settings-row">
         <label for="input-poll-interval">Auto-refresh every</label>
         <select id="input-poll-interval">
@@ -283,10 +295,18 @@
         <span class="hint">"{url}" is replaced with the encoded feed URL. Used by feeds with the proxy checkbox on and no custom proxy of their own.</span>
       </div>
       <div class="settings-row inline">
+        <label for="btn-toast-notifications" style="font-size:.82rem;color:var(--text);">Toast notifications</label>
+        <button class="btn" id="btn-toast-notifications">Enabled</button>
+      </div>
+      <div class="settings-row inline">
         <label for="input-notifications" style="font-size:.82rem;color:var(--text);">Browser notifications</label>
         <button class="btn" id="btn-notifications">Enable</button>
       </div>
       <p class="hint" id="notification-status"></p>
+      <div class="settings-row inline">
+        <label for="btn-show-unread-counts" style="font-size:.82rem;color:var(--text);">Show unread counts</label>
+        <button class="btn" id="btn-show-unread-counts">On</button>
+      </div>
     </div>
    </div>
   </aside>
@@ -342,11 +362,22 @@ function defaultState(){
       theme: 'system',
       pollIntervalMinutes: 15,
       defaultProxyTemplate: DEFAULT_PROXY_TEMPLATE,
-      notificationsEnabled: false,
+      autoRefreshEnabled: true,
+      toastNotificationsEnabled: true,
+      browserNotificationsEnabled: false,
+      showUnreadCounts: true,
       selectedFeedId: null
     },
     feeds: []
   };
+}
+
+function migrateLegacySettings(settings){
+  if (settings && typeof settings.notificationsEnabled === 'boolean' &&
+      typeof settings.browserNotificationsEnabled !== 'boolean'){
+    settings.browserNotificationsEnabled = settings.notificationsEnabled;
+  }
+  return settings;
 }
 
 function uuid(){
@@ -371,6 +402,7 @@ function loadState(){
     const parsed = JSON.parse(raw);
     if (!isValidState(parsed)) return defaultState();
     const base = defaultState();
+    migrateLegacySettings(parsed.settings);
     parsed.settings = Object.assign(base.settings, parsed.settings);
     return parsed;
   }catch(e){
@@ -816,16 +848,21 @@ function withCacheBuster(url){
   return `${url}${sep}_cb=${Date.now()}`;
 }
 
+function resolveProxyTemplate(feed){
+  if (!feed.useProxy) return null;
+  return (feed.proxyTemplate && feed.proxyTemplate.trim()) || state.settings.defaultProxyTemplate || DEFAULT_PROXY_TEMPLATE;
+}
+
 function buildFetchCandidate(feed){
   // Cache-bust every attempt: a CORS proxy (or an origin CDN) caches by
   // exact URL, so an unchanged request URL can keep serving a stale feed
   // body forever even with cache:'no-store' (which only affects the local
   // browser cache, not the proxy/CDN in between).
   const bustedUrl = withCacheBuster(feed.url);
-  if (!feed.useProxy){
+  const template = resolveProxyTemplate(feed);
+  if (!template){
     return { url: bustedUrl, viaProxy: false };
   }
-  const template = (feed.proxyTemplate && feed.proxyTemplate.trim()) || state.settings.defaultProxyTemplate || DEFAULT_PROXY_TEMPLATE;
   return { url: template.replace('{url}', encodeURIComponent(bustedUrl)), viaProxy: true };
 }
 
@@ -902,7 +939,12 @@ async function refreshAllFeeds(showToast){
     if (showToast) toast('No feeds to refresh yet — add one first.');
     return;
   }
-  const results = await Promise.all(state.feeds.map(refreshFeed));
+  const feedsToRefresh = state.feeds.filter(f => !f.refreshPaused);
+  if (feedsToRefresh.length === 0){
+    if (showToast) toast('All feeds are paused — resume a feed to refresh it.');
+    return;
+  }
+  const results = await Promise.all(feedsToRefresh.map(refreshFeed));
   saveState();
   renderFeedList();
   renderItems();
@@ -914,8 +956,10 @@ async function refreshAllFeeds(showToast){
 }
 
 function notifyNewItems(feed, newItems){
-  toast(`${newItems.length} new item${newItems.length > 1 ? 's' : ''} in "${feed.title || feed.url}"`);
-  if (state.settings.notificationsEnabled && 'Notification' in window && Notification.permission === 'granted'){
+  if (state.settings.toastNotificationsEnabled){
+    toast(`${newItems.length} new item${newItems.length > 1 ? 's' : ''} in "${feed.title || feed.url}"`);
+  }
+  if (state.settings.browserNotificationsEnabled && 'Notification' in window && Notification.permission === 'granted'){
     const body = newItems.slice(0, 3).map(i => i.title).join('\n');
     try{
       const n = new Notification(feed.title || feed.url, { body: body || `${newItems.length} new item(s)` });
@@ -938,7 +982,7 @@ function markItemRead(feed, itemId){
 function updateGlobalBadge(){
   const total = state.feeds.reduce((sum, f) => sum + (f.unreadCount || 0), 0);
   const badge = document.getElementById('global-badge');
-  if (total > 0){
+  if (state.settings.showUnreadCounts && total > 0){
     badge.hidden = false;
     badge.textContent = total > 99 ? '99+' : String(total);
     document.title = `(${total > 99 ? '99+' : total}) RSS Reader`;
@@ -953,7 +997,7 @@ function updateGlobalBadge(){
 function restartPolling(){
   if (pollTimer) clearInterval(pollTimer);
   const minutes = Number(state.settings.pollIntervalMinutes) || 0;
-  if (minutes > 0){
+  if (state.settings.autoRefreshEnabled !== false && minutes > 0){
     pollTimer = setInterval(() => refreshAllFeeds(false), minutes * 60 * 1000);
   }
 }
@@ -974,11 +1018,20 @@ function renderManageList(){
 
   for (const feed of state.feeds){
     const li = document.createElement('li');
+    li.classList.toggle('paused', !!feed.refreshPaused);
     const nameSpan = document.createElement('span');
     nameSpan.className = 'name';
     nameSpan.textContent = feed.title || feed.url;
     nameSpan.title = feed.url;
     li.appendChild(nameSpan);
+
+    const proxySpan = document.createElement('span');
+    proxySpan.className = 'proxy-indicator';
+    const proxyTemplate = resolveProxyTemplate(feed);
+    proxySpan.classList.toggle('proxy-on', !!proxyTemplate);
+    proxySpan.textContent = proxyTemplate ? 'Proxy' : 'Direct';
+    proxySpan.title = proxyTemplate ? `Via proxy: ${proxyTemplate}` : 'Fetched directly (no proxy)';
+    li.appendChild(proxySpan);
 
     if (feed.lastError){
       const err = document.createElement('span');
@@ -987,12 +1040,24 @@ function renderManageList(){
       err.title = feed.lastError;
       li.appendChild(err);
     }
-    if (feed.unreadCount > 0){
+    if (state.settings.showUnreadCounts && feed.unreadCount > 0){
       const unread = document.createElement('span');
       unread.className = 'unread';
       unread.textContent = feed.unreadCount > 99 ? '99+' : feed.unreadCount;
       li.appendChild(unread);
     }
+    const pause = document.createElement('button');
+    pause.className = 'btn icon';
+    pause.textContent = feed.refreshPaused ? '▶' : '⏸';
+    pause.title = feed.refreshPaused ? 'Resume auto-refresh for this feed' : 'Pause auto-refresh for this feed';
+    pause.style.padding = '.15rem .35rem';
+    pause.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      feed.refreshPaused = !feed.refreshPaused;
+      saveState();
+      renderFeedList();
+    });
+    li.appendChild(pause);
     const del = document.createElement('button');
     del.className = 'btn icon';
     del.textContent = '✕';
@@ -1014,7 +1079,7 @@ function renderManageList(){
   }
 }
 
-function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr){
+function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr, isPaused){
   const chip = document.createElement('button');
   chip.type = 'button';
   chip.className = 'filter-chip' + (selectedFeedId === feedId ? ' active' : '');
@@ -1025,12 +1090,18 @@ function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr){
   labelSpan.textContent = label;
   chip.appendChild(labelSpan);
 
+  if (isPaused){
+    const pauseIcon = document.createElement('span');
+    pauseIcon.className = 'pause-icon';
+    pauseIcon.textContent = '⏸';
+    chip.appendChild(pauseIcon);
+  }
   if (hasError){
     const dot = document.createElement('span');
     dot.className = 'err-dot';
     chip.appendChild(dot);
   }
-  if (unreadCount > 0){
+  if (state.settings.showUnreadCounts && unreadCount > 0){
     const unread = document.createElement('span');
     unread.className = 'unread';
     unread.textContent = unreadCount > 99 ? '99+' : unreadCount;
@@ -1060,7 +1131,7 @@ function renderFilterBar(){
   bar.appendChild(makeFilterChip('📚 All feeds', null, totalUnread, false));
 
   for (const feed of state.feeds){
-    bar.appendChild(makeFilterChip(feed.title || feed.url, feed.id, feed.unreadCount || 0, !!feed.lastError, feed.url));
+    bar.appendChild(makeFilterChip(feed.title || feed.url, feed.id, feed.unreadCount || 0, !!feed.lastError, feed.url, !!feed.refreshPaused));
   }
 }
 
@@ -1134,7 +1205,28 @@ function renderItems(){
 function renderSettingsUI(){
   document.getElementById('input-poll-interval').value = String(state.settings.pollIntervalMinutes || 0);
   document.getElementById('input-default-proxy').value = state.settings.defaultProxyTemplate || '';
+  updateAutoRefreshUI();
+  updateToastNotificationUI();
   updateNotificationUI();
+  updateShowUnreadCountsUI();
+}
+
+function updateAutoRefreshUI(){
+  const btn = document.getElementById('btn-auto-refresh');
+  const select = document.getElementById('input-poll-interval');
+  const enabled = state.settings.autoRefreshEnabled !== false;
+  btn.textContent = enabled ? 'On' : 'Off';
+  select.disabled = !enabled;
+}
+
+function updateToastNotificationUI(){
+  const btn = document.getElementById('btn-toast-notifications');
+  btn.textContent = state.settings.toastNotificationsEnabled ? 'Disable' : 'Enable';
+}
+
+function updateShowUnreadCountsUI(){
+  const btn = document.getElementById('btn-show-unread-counts');
+  btn.textContent = state.settings.showUnreadCounts ? 'On' : 'Off';
 }
 
 function updateNotificationUI(){
@@ -1151,7 +1243,7 @@ function updateNotificationUI(){
     status.textContent = 'Notifications are blocked at the browser level. Enable them in your browser/site settings.';
     btn.textContent = 'Blocked';
     btn.disabled = true;
-  } else if (state.settings.notificationsEnabled && perm === 'granted'){
+  } else if (state.settings.browserNotificationsEnabled && perm === 'granted'){
     status.textContent = 'Browser notifications are on.';
     btn.textContent = 'Disable';
     btn.disabled = false;
@@ -1162,10 +1254,31 @@ function updateNotificationUI(){
   }
 }
 
+document.getElementById('btn-auto-refresh').addEventListener('click', () => {
+  state.settings.autoRefreshEnabled = !state.settings.autoRefreshEnabled;
+  saveState();
+  restartPolling();
+  updateAutoRefreshUI();
+});
+
+document.getElementById('btn-toast-notifications').addEventListener('click', () => {
+  state.settings.toastNotificationsEnabled = !state.settings.toastNotificationsEnabled;
+  saveState();
+  updateToastNotificationUI();
+});
+
+document.getElementById('btn-show-unread-counts').addEventListener('click', () => {
+  state.settings.showUnreadCounts = !state.settings.showUnreadCounts;
+  saveState();
+  updateShowUnreadCountsUI();
+  renderFeedList();
+  updateGlobalBadge();
+});
+
 document.getElementById('btn-notifications').addEventListener('click', async () => {
   if (!('Notification' in window)) return;
-  if (state.settings.notificationsEnabled){
-    state.settings.notificationsEnabled = false;
+  if (state.settings.browserNotificationsEnabled){
+    state.settings.browserNotificationsEnabled = false;
     saveState();
     updateNotificationUI();
     return;
@@ -1175,7 +1288,7 @@ document.getElementById('btn-notifications').addEventListener('click', async () 
     perm = await Notification.requestPermission();
   }
   if (perm === 'granted'){
-    state.settings.notificationsEnabled = true;
+    state.settings.browserNotificationsEnabled = true;
     toast('Browser notifications enabled.');
   } else {
     toast('Notification permission was not granted.');
@@ -1193,6 +1306,7 @@ document.getElementById('input-poll-interval').addEventListener('change', (e) =>
 document.getElementById('input-default-proxy').addEventListener('change', (e) => {
   state.settings.defaultProxyTemplate = e.target.value.trim() || DEFAULT_PROXY_TEMPLATE;
   saveState();
+  renderFeedList();
 });
 
 /* ---------- Add feed form ---------- */
@@ -1222,6 +1336,7 @@ document.getElementById('form-add-feed').addEventListener('submit', async (e) =>
     knownItemIds: [],
     newItemIds: [],
     unreadCount: 0,
+    refreshPaused: false,
     items: []
   };
   state.feeds.push(feed);
@@ -1273,6 +1388,7 @@ document.getElementById('file-import').addEventListener('change', async (e) => {
     const confirmed = await confirmDialog('Replace current data?', `Importing will replace all ${state.feeds.length} current feed(s) and your settings with the contents of "${file.name}".`);
     if (!confirmed) return;
     const base = defaultState();
+    migrateLegacySettings(parsed.settings);
     parsed.settings = Object.assign(base.settings, parsed.settings);
     for (const f of parsed.feeds){
       f.items = [];
@@ -1280,6 +1396,7 @@ document.getElementById('file-import').addEventListener('change', async (e) => {
       if (!Array.isArray(f.knownItemIds)) f.knownItemIds = [];
       if (!Array.isArray(f.newItemIds)) f.newItemIds = [];
       if (typeof f.unreadCount !== 'number') f.unreadCount = 0;
+      if (typeof f.refreshPaused !== 'boolean') f.refreshPaused = false;
     }
     state = parsed;
     setSelectedFeed(null);
