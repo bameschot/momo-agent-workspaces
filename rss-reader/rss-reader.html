@@ -593,13 +593,14 @@ function setupInstallability(){
   // can't support (nothing for it to re-fetch). Favicon/apple-touch-icon
   // have no such constraint and can stay dynamically generated data: URIs.
   //
-  // Icons are drawn with plain canvas primitives (flat fill + fillText),
-  // not rasterized from an SVG via drawImage: an <svg> with no explicit
-  // width/height attributes (only a viewBox) has an undefined intrinsic
-  // size, which previously made drawImage() paint the icon at the wrong
-  // scale, leaving ~98% of the canvas transparent — a broken icon that
-  // silently failed Android's WebAPK minting even though the manifest and
-  // service worker were otherwise correct.
+  // Icons are drawn with plain canvas primitives (flat fill + fillText)
+  // rather than rasterized from an SVG via drawImage. Switching to this
+  // technique — matching the other three apps in this repo, which were
+  // already confirmed to mint real WebAPKs — is what fixed installation
+  // here too. The exact failure mode of the old SVG-rasterized icon was
+  // never conclusively identified (a direct opacity check on it came back
+  // fine), so treat "match the proven pattern" as the operative fix rather
+  // than a specific diagnosed defect.
   const icon192 = buildIconDataUrl(192);
   document.getElementById('faviconLink').setAttribute('href', icon192);
   document.getElementById('appleTouchIconLink').setAttribute('href', icon192);
