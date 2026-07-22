@@ -3,8 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="A self-contained, offline-capable RSS/Atom feed reader with configurable feeds, alerts, and local storage.">
+<meta name="description" content="A self-contained RSS/Atom feed reader with configurable feeds, alerts, and local storage.">
 <title>RSS Reader</title>
+<meta name="theme-color" content="#7c5cff" id="themeColorMeta">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RSS Reader">
+<link rel="icon" id="faviconLink" href="">
+<link rel="apple-touch-icon" id="appleTouchIconLink" href="">
+<link rel="manifest" href="manifest.json">
 <style>
   :root{
     --bg:#f2e8d5; --surface:#faf3e3; --surface-2:#ecdfc0; --text:#4b3621; --muted:#8a7358;
@@ -571,45 +579,16 @@ const APP_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24
   '</svg>';
 const APP_ICON_URI = 'data:image/svg+xml,' + encodeURIComponent(APP_ICON_SVG);
 
-function injectManifest(){
-  const startUrl = location.href.split('#')[0];
-  const scopeUrl = new URL('.', location.href).href;
-  const manifest = {
-    name: 'RSS Reader',
-    short_name: 'RSS Reader',
-    description: 'Configurable RSS/Atom feed reader with new-item alerts, import/export, and local storage.',
-    start_url: startUrl,
-    scope: scopeUrl,
-    display: 'standalone',
-    background_color: '#0d0f14',
-    theme_color: '#7c5cff',
-    icons: [{ src: APP_ICON_URI, sizes: 'any', type: 'image/svg+xml', purpose: 'any' }]
-  };
-  const blob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' });
-  const manifestLink = document.createElement('link');
-  manifestLink.rel = 'manifest';
-  manifestLink.href = URL.createObjectURL(blob);
-  document.head.appendChild(manifestLink);
-
-  const appleIcon = document.createElement('link');
-  appleIcon.rel = 'apple-touch-icon';
-  appleIcon.href = APP_ICON_URI;
-  document.head.appendChild(appleIcon);
-
-  const favicon = document.createElement('link');
-  favicon.rel = 'icon';
-  favicon.href = APP_ICON_URI;
-  document.head.appendChild(favicon);
-
-  const meta = (name, content) => {
-    const m = document.createElement('meta');
-    m.name = name;
-    m.content = content;
-    document.head.appendChild(m);
-  };
-  meta('theme-color', '#7c5cff');
-  meta('apple-mobile-web-app-capable', 'yes');
-  meta('apple-mobile-web-app-title', 'RSS Reader');
+function setupInstallability(){
+  // The manifest itself is a real static file (manifest.json, linked in
+  // <head>), not built here. Android's WebAPK minting is a server-side step,
+  // separate from the local, always-succeeding beforeinstallprompt
+  // eligibility check — that server needs to independently re-fetch the
+  // manifest by URL later to check for updates, which a data: URI manifest
+  // can't support (nothing for it to re-fetch). Favicon/apple-touch-icon
+  // have no such constraint and can stay dynamically generated data: URIs.
+  document.getElementById('faviconLink').setAttribute('href', APP_ICON_URI);
+  document.getElementById('appleTouchIconLink').setAttribute('href', APP_ICON_URI);
 }
 
 let deferredInstallPrompt = null;
@@ -1879,7 +1858,7 @@ document.getElementById('btn-clear-all-new').addEventListener('click', () => {
 applyTheme();
 applySidebar();
 applyMenuNav();
-injectManifest();
+setupInstallability();
 renderSettingsUI();
 renderFeedList();
 renderItems();
