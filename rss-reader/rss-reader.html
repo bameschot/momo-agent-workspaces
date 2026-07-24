@@ -44,6 +44,8 @@
 
   /* Top bar */
   header.topbar{
+    position:relative; z-index:36; /* above the drawer backdrops (35) so its own toggle
+      buttons stay reachable and one drawer can be switched to the other directly */
     display:flex; align-items:center; gap:.5rem; padding:.6rem .75rem;
     background:var(--surface); border-bottom:1px solid var(--border); flex-wrap:nowrap;
   }
@@ -89,6 +91,14 @@
     width:100%; height:100%; overflow-y:auto;
     display:flex; flex-direction:column;
   }
+
+  aside.filter-sidebar{
+    position:fixed; top:0; right:0; bottom:0; width:min(20rem, 85vw); z-index:40;
+    background:var(--surface); box-shadow:-2px 0 16px rgba(0,0,0,.3);
+    transform:translateX(100%); transition:transform .2s ease;
+    display:flex; flex-direction:column;
+  }
+  aside.filter-sidebar.open{ transform:translateX(0); }
   .drawer-header{
     display:flex; align-items:center; justify-content:space-between;
     padding:.75rem 1rem; border-bottom:1px solid var(--border); flex:none;
@@ -149,46 +159,25 @@
   .settings-row.inline{ flex-direction:row; align-items:center; justify-content:space-between; }
   .hint{ font-size:.72rem; color:var(--muted); margin-top:.15rem; }
 
-  /* Filter bar */
-  .filter-bar-toggle{ display:flex; flex:none; margin-top:.2rem; }
-  .filter-bar-toggle button{
-    display:inline-flex; align-items:center; gap:.35rem; background:none; border:none;
-    color:var(--muted); font-size:.78rem; cursor:pointer; padding:.25rem .4rem; border-radius:.4rem;
-  }
-  .filter-bar-toggle button:hover{ background:var(--surface-2); color:var(--text); }
-  .filter-bar-toggle .chevron{ display:inline-block; transition:transform .15s ease; }
-  .filter-bar-toggle button.collapsed .chevron{ transform:rotate(-90deg); }
-  .filter-bar{
-    display:flex; flex-wrap:wrap; gap:.5rem; max-height:8.5rem; overflow-y:auto; overflow-x:hidden;
-    padding:.2rem .1rem .85rem; flex:none;
-  }
-  .filter-bar.collapsed{ display:none; }
-  .filter-chip{
-    display:inline-flex; align-items:center; gap:.4rem; flex:none; white-space:nowrap;
-    padding:.4rem .75rem; border-radius:999px; border:1px solid var(--border);
-    background:var(--surface); color:var(--text); cursor:pointer; font-size:.82rem;
-    user-select:none; -webkit-touch-callout:none;
-  }
-  .filter-chip:hover{ border-color:var(--accent); }
-  .filter-chip.active{ background:var(--accent); border-color:var(--accent); color:#fff; }
-  .filter-chip .label{ max-width:10rem; overflow:hidden; text-overflow:ellipsis; }
-  .filter-chip .unread{
-    background:rgba(127,127,127,.25); border-radius:999px; font-size:.68rem; font-weight:700; padding:.05rem .4rem;
-  }
-  .filter-chip.active .unread{ background:rgba(255,255,255,.3); }
-  .filter-chip.multi-selected{
-    background:var(--surface-2); border-color:var(--accent-2); border-width:2px;
-    color:var(--accent-2); font-weight:600;
-  }
-  .filter-chip.multi-selected .unread{ background:rgba(127,127,127,.35); }
-  .filter-chip.just-added{ animation:chip-just-added .3s ease; }
+  /* Filter sidebar rows (selectable feed/bundle list, shared .feed-list look) */
   @keyframes chip-just-added{
     0%{ transform:scale(1); filter:brightness(1); }
     35%{ transform:scale(1.12); filter:brightness(1.35); }
     100%{ transform:scale(1); filter:brightness(1); }
   }
-  .filter-chip .err-dot{ width:.45rem; height:.45rem; border-radius:50%; background:var(--danger); flex:none; }
-  .filter-chip .pause-icon{ font-size:.7rem; opacity:.7; }
+  ul.feed-list li.filter-row{ cursor:pointer; user-select:none; -webkit-touch-callout:none; }
+  ul.feed-list li.filter-row:hover{ background:var(--surface-2); }
+  ul.feed-list li.filter-row.active{ background:var(--accent); color:#fff; }
+  ul.feed-list li.filter-row.active .unread{ background:rgba(255,255,255,.3); }
+  ul.feed-list li.filter-row.multi-selected{
+    background:var(--surface-2); box-shadow:inset 0 0 0 2px var(--accent-2);
+    color:var(--accent-2); font-weight:600;
+  }
+  ul.feed-list li.filter-row.just-added{ animation:chip-just-added .3s ease; }
+  .feed-row .pause-icon{ font-size:.7rem; opacity:.7; }
+  .filter-sidebar-actions{ padding:.75rem 1rem 0; flex:none; }
+  .filter-sidebar-actions .btn{ width:100%; justify-content:center; }
+  .sidebar-section.filter-sidebar-body{ display:block; }
   .color-dot{ width:.55rem; height:.55rem; border-radius:50%; flex:none; display:inline-block; }
   .bundle-members{ font-size:.72rem; color:var(--muted); margin:.2rem 0 0; }
 
@@ -269,6 +258,20 @@
   @media (max-width: 700px){
     dialog#dialog-article{ width:100vw; max-width:100vw; height:100dvh; max-height:100dvh; border-radius:0; }
   }
+
+  /* Wide screens: the feed/bundle panel becomes a persistent right-hand
+     column instead of a slide-in drawer, so the mobile-only toggle and
+     backdrop are hidden and the layout switches to a row. */
+  @media (min-width: 900px){
+    .layout{ flex-direction:row; }
+    aside.filter-sidebar{
+      position:static; width:18rem; flex:none; min-height:0;
+      transform:none; box-shadow:none; border-left:1px solid var(--border);
+      transition:none; z-index:auto;
+    }
+    #filter-backdrop{ display:none; }
+    #btn-toggle-filter-sidebar{ display:none; }
+  }
 </style>
 </head>
 <body>
@@ -284,6 +287,7 @@
   <button class="btn icon" id="btn-import" title="Import settings &amp; feeds" aria-label="Import settings and feeds">📥</button>
   <input type="file" id="file-import" accept="application/json,.json">
   <button class="btn icon" id="btn-theme" title="Toggle theme" aria-label="Toggle theme">🌓</button>
+  <button class="btn icon" id="btn-toggle-filter-sidebar" title="Feeds" aria-label="Toggle feeds panel" aria-expanded="false">📚</button>
 </header>
 
 <div class="layout">
@@ -375,14 +379,6 @@
   </aside>
 
   <main class="content">
-    <div class="filter-bar-toggle">
-      <button type="button" id="btn-toggle-filter-bar" aria-expanded="true">
-        <span class="chevron">▾</span> <span id="filter-bar-toggle-label">Feeds</span>
-      </button>
-      <div class="spacer"></div>
-      <button type="button" class="btn" id="btn-bundle-feeds" title="Bundle the selected feeds together" disabled>🔗 Bundle</button>
-    </div>
-    <div class="filter-bar" id="filter-bar"></div>
     <div class="content-header">
       <h2 id="content-title">All feeds</h2>
     </div>
@@ -390,6 +386,28 @@
       <div id="item-list"></div>
     </div>
   </main>
+
+  <div class="menu-backdrop" id="filter-backdrop"></div>
+  <aside class="filter-sidebar" id="filter-sidebar">
+   <div class="sidebar-inner">
+    <div class="drawer-header">
+      <strong>Feeds</strong>
+      <button class="btn icon" id="btn-close-filter-sidebar" title="Close" aria-label="Close feeds panel">✕</button>
+    </div>
+    <div class="filter-sidebar-actions">
+      <button type="button" class="btn" id="btn-bundle-feeds" title="Bundle the selected feeds together" disabled>🔗 Bundle</button>
+    </div>
+    <div class="sidebar-section filter-sidebar-body">
+      <ul class="feed-list" id="filter-all-list"></ul>
+      <div id="filter-bundle-group" hidden>
+        <h2 style="margin-top:1rem;">Bundles</h2>
+        <ul class="feed-list" id="filter-bundle-list"></ul>
+      </div>
+      <h2 style="margin-top:1rem;">Feeds</h2>
+      <ul class="feed-list" id="filter-feed-list"></ul>
+    </div>
+   </div>
+  </aside>
 </div>
 
 <div id="toast-wrap"></div>
@@ -461,7 +479,6 @@ function defaultState(){
       toastNotificationsEnabled: true,
       browserNotificationsEnabled: false,
       showUnreadCounts: true,
-      filterBarCollapsed: false,
       selectedFeedIds: [],
       searchKeywords: ''
     },
@@ -616,11 +633,35 @@ function applySidebar(){
 function setMenuOpen(open){
   menuOpen = open;
   applySidebar();
+  if (open) setFilterDrawerOpen(false);
 }
 
 document.getElementById('btn-toggle-sidebar').addEventListener('click', () => setMenuOpen(!menuOpen));
 document.getElementById('btn-close-sidebar').addEventListener('click', () => setMenuOpen(false));
 document.getElementById('menu-backdrop').addEventListener('click', () => setMenuOpen(false));
+
+/* ---------- Filter sidebar (persistent column on wide screens, overlay drawer on mobile) ---------- */
+
+let filterDrawerOpen = false;
+
+function applyFilterSidebar(){
+  const aside = document.getElementById('filter-sidebar');
+  const backdrop = document.getElementById('filter-backdrop');
+  const toggleBtn = document.getElementById('btn-toggle-filter-sidebar');
+  aside.classList.toggle('open', filterDrawerOpen);
+  backdrop.classList.toggle('open', filterDrawerOpen);
+  toggleBtn.setAttribute('aria-expanded', String(filterDrawerOpen));
+}
+
+function setFilterDrawerOpen(open){
+  filterDrawerOpen = open;
+  applyFilterSidebar();
+  if (open) setMenuOpen(false);
+}
+
+document.getElementById('btn-toggle-filter-sidebar').addEventListener('click', () => setFilterDrawerOpen(!filterDrawerOpen));
+document.getElementById('btn-close-filter-sidebar').addEventListener('click', () => setFilterDrawerOpen(false));
+document.getElementById('filter-backdrop').addEventListener('click', () => setFilterDrawerOpen(false));
 
 /* ---------- Menu nav (accordion) ---------- */
 
@@ -1456,9 +1497,8 @@ function buildProxyEditPanel(feed){
   return panel;
 }
 
-function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr, isPaused){
-  const chip = document.createElement('button');
-  chip.type = 'button';
+function makeFilterRow(label, feedId, unreadCount, hasError, titleAttr, isPaused){
+  const li = document.createElement('li');
 
   let stateClass = '';
   if (selectedFeedIds.size === 0){
@@ -1473,31 +1513,36 @@ function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr, isPause
     justAddedClass = ' just-added';
     justAddedFeedId = null; // one-shot: consume so a later render doesn't replay it
   }
-  chip.className = 'filter-chip' + stateClass + justAddedClass;
-  if (titleAttr) chip.title = titleAttr;
+  li.className = 'filter-row' + stateClass + justAddedClass;
+  if (titleAttr) li.title = titleAttr;
+
+  const row = document.createElement('div');
+  row.className = 'feed-row';
 
   const labelSpan = document.createElement('span');
-  labelSpan.className = 'label';
+  labelSpan.className = 'name';
   labelSpan.textContent = label;
-  chip.appendChild(labelSpan);
+  row.appendChild(labelSpan);
 
   if (isPaused){
     const pauseIcon = document.createElement('span');
     pauseIcon.className = 'pause-icon';
     pauseIcon.textContent = '⏸';
-    chip.appendChild(pauseIcon);
+    row.appendChild(pauseIcon);
   }
   if (hasError){
-    const dot = document.createElement('span');
-    dot.className = 'err-dot';
-    chip.appendChild(dot);
+    const err = document.createElement('span');
+    err.className = 'err';
+    err.textContent = '⚠';
+    row.appendChild(err);
   }
   if (state.settings.showUnreadCounts && unreadCount > 0){
     const unread = document.createElement('span');
     unread.className = 'unread';
     unread.textContent = unreadCount > 99 ? '99+' : unreadCount;
-    chip.appendChild(unread);
+    row.appendChild(unread);
   }
+  li.appendChild(row);
 
   function clearUnreadFor(id){
     if (id === null) return;
@@ -1523,14 +1568,14 @@ function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr, isPause
     commit();
   }
 
-  wireChipGestures(chip, {
-    onTap: () => { selectOnlyFeed(feedId); clearUnreadFor(feedId); commit(); },
+  wireChipGestures(li, {
+    onTap: () => { selectOnlyFeed(feedId); clearUnreadFor(feedId); commit(); setFilterDrawerOpen(false); },
     onToggle: applyToggleGesture
   });
-  return chip;
+  return li;
 }
 
-// Shared tap / Ctrl-Cmd-click / long-press (touch) gesture wiring for filter-bar chips.
+// Shared tap / Ctrl-Cmd-click / long-press (touch) gesture wiring for filter sidebar rows.
 function wireChipGestures(chip, { onTap, onToggle }){
   const LONG_PRESS_MS = 500;
   const MOVE_THRESHOLD_PX = 10;
@@ -1586,27 +1631,29 @@ function wireChipGestures(chip, { onTap, onToggle }){
   });
 }
 
-function makeBundleChip(bundle){
-  const chip = document.createElement('button');
-  chip.type = 'button';
+function makeBundleRow(bundle){
+  const li = document.createElement('li');
 
   const active = getActiveBundle()?.id === bundle.id;
-  chip.className = 'filter-chip bundle-chip' + (active ? ' active' : '');
+  li.className = 'filter-row' + (active ? ' active' : '');
   const memberTitles = bundle.feedIds
     .map(id => state.feeds.find(f => f.id === id))
     .filter(Boolean)
     .map(f => f.title || f.url);
-  chip.title = `Bundle: ${memberTitles.join(', ')}`;
+  li.title = `Bundle: ${memberTitles.join(', ')}`;
+
+  const row = document.createElement('div');
+  row.className = 'feed-row';
 
   const dot = document.createElement('span');
   dot.className = 'color-dot';
   dot.style.backgroundColor = bundle.color;
-  chip.appendChild(dot);
+  row.appendChild(dot);
 
   const labelSpan = document.createElement('span');
-  labelSpan.className = 'label';
+  labelSpan.className = 'name';
   labelSpan.textContent = bundle.name;
-  chip.appendChild(labelSpan);
+  row.appendChild(labelSpan);
 
   const unreadCount = bundle.feedIds.reduce((sum, id) => {
     const feed = state.feeds.find(f => f.id === id);
@@ -1616,8 +1663,9 @@ function makeBundleChip(bundle){
     const unread = document.createElement('span');
     unread.className = 'unread';
     unread.textContent = unreadCount > 99 ? '99+' : unreadCount;
-    chip.appendChild(unread);
+    row.appendChild(unread);
   }
+  li.appendChild(row);
 
   function commit(){
     saveState();
@@ -1626,52 +1674,39 @@ function makeBundleChip(bundle){
     updateGlobalBadge();
   }
 
-  wireChipGestures(chip, {
-    onTap: () => { selectOnlyFeeds(bundle.feedIds); commit(); },
+  wireChipGestures(li, {
+    onTap: () => { selectOnlyFeeds(bundle.feedIds); commit(); setFilterDrawerOpen(false); },
     onToggle: () => { toggleFeedGroupInSelection(bundle.feedIds); commit(); }
   });
-  return chip;
+  return li;
 }
 
-function renderFilterBar(){
-  const bar = document.getElementById('filter-bar');
-  bar.innerHTML = '';
+function renderFilterSidebar(){
+  const allList = document.getElementById('filter-all-list');
+  const bundleGroup = document.getElementById('filter-bundle-group');
+  const bundleList = document.getElementById('filter-bundle-list');
+  const feedList = document.getElementById('filter-feed-list');
+  allList.innerHTML = '';
+  bundleList.innerHTML = '';
+  feedList.innerHTML = '';
 
   const totalUnread = state.feeds.reduce((sum, f) => sum + (f.unreadCount || 0), 0);
-  bar.appendChild(makeFilterChip('📚 All feeds', null, totalUnread, false));
+  allList.appendChild(makeFilterRow('📚 All feeds', null, totalUnread, false));
 
+  bundleGroup.hidden = state.bundles.length === 0;
   for (const bundle of state.bundles){
-    bar.appendChild(makeBundleChip(bundle));
+    bundleList.appendChild(makeBundleRow(bundle));
   }
 
   for (const feed of state.feeds){
-    bar.appendChild(makeFilterChip(feed.title || feed.url, feed.id, feed.unreadCount || 0, !!feed.lastError, feed.url, !!feed.refreshPaused));
+    feedList.appendChild(makeFilterRow(feed.title || feed.url, feed.id, feed.unreadCount || 0, !!feed.lastError, feed.url, !!feed.refreshPaused));
   }
-  applyFilterBarCollapse();
   updateBundleButtonState();
 }
 
 function updateBundleButtonState(){
   document.getElementById('btn-bundle-feeds').disabled = selectedFeedIds.size < 2;
 }
-
-function applyFilterBarCollapse(){
-  const bar = document.getElementById('filter-bar');
-  const btn = document.getElementById('btn-toggle-filter-bar');
-  const label = document.getElementById('filter-bar-toggle-label');
-  const collapsed = !!state.settings.filterBarCollapsed;
-  bar.classList.toggle('collapsed', collapsed);
-  btn.classList.toggle('collapsed', collapsed);
-  btn.setAttribute('aria-expanded', String(!collapsed));
-  btn.title = collapsed ? 'Show feed filters' : 'Hide feed filters';
-  label.textContent = collapsed ? `Feeds (${state.feeds.length})` : 'Feeds';
-}
-
-document.getElementById('btn-toggle-filter-bar').addEventListener('click', () => {
-  state.settings.filterBarCollapsed = !state.settings.filterBarCollapsed;
-  saveState();
-  applyFilterBarCollapse();
-});
 
 document.getElementById('btn-bundle-feeds').addEventListener('click', async () => {
   if (selectedFeedIds.size < 2) return;
@@ -1692,7 +1727,7 @@ document.getElementById('btn-bundle-feeds').addEventListener('click', async () =
 function renderFeedList(){
   renderManageList();
   renderBundleManageList();
-  renderFilterBar();
+  renderFilterSidebar();
 }
 
 function renderBundleManageList(){
@@ -2160,6 +2195,7 @@ document.getElementById('btn-clear-all-new').addEventListener('click', () => {
 
 applyTheme();
 applySidebar();
+applyFilterSidebar();
 applyMenuNav();
 setupInstallability();
 renderSettingsUI();
