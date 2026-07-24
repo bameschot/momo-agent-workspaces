@@ -124,11 +124,15 @@
 
   ul.feed-list{ list-style:none; margin:0; padding:0; }
   ul.feed-list li{
-    padding:.45rem .5rem; border-radius:.5rem;
+    padding:.55rem .5rem;
     color:var(--text); font-size:.85rem;
   }
+  ul.feed-list li:not(:last-child){ border-bottom:1px solid var(--border); }
   ul.feed-list li .feed-row{
     display:flex; align-items:center; gap:.4rem;
+  }
+  ul.feed-list li .feed-actions{
+    display:flex; align-items:center; gap:.3rem; flex-wrap:wrap; margin-top:.4rem;
   }
   ul.feed-list li .proxy-edit-panel{
     margin-top:.5rem; padding-top:.5rem; border-top:1px solid var(--border);
@@ -1326,6 +1330,11 @@ function renderManageList(){
       unread.textContent = feed.unreadCount > 99 ? '99+' : feed.unreadCount;
       feedRow.appendChild(unread);
     }
+    li.appendChild(feedRow);
+
+    const actions = document.createElement('div');
+    actions.className = 'feed-actions';
+
     const pause = document.createElement('button');
     pause.className = 'btn icon';
     pause.textContent = feed.refreshPaused ? '▶' : '⏸';
@@ -1337,7 +1346,7 @@ function renderManageList(){
       saveState();
       renderFeedList();
     });
-    feedRow.appendChild(pause);
+    actions.appendChild(pause);
     const imgToggle = document.createElement('button');
     imgToggle.className = 'btn icon' + (feed.showImages === false ? ' muted' : '');
     imgToggle.textContent = '🖼';
@@ -1351,7 +1360,7 @@ function renderManageList(){
       saveState();
       renderFeedList();
     });
-    feedRow.appendChild(imgToggle);
+    actions.appendChild(imgToggle);
     const rename = document.createElement('button');
     rename.className = 'btn icon';
     rename.textContent = '✏️';
@@ -1366,7 +1375,7 @@ function renderManageList(){
       renderFeedList();
       renderItems();
     });
-    feedRow.appendChild(rename);
+    actions.appendChild(rename);
     const gear = document.createElement('button');
     gear.className = 'btn icon';
     gear.textContent = '⚙';
@@ -1378,7 +1387,7 @@ function renderManageList(){
       else expandedProxyFeedIds.add(feed.id);
       renderFeedList();
     });
-    feedRow.appendChild(gear);
+    actions.appendChild(gear);
     const del = document.createElement('button');
     del.className = 'btn icon';
     del.textContent = '✕';
@@ -1401,8 +1410,9 @@ function renderManageList(){
       renderItems();
       updateGlobalBadge();
     });
-    feedRow.appendChild(del);
-    li.appendChild(feedRow);
+    actions.appendChild(del);
+    li.appendChild(actions);
+
     if (expandedProxyFeedIds.has(feed.id)){
       li.appendChild(buildProxyEditPanel(feed));
     }
@@ -1765,6 +1775,15 @@ function renderBundleManageList(){
       unread.textContent = totalUnread > 99 ? '99+' : totalUnread;
       row.appendChild(unread);
     }
+    li.appendChild(row);
+
+    const members = document.createElement('div');
+    members.className = 'bundle-members';
+    members.textContent = memberFeeds.map(f => f.title || f.url).join(', ');
+    li.appendChild(members);
+
+    const actions = document.createElement('div');
+    actions.className = 'feed-actions';
 
     const rename = document.createElement('button');
     rename.className = 'btn icon';
@@ -1780,7 +1799,7 @@ function renderBundleManageList(){
       renderFeedList();
       renderItems();
     });
-    row.appendChild(rename);
+    actions.appendChild(rename);
 
     const del = document.createElement('button');
     del.className = 'btn icon';
@@ -1799,13 +1818,9 @@ function renderBundleManageList(){
       renderItems();
       updateGlobalBadge();
     });
-    row.appendChild(del);
+    actions.appendChild(del);
 
-    li.appendChild(row);
-    const members = document.createElement('div');
-    members.className = 'bundle-members';
-    members.textContent = memberFeeds.map(f => f.title || f.url).join(', ');
-    li.appendChild(members);
+    li.appendChild(actions);
     list.appendChild(li);
   }
 }
