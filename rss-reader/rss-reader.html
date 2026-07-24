@@ -372,6 +372,11 @@
         <input type="text" id="input-default-proxy" placeholder="https://example.com/proxy?url={url}">
         <span class="hint">"{url}" is replaced with the encoded feed URL. Used by feeds with the proxy checkbox on and no custom proxy of their own.</span>
       </div>
+      <div class="settings-row">
+        <label for="input-default-proxy-key">Proxy key / token</label>
+        <input type="text" id="input-default-proxy-key" placeholder="Paste your proxy's key/token here">
+        <span class="hint">Optional. Substituted into any proxy template's "{key}" placeholder, the same way "{url}" is replaced with the feed URL. Stored only in this browser's local storage, not in the app's source code — but it is included if you use Export settings, so only share exported files with people you trust with this key.</span>
+      </div>
       <div class="settings-row inline">
         <label for="btn-toast-notifications" style="font-size:.82rem;color:var(--text);">Toast notifications</label>
         <button class="btn" id="btn-toast-notifications">Enabled</button>
@@ -478,7 +483,7 @@
 'use strict';
 
 const STORAGE_KEY = 'rss-reader-state';
-const DEFAULT_PROXY_TEMPLATE = 'https://momo-agent-workspaces.ameschot-b.workers.dev/?url={url}&key=33fVjNzb8hRdTdsWz1Oi-hkTLGYMq5pj';
+const DEFAULT_PROXY_TEMPLATE = 'https://momo-agent-workspaces.ameschot-b.workers.dev/?url={url}&key={key}';
 const CORS_PROXY_PRESETS = [
   { label: 'AllOrigins', template: 'https://api.allorigins.win/raw?url={url}' },
   { label: 'corsproxy.io', template: 'https://corsproxy.io/?url={url}' },
@@ -498,6 +503,7 @@ function defaultState(){
       theme: 'system',
       pollIntervalMinutes: 15,
       defaultProxyTemplate: DEFAULT_PROXY_TEMPLATE,
+      defaultProxyKey: '',
       autoRefreshEnabled: true,
       toastNotificationsEnabled: true,
       browserNotificationsEnabled: false,
@@ -1163,7 +1169,10 @@ function buildFetchCandidate(feed){
   if (!template){
     return { url: bustedUrl, viaProxy: false };
   }
-  return { url: template.replace('{url}', encodeURIComponent(bustedUrl)), viaProxy: true };
+  const url = template
+    .replace('{url}', encodeURIComponent(bustedUrl))
+    .replace('{key}', encodeURIComponent(state.settings.defaultProxyKey || ''));
+  return { url, viaProxy: true };
 }
 
 async function fetchWithTimeout(url){
@@ -1498,7 +1507,7 @@ function buildProxyEditPanel(feed){
 
   const hint = document.createElement('span');
   hint.className = 'hint';
-  hint.textContent = '"{url}" is replaced with the encoded feed URL. "Use global default" inherits the app-wide proxy from Settings.';
+  hint.textContent = '"{url}" is replaced with the encoded feed URL, and "{key}" with the proxy key/token set in Settings. "Use global default" inherits the app-wide proxy from Settings.';
   row.appendChild(hint);
 
   panel.appendChild(row);
@@ -2000,6 +2009,7 @@ function renderItems(){
 function renderSettingsUI(){
   document.getElementById('input-poll-interval').value = String(state.settings.pollIntervalMinutes || 0);
   document.getElementById('input-default-proxy').value = state.settings.defaultProxyTemplate || '';
+  document.getElementById('input-default-proxy-key').value = state.settings.defaultProxyKey || '';
   document.getElementById('input-search-keywords').value = state.settings.searchKeywords || '';
   syncDefaultProxyPresetSelect();
   updateAutoRefreshUI();
@@ -2125,6 +2135,11 @@ document.getElementById('input-default-proxy').addEventListener('change', (e) =>
   saveState();
   syncDefaultProxyPresetSelect();
   renderFeedList();
+});
+
+document.getElementById('input-default-proxy-key').addEventListener('change', (e) => {
+  state.settings.defaultProxyKey = e.target.value.trim();
+  saveState();
 });
 
 document.getElementById('input-default-proxy-preset').addEventListener('change', (e) => {
