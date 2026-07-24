@@ -207,10 +207,15 @@
   }
 
   article.item{
+    display:flex; align-items:flex-start; gap:.8rem;
     background:var(--surface); border:1px solid var(--border); border-radius:.7rem; padding:.9rem 1rem; margin-bottom:.7rem;
     box-shadow:var(--shadow); cursor:pointer;
   }
   article.item.unread{ border-left:3px solid var(--accent); }
+  article.item .item-thumb{
+    width:4.5rem; height:4.5rem; flex:none; object-fit:cover; border-radius:.5rem; background:var(--surface-2);
+  }
+  article.item .item-body{ flex:1; min-width:0; }
   .new-pill{
     display:inline-flex; align-items:center; background:var(--accent); color:#fff;
     font-size:.62rem; font-weight:700; letter-spacing:.03em; text-transform:uppercase;
@@ -395,6 +400,10 @@
         <label for="btn-group-by-hour" style="font-size:.82rem;color:var(--text);">Group articles by hour</label>
         <button class="btn" id="btn-group-by-hour">Off</button>
       </div>
+      <div class="settings-row inline">
+        <label for="btn-show-images-list" style="font-size:.82rem;color:var(--text);">Show images in main feed</label>
+        <button class="btn" id="btn-show-images-list">On</button>
+      </div>
     </div>
 
     <div class="sidebar-section" data-section="search">
@@ -511,6 +520,7 @@ function defaultState(){
       browserNotificationsEnabled: false,
       showUnreadCounts: true,
       groupArticlesByHour: false,
+      showImagesInList: true,
       selectedFeedIds: [],
       searchKeywords: ''
     },
@@ -1995,7 +2005,7 @@ function renderItems(){
   for (const feed of feeds){
     const newIds = feed.newItemIds || [];
     for (const item of (feed.items || [])){
-      allItems.push({ ...item, feedTitle: feed.title || feed.url, feedId: feed.id, isNew: newIds.includes(item.id) });
+      allItems.push({ ...item, feedTitle: feed.title || feed.url, feedId: feed.id, isNew: newIds.includes(item.id), feedShowImages: feed.showImages !== false });
     }
   }
 
@@ -2051,10 +2061,15 @@ function renderItems(){
     el.dataset.itemId = item.id;
     const dateStr = hasDate ? d.toLocaleString(undefined, { hour12: false }) : '';
     const newPill = item.isNew ? '<span class="new-pill">New</span>' : '';
+    const showThumb = state.settings.showImagesInList !== false && item.feedShowImages && item.imageUrl;
+    const thumbHtml = showThumb ? `<img class="item-thumb" src="${escapeHtml(item.imageUrl)}" alt="" loading="lazy">` : '';
     el.innerHTML = `
-      <h3>${escapeHtml(item.title)}${newPill}</h3>
-      <div class="meta">${escapeHtml(item.feedTitle)}${dateStr ? ' · ' + escapeHtml(dateStr) : ''}</div>
-      <div class="desc">${escapeHtml(item.desc || '').slice(0, 250)}</div>
+      ${thumbHtml}
+      <div class="item-body">
+        <h3>${escapeHtml(item.title)}${newPill}</h3>
+        <div class="meta">${escapeHtml(item.feedTitle)}${dateStr ? ' · ' + escapeHtml(dateStr) : ''}</div>
+        <div class="desc">${escapeHtml(item.desc || '').slice(0, 250)}</div>
+      </div>
     `;
     listEl.appendChild(el);
   }
@@ -2073,6 +2088,7 @@ function renderSettingsUI(){
   updateNotificationUI();
   updateShowUnreadCountsUI();
   updateGroupByHourUI();
+  updateShowImagesInListUI();
 }
 
 function syncDefaultProxyPresetSelect(){
@@ -2103,6 +2119,11 @@ function updateShowUnreadCountsUI(){
 function updateGroupByHourUI(){
   const btn = document.getElementById('btn-group-by-hour');
   btn.textContent = state.settings.groupArticlesByHour ? 'On' : 'Off';
+}
+
+function updateShowImagesInListUI(){
+  const btn = document.getElementById('btn-show-images-list');
+  btn.textContent = state.settings.showImagesInList !== false ? 'On' : 'Off';
 }
 
 function updateNotificationUI(){
@@ -2155,6 +2176,13 @@ document.getElementById('btn-group-by-hour').addEventListener('click', () => {
   state.settings.groupArticlesByHour = !state.settings.groupArticlesByHour;
   saveState();
   updateGroupByHourUI();
+  renderItems();
+});
+
+document.getElementById('btn-show-images-list').addEventListener('click', () => {
+  state.settings.showImagesInList = state.settings.showImagesInList === false;
+  saveState();
+  updateShowImagesInListUI();
   renderItems();
 });
 
