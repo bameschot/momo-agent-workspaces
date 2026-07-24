@@ -1,0 +1,14 @@
+{
+  "name": "cors-proxy",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Minimal personal CORS proxy, deployed as a Cloudflare Worker.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "secret:set-key": "wrangler secret put PROXY_KEY"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}

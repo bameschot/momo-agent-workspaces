@@ -1,0 +1,11 @@
+name = "personal-cors-proxy"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# By default this deploys to a free "*.workers.dev" subdomain — no route or
+# custom domain configuration needed. Uncomment and edit the block below only
+# if you want to serve it from your own domain instead:
+#
+# [[routes]]
+# pattern = "proxy.yourdomain.com/*"
+# zone_name = "yourdomain.com"
