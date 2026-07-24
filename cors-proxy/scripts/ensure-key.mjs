@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 /**
- * Runs automatically after `npm run deploy` (via npm's `postdeploy` lifecycle
- * hook — no extra step needed). Makes sure the worker has a PROXY_KEY secret
- * set by default, generating one on first deploy so the worker isn't left
- * open unless you deliberately remove the key afterwards.
+ * Runs automatically as wrangler's `[build] command` (see ../wrangler.toml) —
+ * before every `wrangler dev` and `wrangler deploy`, regardless of whether
+ * that was invoked via an npm script, the raw CLI, or Cloudflare Workers
+ * Builds' own CI (which runs `npx wrangler deploy` directly, bypassing npm
+ * lifecycle hooks entirely). Makes sure the worker has a PROXY_KEY secret set
+ * by default, generating one on first deploy so the worker isn't left open
+ * unless you deliberately remove the key afterwards.
  *
  * Idempotent: if PROXY_KEY is already set, this does nothing, so redeploys
  * never silently rotate (and break) a key you've already shared with a
  * client app.
+ *
+ * Skips entirely for `wrangler dev` (wrangler sets WRANGLER_COMMAND so this
+ * script can tell) — no point paying for a `wrangler secret list` round trip
+ * on every local dev start.
  *
  * To opt out of a key entirely: `npx wrangler secret delete PROXY_KEY`.
  * To set your own chosen value instead of a generated one at any time:
@@ -16,6 +23,10 @@
 
 import { execSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+
+if (process.env.WRANGLER_COMMAND && process.env.WRANGLER_COMMAND !== 'deploy'){
+  process.exit(0);
+}
 
 function listSecretNames(){
   try{
