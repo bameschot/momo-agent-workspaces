@@ -1416,16 +1416,23 @@ function renderManageList(){
       ev.stopPropagation();
       const input = await promptDialog('Change feed URL', '', feed.url);
       if (input === null) return;
-      const newUrl = safeUrl(input.trim());
-      if (!newUrl){
+      // Compare/store the raw trimmed string, not safeUrl()'s normalized form
+      // (e.g. it adds a trailing slash to bare domains) — feed.url elsewhere
+      // is always stored exactly as typed via Add Feed, and comparing a
+      // normalized value against that raw one would treat an unmodified
+      // resubmit as a "change", or falsely collide with another feed whose
+      // raw URL happens to need the same normalization. safeUrl() is only
+      // used here to validate that the input is a legitimate http(s) URL.
+      const newUrl = input.trim();
+      if (!safeUrl(newUrl)){
         toast('Enter a valid http(s) URL.');
         return;
       }
-      if (newUrl !== feed.url && state.feeds.some(f => f.id !== feed.id && f.url === newUrl)){
+      if (newUrl === feed.url) return;
+      if (state.feeds.some(f => f.id !== feed.id && f.url === newUrl)){
         toast('That feed is already in your list.');
         return;
       }
-      if (newUrl === feed.url) return;
       feed.url = newUrl;
       feed.lastFetchedAt = null;
       feed.lastError = null;
