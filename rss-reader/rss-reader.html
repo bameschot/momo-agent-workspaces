@@ -1407,6 +1407,44 @@ function renderManageList(){
       renderItems();
     });
     actions.appendChild(rename);
+    const editUrl = document.createElement('button');
+    editUrl.className = 'btn icon';
+    editUrl.textContent = '🔗';
+    editUrl.title = "Change this feed's URL";
+    editUrl.style.padding = '.15rem .35rem';
+    editUrl.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const input = await promptDialog('Change feed URL', '', feed.url);
+      if (input === null) return;
+      const newUrl = safeUrl(input.trim());
+      if (!newUrl){
+        toast('Enter a valid http(s) URL.');
+        return;
+      }
+      if (newUrl !== feed.url && state.feeds.some(f => f.id !== feed.id && f.url === newUrl)){
+        toast('That feed is already in your list.');
+        return;
+      }
+      if (newUrl === feed.url) return;
+      feed.url = newUrl;
+      feed.lastFetchedAt = null;
+      feed.lastError = null;
+      feed.knownItemIds = [];
+      feed.newItemIds = [];
+      feed.unreadCount = 0;
+      feed.items = [];
+      saveState();
+      renderFeedList();
+      renderItems();
+      toast('Fetching updated feed…');
+      const result = await refreshFeed(feed);
+      saveState();
+      renderFeedList();
+      renderItems();
+      updateGlobalBadge();
+      if (!result.ok) toast(`Could not load feed: ${result.error}`);
+    });
+    actions.appendChild(editUrl);
     const gear = document.createElement('button');
     gear.className = 'btn icon';
     gear.textContent = '⚙';
@@ -1523,7 +1561,16 @@ function buildProxyEditPanel(feed){
   select.addEventListener('change', (ev) => {
     ev.stopPropagation();
     const value = select.value;
-    if (value === 'custom') return; // no-op, mirrors the global preset select's "Custom…" convention
+    if (value === 'custom'){
+      // The text field goes blank for "Custom…" (below), so the stored template
+      // must actually clear too — otherwise the feed silently keeps using
+      // whatever preset was selected before, contradicting what's shown here.
+      feed.proxyTemplate = null;
+      textInput.value = '';
+      applyFeedProxyChange(feed);
+      textInput.focus();
+      return;
+    }
     feed.proxyTemplate = value || null;
     textInput.value = value || '';
     applyFeedProxyChange(feed);
