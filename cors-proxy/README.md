@@ -20,6 +20,8 @@ generous free tier) and static hosting doesn't.
 
 ## Deploy (a couple of minutes)
 
+**Option A — from your own machine (CLI):**
+
 1. Install dependencies (this pulls in `wrangler`, Cloudflare's CLI):
    ```
    cd cors-proxy
@@ -34,21 +36,49 @@ generous free tier) and static hosting doesn't.
    npm run deploy
    ```
    Wrangler prints the deployed URL, something like:
-   `https://personal-cors-proxy.<your-subdomain>.workers.dev`
+   `https://momo-agent-workspaces.<your-subdomain>.workers.dev`
 
-No Cloudflare domain or paid plan required — this runs on the free
-`*.workers.dev` subdomain Cloudflare gives every account.
+**Option B — Cloudflare Workers Builds (git-connected, auto-deploy on push):**
+
+Connect this repo to a Worker project in the Cloudflare dashboard, with the
+project's **Root directory** set to `cors-proxy`. Cloudflare's CI then runs
+`npx wrangler deploy` on every push — no local setup needed.
+
+Important: `wrangler.toml`'s `name` field must match the Worker's name in
+the Cloudflare dashboard exactly. If it doesn't, Cloudflare's CI overrides it
+and warns ("Failed to match Worker name..."), and — because the `PROXY_KEY`
+setup below is also driven by wrangler.toml — the key ends up being checked
+against the *wrong* Worker name. If you reconnect this repo under a
+differently-named project, update `name` in `wrangler.toml` to match (or
+accept the pull request Cloudflare's own "Automatic pull requests" feature
+opens to fix it for you).
+
+No Cloudflare domain or paid plan required for either option — this runs on
+the free `*.workers.dev` subdomain Cloudflare gives every account.
 
 ## It's keyed by default
 
 Anyone who finds your worker's URL could otherwise use it as an open proxy
-for anything, not just RSS feeds — so `npm run deploy` automatically runs a
-`postdeploy` step (`scripts/ensure-key.mjs`) that generates a random shared
-secret and sets it as the `PROXY_KEY` secret the very first time you deploy.
-It prints the generated key once, right after deploying — copy it somewhere
-safe, it can't be shown again. Redeploying later leaves an existing key
-untouched, so it's safe to run `npm run deploy` repeatedly without breaking
-a URL you've already configured elsewhere.
+for anything, not just RSS feeds — so `wrangler.toml` declares a `[build]`
+hook (`command = "node scripts/ensure-key.mjs"`) that runs before *every*
+`wrangler deploy`, regardless of whether that's triggered locally
+(`npm run deploy`) or by Cloudflare Workers Builds' own CI. On the first
+deploy with no key set, it generates one and sets it as the `PROXY_KEY`
+secret, printing it once right after — copy it somewhere safe, it can't be
+shown again. (When deploying via Cloudflare Workers Builds, find this
+printed key in that build's log, in the Cloudflare dashboard.) Redeploying
+later leaves an existing key untouched, so it's safe to redeploy repeatedly
+— by pushing or running `npm run deploy` — without breaking a URL you've
+already configured elsewhere.
+
+**Already deployed without a key?** (e.g. your first deploy predates this
+`[build]` hook, or wrangler.toml's `name` didn't match yet). Fix it directly,
+once:
+```
+cd cors-proxy && npx wrangler login && npx wrangler secret put PROXY_KEY
+```
+paste any random string when prompted — this secures the already-live
+deployment immediately, without waiting for the next deploy.
 
 To use your own chosen value instead of the generated one at any time:
 
@@ -72,7 +102,7 @@ private/internal addresses regardless of the key (see `worker.js`).
 Point a URL-template CORS proxy setting at:
 
 ```
-https://personal-cors-proxy.<your-subdomain>.workers.dev/?url={url}&key=<your key>
+https://momo-agent-workspaces.<your-subdomain>.workers.dev/?url={url}&key=<your key>
 ```
 
 The `{url}` placeholder gets replaced with the URL-encoded target by the
@@ -83,7 +113,7 @@ the key entirely as described above.
 ## Test it directly
 
 ```
-curl "https://personal-cors-proxy.<your-subdomain>.workers.dev/?url=https://example.com&key=<your key>"
+curl "https://momo-agent-workspaces.<your-subdomain>.workers.dev/?url=https://example.com&key=<your key>"
 ```
 
 Should return `example.com`'s HTML (omit `&key=...` only if you removed the

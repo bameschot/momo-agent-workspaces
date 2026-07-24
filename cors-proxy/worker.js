@@ -13,9 +13,11 @@
  *
  * Shared-secret gate: if a `PROXY_KEY` secret is set, every request must
  * include a matching `key=` query parameter, so a random who discovers your
- * worker's URL can't use it as an open proxy. `npm run deploy` sets this
- * automatically on first deploy (see scripts/ensure-key.mjs) — remove it
- * with `wrangler secret delete PROXY_KEY` to run the worker open instead.
+ * worker's URL can't use it as an open proxy. Deploying (via `wrangler
+ * deploy` — including Cloudflare Workers Builds' own CI) sets this
+ * automatically on first deploy (see wrangler.toml's `[build]` hook and
+ * scripts/ensure-key.mjs) — remove it with `wrangler secret delete
+ * PROXY_KEY` to run the worker open instead.
  */
 
 const ALLOWED_METHODS = ['GET', 'HEAD', 'OPTIONS'];

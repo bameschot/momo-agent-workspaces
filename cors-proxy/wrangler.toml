@@ -1,6 +1,19 @@
-name = "personal-cors-proxy"
+# Must match the name of whatever Cloudflare Workers Builds project this repo
+# is connected to (Dashboard → Workers & Pages → your project). If you
+# reconnect this repo under a different project name, update this to match
+# (or let Cloudflare's own "Automatic pull requests" feature fix it for you) —
+# a mismatch here makes the CI-deployed Worker's name silently diverge from
+# this file, which also breaks the `[build]` hook below (it would be setting
+# secrets on the wrong Worker name).
+name = "momo-agent-workspaces"
 main = "worker.js"
 compatibility_date = "2024-11-01"
+
+# Runs before every `wrangler dev` and `wrangler deploy`, regardless of how
+# wrangler was invoked (npm script, raw CLI, or Cloudflare Workers Builds'
+# own CI) — see scripts/ensure-key.mjs.
+[build]
+command = "node scripts/ensure-key.mjs"
 
 # By default this deploys to a free "*.workers.dev" subdomain — no route or
 # custom domain configuration needed. Uncomment and edit the block below only
