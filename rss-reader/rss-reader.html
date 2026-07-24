@@ -189,6 +189,8 @@
   }
   .filter-chip .err-dot{ width:.45rem; height:.45rem; border-radius:50%; background:var(--danger); flex:none; }
   .filter-chip .pause-icon{ font-size:.7rem; opacity:.7; }
+  .color-dot{ width:.55rem; height:.55rem; border-radius:50%; flex:none; display:inline-block; }
+  .bundle-members{ font-size:.72rem; color:var(--muted); margin:.2rem 0 0; }
 
   /* Item list */
   .content-header{ display:flex; align-items:center; gap:.6rem; margin-bottom:1rem; flex-wrap:wrap; flex:none; }
@@ -227,6 +229,10 @@
   dialog::backdrop{ background:rgba(0,0,0,.45); }
   .dialog-body{ padding:1.1rem 1.2rem; }
   .dialog-body h3{ margin-top:0; }
+  .dialog-body input[type=text]{
+    background:var(--bg); border:1px solid var(--border); color:var(--text);
+    border-radius:.4rem; padding:.4rem .5rem; width:100%; margin-top:.4rem;
+  }
   .dialog-actions{ display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem; }
 
   dialog#dialog-article{ max-width:92vw; width:92vw; max-height:88vh; height:88vh; padding:0; }
@@ -296,6 +302,9 @@
     </nav>
 
     <div class="sidebar-section" data-section="manage">
+      <h2>Bundles</h2>
+      <ul class="feed-list" id="bundle-list"></ul>
+      <h2 style="margin-top:1rem;">Feeds</h2>
       <ul class="feed-list" id="feed-list"></ul>
     </div>
 
@@ -370,6 +379,8 @@
       <button type="button" id="btn-toggle-filter-bar" aria-expanded="true">
         <span class="chevron">▾</span> <span id="filter-bar-toggle-label">Feeds</span>
       </button>
+      <div class="spacer"></div>
+      <button type="button" class="btn" id="btn-bundle-feeds" title="Bundle the selected feeds together" disabled>🔗 Bundle</button>
     </div>
     <div class="filter-bar" id="filter-bar"></div>
     <div class="content-header">
@@ -391,6 +402,20 @@
       <button class="btn" id="dialog-cancel">Cancel</button>
       <button class="btn danger" id="dialog-ok">Confirm</button>
     </div>
+  </div>
+</dialog>
+
+<dialog id="dialog-prompt">
+  <div class="dialog-body">
+    <form id="dialog-prompt-form">
+      <h3 id="dialog-prompt-title">Enter a name</h3>
+      <p id="dialog-prompt-message"></p>
+      <input type="text" id="dialog-prompt-input" required>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="dialog-prompt-cancel">Cancel</button>
+        <button type="submit" class="btn primary" id="dialog-prompt-ok">OK</button>
+      </div>
+    </form>
   </div>
 </dialog>
 
@@ -420,6 +445,12 @@ const CORS_PROXY_PRESETS = [
 ];
 const FETCH_TIMEOUT_MS = 15000;
 
+const BUNDLE_COLOR_PALETTE = ['#e07a5f', '#3d5a80', '#81b29a', '#f2cc8f', '#9b5de5', '#00b4d8', '#ef476f', '#06d6a0'];
+
+function nextBundleColor(){
+  return BUNDLE_COLOR_PALETTE[state.bundles.length % BUNDLE_COLOR_PALETTE.length];
+}
+
 function defaultState(){
   return {
     settings: {
@@ -434,8 +465,27 @@ function defaultState(){
       selectedFeedIds: [],
       searchKeywords: ''
     },
-    feeds: []
+    feeds: [],
+    bundles: []
   };
+}
+
+function normalizeBundles(parsed, validFeedIds){
+  if (!Array.isArray(parsed.bundles)) parsed.bundles = [];
+  const ids = validFeedIds || new Set(parsed.feeds.map(f => f.id));
+  parsed.bundles = parsed.bundles
+    .filter(b => b && typeof b === 'object' && Array.isArray(b.feedIds))
+    .map(b => ({
+      id: (typeof b.id === 'string' && b.id) ? b.id : uuid(),
+      name: (typeof b.name === 'string' && b.name.trim()) ? b.name.trim() : 'Bundle',
+      feedIds: b.feedIds.filter(id => ids.has(id)),
+      color: (typeof b.color === 'string' && b.color) ? b.color : null
+    }))
+    .filter(b => b.feedIds.length >= 2);
+  parsed.bundles.forEach((b, i) => {
+    if (!b.color) b.color = BUNDLE_COLOR_PALETTE[i % BUNDLE_COLOR_PALETTE.length];
+  });
+  return parsed.bundles;
 }
 
 function migrateLegacySettings(settings){
@@ -474,6 +524,7 @@ function loadState(){
     const base = defaultState();
     migrateLegacySettings(parsed.settings);
     parsed.settings = Object.assign(base.settings, parsed.settings);
+    normalizeBundles(parsed);
     return parsed;
   }catch(e){
     console.error('Failed to load state, resetting.', e);
@@ -505,6 +556,28 @@ function toggleFeedInSelection(id){ // Ctrl/Cmd+click and long-press
   if (selectedFeedIds.has(id)) selectedFeedIds.delete(id);
   else selectedFeedIds.add(id);
   state.settings.selectedFeedIds = Array.from(selectedFeedIds);
+}
+
+function selectOnlyFeeds(ids){ // clicking a bundle chip: select exactly this bundle's members
+  selectedFeedIds.clear();
+  for (const id of ids) selectedFeedIds.add(id);
+  state.settings.selectedFeedIds = Array.from(selectedFeedIds);
+}
+
+function toggleFeedGroupInSelection(ids){ // Ctrl/Cmd+click and long-press on a bundle chip: treat as one unit
+  const allSelected = ids.every(id => selectedFeedIds.has(id));
+  for (const id of ids){
+    if (allSelected) selectedFeedIds.delete(id);
+    else selectedFeedIds.add(id);
+  }
+  state.settings.selectedFeedIds = Array.from(selectedFeedIds);
+}
+
+function getActiveBundle(){
+  if (selectedFeedIds.size === 0) return null;
+  return state.bundles.find(b =>
+    b.feedIds.length === selectedFeedIds.size && b.feedIds.every(id => selectedFeedIds.has(id))
+  ) || null;
 }
 
 /* ---------- Theme ---------- */
@@ -673,6 +746,37 @@ function confirmDialog(title, message){
     ok.addEventListener('click', onOk);
     cancel.addEventListener('click', onCancel);
     dlg.showModal();
+  });
+}
+
+function promptDialog(title, message, defaultValue){
+  return new Promise(resolve => {
+    const dlg = document.getElementById('dialog-prompt');
+    const form = document.getElementById('dialog-prompt-form');
+    const input = document.getElementById('dialog-prompt-input');
+    document.getElementById('dialog-prompt-title').textContent = title;
+    document.getElementById('dialog-prompt-message').textContent = message || '';
+    document.getElementById('dialog-prompt-message').hidden = !message;
+    input.value = defaultValue || '';
+    const cancel = document.getElementById('dialog-prompt-cancel');
+    const cleanup = (result) => {
+      form.removeEventListener('submit', onSubmit);
+      cancel.removeEventListener('click', onCancel);
+      dlg.close();
+      resolve(result);
+    };
+    const onSubmit = (e) => {
+      e.preventDefault();
+      const value = input.value.trim();
+      if (!value) return;
+      cleanup(value);
+    };
+    const onCancel = () => cleanup(null);
+    form.addEventListener('submit', onSubmit);
+    cancel.addEventListener('click', onCancel);
+    dlg.showModal();
+    input.focus();
+    input.select();
   });
 }
 
@@ -1207,6 +1311,21 @@ function renderManageList(){
       renderFeedList();
     });
     feedRow.appendChild(imgToggle);
+    const rename = document.createElement('button');
+    rename.className = 'btn icon';
+    rename.textContent = '✏️';
+    rename.title = 'Rename this feed';
+    rename.style.padding = '.15rem .35rem';
+    rename.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const name = await promptDialog('Rename feed', '', feed.title || feed.url);
+      if (name === null) return;
+      feed.title = name;
+      saveState();
+      renderFeedList();
+      renderItems();
+    });
+    feedRow.appendChild(rename);
     const gear = document.createElement('button');
     gear.className = 'btn icon';
     gear.textContent = '⚙';
@@ -1233,6 +1352,9 @@ function renderManageList(){
         selectedFeedIds.delete(feed.id);
         state.settings.selectedFeedIds = Array.from(selectedFeedIds);
       }
+      state.bundles = state.bundles
+        .map(b => ({ ...b, feedIds: b.feedIds.filter(id => id !== feed.id) }))
+        .filter(b => b.feedIds.length >= 2);
       saveState();
       renderFeedList();
       renderItems();
@@ -1401,7 +1523,15 @@ function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr, isPause
     commit();
   }
 
-  // --- Long-press (touch only) state, local to this chip instance ---
+  wireChipGestures(chip, {
+    onTap: () => { selectOnlyFeed(feedId); clearUnreadFor(feedId); commit(); },
+    onToggle: applyToggleGesture
+  });
+  return chip;
+}
+
+// Shared tap / Ctrl-Cmd-click / long-press (touch) gesture wiring for filter-bar chips.
+function wireChipGestures(chip, { onTap, onToggle }){
   const LONG_PRESS_MS = 500;
   const MOVE_THRESHOLD_PX = 10;
   let longPressTimer = null;
@@ -1417,7 +1547,7 @@ function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr, isPause
     longPressTimer = setTimeout(() => {
       longPressTimer = null;
       longPressFired = true;
-      applyToggleGesture();
+      onToggle();
     }, LONG_PRESS_MS);
   }, { passive: true });
 
@@ -1449,12 +1579,56 @@ function makeFilterChip(label, feedId, unreadCount, hasError, titleAttr, isPause
       return;
     }
     if (event.ctrlKey || event.metaKey){
-      applyToggleGesture();
+      onToggle();
       return;
     }
-    selectOnlyFeed(feedId);
-    clearUnreadFor(feedId);
-    commit();
+    onTap();
+  });
+}
+
+function makeBundleChip(bundle){
+  const chip = document.createElement('button');
+  chip.type = 'button';
+
+  const active = getActiveBundle()?.id === bundle.id;
+  chip.className = 'filter-chip bundle-chip' + (active ? ' active' : '');
+  const memberTitles = bundle.feedIds
+    .map(id => state.feeds.find(f => f.id === id))
+    .filter(Boolean)
+    .map(f => f.title || f.url);
+  chip.title = `Bundle: ${memberTitles.join(', ')}`;
+
+  const dot = document.createElement('span');
+  dot.className = 'color-dot';
+  dot.style.backgroundColor = bundle.color;
+  chip.appendChild(dot);
+
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'label';
+  labelSpan.textContent = bundle.name;
+  chip.appendChild(labelSpan);
+
+  const unreadCount = bundle.feedIds.reduce((sum, id) => {
+    const feed = state.feeds.find(f => f.id === id);
+    return sum + (feed ? (feed.unreadCount || 0) : 0);
+  }, 0);
+  if (state.settings.showUnreadCounts && unreadCount > 0){
+    const unread = document.createElement('span');
+    unread.className = 'unread';
+    unread.textContent = unreadCount > 99 ? '99+' : unreadCount;
+    chip.appendChild(unread);
+  }
+
+  function commit(){
+    saveState();
+    renderFeedList();
+    renderItems();
+    updateGlobalBadge();
+  }
+
+  wireChipGestures(chip, {
+    onTap: () => { selectOnlyFeeds(bundle.feedIds); commit(); },
+    onToggle: () => { toggleFeedGroupInSelection(bundle.feedIds); commit(); }
   });
   return chip;
 }
@@ -1466,10 +1640,19 @@ function renderFilterBar(){
   const totalUnread = state.feeds.reduce((sum, f) => sum + (f.unreadCount || 0), 0);
   bar.appendChild(makeFilterChip('📚 All feeds', null, totalUnread, false));
 
+  for (const bundle of state.bundles){
+    bar.appendChild(makeBundleChip(bundle));
+  }
+
   for (const feed of state.feeds){
     bar.appendChild(makeFilterChip(feed.title || feed.url, feed.id, feed.unreadCount || 0, !!feed.lastError, feed.url, !!feed.refreshPaused));
   }
   applyFilterBarCollapse();
+  updateBundleButtonState();
+}
+
+function updateBundleButtonState(){
+  document.getElementById('btn-bundle-feeds').disabled = selectedFeedIds.size < 2;
 }
 
 function applyFilterBarCollapse(){
@@ -1490,9 +1673,106 @@ document.getElementById('btn-toggle-filter-bar').addEventListener('click', () =>
   applyFilterBarCollapse();
 });
 
+document.getElementById('btn-bundle-feeds').addEventListener('click', async () => {
+  if (selectedFeedIds.size < 2) return;
+  const name = await promptDialog('Bundle these feeds', 'Name this bundle:');
+  if (!name) return;
+  state.bundles.push({
+    id: uuid(),
+    name,
+    feedIds: Array.from(selectedFeedIds),
+    color: nextBundleColor()
+  });
+  saveState();
+  renderFeedList();
+  renderItems();
+  toast(`Bundle "${name}" created.`);
+});
+
 function renderFeedList(){
   renderManageList();
+  renderBundleManageList();
   renderFilterBar();
+}
+
+function renderBundleManageList(){
+  const list = document.getElementById('bundle-list');
+  list.innerHTML = '';
+
+  if (state.bundles.length === 0){
+    const li = document.createElement('li');
+    li.textContent = 'No bundles yet — select 2+ feeds above and click Bundle.';
+    li.style.color = 'var(--muted)';
+    list.appendChild(li);
+    return;
+  }
+
+  for (const bundle of state.bundles){
+    const li = document.createElement('li');
+    const row = document.createElement('div');
+    row.className = 'feed-row';
+
+    const dot = document.createElement('span');
+    dot.className = 'color-dot';
+    dot.style.backgroundColor = bundle.color;
+    row.appendChild(dot);
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'name';
+    nameSpan.textContent = bundle.name;
+    row.appendChild(nameSpan);
+
+    const memberFeeds = bundle.feedIds.map(id => state.feeds.find(f => f.id === id)).filter(Boolean);
+    const totalUnread = memberFeeds.reduce((sum, f) => sum + (f.unreadCount || 0), 0);
+    if (state.settings.showUnreadCounts && totalUnread > 0){
+      const unread = document.createElement('span');
+      unread.className = 'unread';
+      unread.textContent = totalUnread > 99 ? '99+' : totalUnread;
+      row.appendChild(unread);
+    }
+
+    const rename = document.createElement('button');
+    rename.className = 'btn icon';
+    rename.textContent = '✏️';
+    rename.title = 'Rename this bundle';
+    rename.style.padding = '.15rem .35rem';
+    rename.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const name = await promptDialog('Rename bundle', '', bundle.name);
+      if (!name) return;
+      bundle.name = name;
+      saveState();
+      renderFeedList();
+      renderItems();
+    });
+    row.appendChild(rename);
+
+    const del = document.createElement('button');
+    del.className = 'btn icon';
+    del.textContent = '✕';
+    del.title = 'Delete bundle';
+    del.style.padding = '.15rem .35rem';
+    del.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const confirmed = await confirmDialog('Delete bundle?', `This removes the "${bundle.name}" bundle. Its member feeds are not affected.`);
+      if (!confirmed) return;
+      const wasActive = getActiveBundle()?.id === bundle.id;
+      state.bundles = state.bundles.filter(b => b.id !== bundle.id);
+      if (wasActive) selectOnlyFeed(null);
+      saveState();
+      renderFeedList();
+      renderItems();
+      updateGlobalBadge();
+    });
+    row.appendChild(del);
+
+    li.appendChild(row);
+    const members = document.createElement('div');
+    members.className = 'bundle-members';
+    members.textContent = memberFeeds.map(f => f.title || f.url).join(', ');
+    li.appendChild(members);
+    list.appendChild(li);
+  }
 }
 
 function escapeHtml(str){
@@ -1549,7 +1829,8 @@ function renderItems(){
     feeds = feed ? [feed] : [];
   } else {
     feeds = state.feeds.filter(f => selectedFeedIds.has(f.id));
-    titleEl.textContent = `${feeds.length} feeds selected`;
+    const activeBundle = getActiveBundle();
+    titleEl.textContent = activeBundle ? activeBundle.name : `${feeds.length} feeds selected`;
   }
 
   let allItems = [];
@@ -1833,6 +2114,7 @@ document.getElementById('file-import').addEventListener('change', async (e) => {
       if (typeof f.refreshPaused !== 'boolean') f.refreshPaused = false;
       if (typeof f.showImages !== 'boolean') f.showImages = true;
     }
+    normalizeBundles(parsed, new Set(parsed.feeds.map(f => f.id)));
     state = parsed;
     selectedFeedIds = new Set(
       (state.settings.selectedFeedIds || []).filter(id => state.feeds.some(f => f.id === id))
