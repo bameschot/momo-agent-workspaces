@@ -39,40 +39,56 @@ generous free tier) and static hosting doesn't.
 No Cloudflare domain or paid plan required — this runs on the free
 `*.workers.dev` subdomain Cloudflare gives every account.
 
-## Lock it down (recommended)
+## It's keyed by default
 
-Anyone who finds your worker's URL can use it as an open proxy for anything,
-not just RSS feeds. Set a shared secret so requests must include a matching
-`key=` query parameter:
+Anyone who finds your worker's URL could otherwise use it as an open proxy
+for anything, not just RSS feeds — so `npm run deploy` automatically runs a
+`postdeploy` step (`scripts/ensure-key.mjs`) that generates a random shared
+secret and sets it as the `PROXY_KEY` secret the very first time you deploy.
+It prints the generated key once, right after deploying — copy it somewhere
+safe, it can't be shown again. Redeploying later leaves an existing key
+untouched, so it's safe to run `npm run deploy` repeatedly without breaking
+a URL you've already configured elsewhere.
+
+To use your own chosen value instead of the generated one at any time:
 
 ```
 npm run secret:set-key
 ```
 
-(paste any random string when prompted). Leave this step out if you're fine
-with the worker being open — it's still restricted to `http`/`https` targets
-and refuses private/internal addresses (see `worker.js`).
+(paste any string when prompted — this overwrites the current key). To
+deliberately run the worker open/unkeyed instead, remove the key after
+deploying:
+
+```
+npx wrangler secret delete PROXY_KEY
+```
+
+Either way, it's still restricted to `http`/`https` targets and refuses
+private/internal addresses regardless of the key (see `worker.js`).
 
 ## Use it
 
 Point a URL-template CORS proxy setting at:
 
 ```
-https://personal-cors-proxy.<your-subdomain>.workers.dev/?url={url}
+https://personal-cors-proxy.<your-subdomain>.workers.dev/?url={url}&key=<your key>
 ```
 
-(append `&key=<your secret>` if you set one). The `{url}` placeholder gets
-replaced with the URL-encoded target by the calling app — this matches the
-template convention already used by `rss-reader/`'s proxy settings.
+The `{url}` placeholder gets replaced with the URL-encoded target by the
+calling app — this matches the template convention already used by
+`rss-reader/`'s proxy settings. Drop `&key=<your key>` only if you removed
+the key entirely as described above.
 
 ## Test it directly
 
 ```
-curl "https://personal-cors-proxy.<your-subdomain>.workers.dev/?url=https://example.com"
+curl "https://personal-cors-proxy.<your-subdomain>.workers.dev/?url=https://example.com&key=<your key>"
 ```
 
-Should return `example.com`'s HTML. Add `-D -` to inspect the response
-headers and confirm `access-control-allow-origin: *` is present.
+Should return `example.com`'s HTML (omit `&key=...` only if you removed the
+key). Add `-D -` to inspect the response headers and confirm
+`access-control-allow-origin: *` is present.
 
 ## Local development
 

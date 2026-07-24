@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "postdeploy": "node scripts/ensure-key.mjs",
     "secret:set-key": "wrangler secret put PROXY_KEY"
   },
   "devDependencies": {
