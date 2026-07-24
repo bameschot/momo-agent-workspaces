@@ -169,7 +169,11 @@
     35%{ transform:scale(1.12); filter:brightness(1.35); }
     100%{ transform:scale(1); filter:brightness(1); }
   }
-  ul.feed-list li.filter-row{ cursor:pointer; user-select:none; -webkit-touch-callout:none; }
+  ul.feed-list li.filter-row{
+    cursor:pointer; user-select:none; -webkit-touch-callout:none;
+    border-radius:.5rem; margin-bottom:.25rem;
+  }
+  ul.feed-list li.filter-row:not(:last-child){ border-bottom:none; }
   ul.feed-list li.filter-row:hover{ background:var(--surface-2); }
   ul.feed-list li.filter-row.active{ background:var(--accent); color:#fff; }
   ul.feed-list li.filter-row.active .unread{ background:rgba(255,255,255,.3); }
