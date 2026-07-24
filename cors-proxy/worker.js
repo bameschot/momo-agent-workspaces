@@ -11,11 +11,11 @@
  *   https://<your-worker>.workers.dev/?url={url}
  * but it works with any client that fetches `<worker-url>?url=<target>`.
  *
- * Optional shared-secret gate: run `wrangler secret put PROXY_KEY` to
- * require a matching `key=` query parameter on every request, so a random
- * who discovers your worker's URL can't use it as an open proxy. Leave the
- * secret unset to keep the worker open (fine for a low-traffic personal
- * proxy whose URL you don't publish).
+ * Shared-secret gate: if a `PROXY_KEY` secret is set, every request must
+ * include a matching `key=` query parameter, so a random who discovers your
+ * worker's URL can't use it as an open proxy. `npm run deploy` sets this
+ * automatically on first deploy (see scripts/ensure-key.mjs) — remove it
+ * with `wrangler secret delete PROXY_KEY` to run the worker open instead.
  */
 
 const ALLOWED_METHODS = ['GET', 'HEAD', 'OPTIONS'];
