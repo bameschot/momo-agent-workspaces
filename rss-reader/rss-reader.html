@@ -191,6 +191,17 @@
   .empty{ color:var(--muted); text-align:center; padding:3rem 1rem; }
   .empty .big{ font-size:2rem; display:block; margin-bottom:.5rem; }
 
+  .date-separator{
+    font-size:.72rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase;
+    color:var(--muted); margin:1.1rem 0 .6rem; padding-bottom:.35rem;
+    border-bottom:1px solid var(--border);
+  }
+  .date-separator:first-child{ margin-top:0; }
+  .date-separator.hour-separator{
+    margin:.5rem 0 .5rem; padding-bottom:0; border-bottom:none;
+    font-size:.68rem; font-weight:500; text-transform:none; opacity:.85;
+  }
+
   article.item{
     background:var(--surface); border:1px solid var(--border); border-radius:.7rem; padding:.9rem 1rem; margin-bottom:.7rem;
     box-shadow:var(--shadow); cursor:pointer;
@@ -370,6 +381,10 @@
         <label for="btn-show-unread-counts" style="font-size:.82rem;color:var(--text);">Show unread counts</label>
         <button class="btn" id="btn-show-unread-counts">On</button>
       </div>
+      <div class="settings-row inline">
+        <label for="btn-group-by-hour" style="font-size:.82rem;color:var(--text);">Group articles by hour</label>
+        <button class="btn" id="btn-group-by-hour">Off</button>
+      </div>
     </div>
 
     <div class="sidebar-section" data-section="search">
@@ -483,6 +498,7 @@ function defaultState(){
       toastNotificationsEnabled: true,
       browserNotificationsEnabled: false,
       showUnreadCounts: true,
+      groupArticlesByHour: false,
       selectedFeedIds: [],
       searchKeywords: ''
     },
@@ -1863,6 +1879,29 @@ function itemMatchesSearch(item, regexes){
   return regexes.some(re => re.test(haystack));
 }
 
+function dateSeparatorDayLabel(d, hasDate){
+  if (!hasDate) return 'No date';
+  const now = new Date();
+  const startOfDay = dt => new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  const opts = { weekday: 'short', month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString(undefined, opts);
+}
+
+function dateSeparatorHourLabel(d){
+  return `${String(d.getHours()).padStart(2, '0')}:00`;
+}
+
+function buildDateSeparatorEl(label, isHour){
+  const div = document.createElement('div');
+  div.className = 'date-separator' + (isHour ? ' hour-separator' : '');
+  div.textContent = label;
+  return div;
+}
+
 function renderItems(){
   const titleEl = document.getElementById('content-title');
   const listEl = document.getElementById('item-list');
@@ -1917,12 +1956,31 @@ function renderItems(){
     return tb - ta;
   });
 
+  let lastDayKey;
+  let lastHourKey;
+
   for (const item of allItems){
+    const parsedMs = item.date ? Date.parse(item.date) : NaN;
+    const hasDate = !isNaN(parsedMs);
+    const d = hasDate ? new Date(parsedMs) : null;
+    const dayKey = hasDate ? `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` : 'undated';
+    const hourKey = hasDate ? `${dayKey}-${d.getHours()}` : 'undated';
+
+    if (dayKey !== lastDayKey){
+      listEl.appendChild(buildDateSeparatorEl(dateSeparatorDayLabel(d, hasDate), false));
+      lastDayKey = dayKey;
+      lastHourKey = undefined; // force an hour separator right after a day separator too
+    }
+    if (state.settings.groupArticlesByHour && hasDate && hourKey !== lastHourKey){
+      listEl.appendChild(buildDateSeparatorEl(dateSeparatorHourLabel(d), true));
+      lastHourKey = hourKey;
+    }
+
     const el = document.createElement('article');
     el.className = 'item' + (item.isNew ? ' unread' : '');
     el.dataset.feedId = item.feedId;
     el.dataset.itemId = item.id;
-    const dateStr = item.date && !isNaN(Date.parse(item.date)) ? new Date(item.date).toLocaleString(undefined, { hour12: false }) : '';
+    const dateStr = hasDate ? d.toLocaleString(undefined, { hour12: false }) : '';
     const newPill = item.isNew ? '<span class="new-pill">New</span>' : '';
     el.innerHTML = `
       <h3>${escapeHtml(item.title)}${newPill}</h3>
@@ -1944,6 +2002,7 @@ function renderSettingsUI(){
   updateToastNotificationUI();
   updateNotificationUI();
   updateShowUnreadCountsUI();
+  updateGroupByHourUI();
 }
 
 function syncDefaultProxyPresetSelect(){
@@ -1969,6 +2028,11 @@ function updateToastNotificationUI(){
 function updateShowUnreadCountsUI(){
   const btn = document.getElementById('btn-show-unread-counts');
   btn.textContent = state.settings.showUnreadCounts ? 'On' : 'Off';
+}
+
+function updateGroupByHourUI(){
+  const btn = document.getElementById('btn-group-by-hour');
+  btn.textContent = state.settings.groupArticlesByHour ? 'On' : 'Off';
 }
 
 function updateNotificationUI(){
@@ -2015,6 +2079,13 @@ document.getElementById('btn-show-unread-counts').addEventListener('click', () =
   updateShowUnreadCountsUI();
   renderFeedList();
   updateGlobalBadge();
+});
+
+document.getElementById('btn-group-by-hour').addEventListener('click', () => {
+  state.settings.groupArticlesByHour = !state.settings.groupArticlesByHour;
+  saveState();
+  updateGroupByHourUI();
+  renderItems();
 });
 
 document.getElementById('btn-notifications').addEventListener('click', async () => {
