@@ -364,6 +364,7 @@
       <div class="settings-row">
         <label for="input-default-proxy">Default CORS proxy template</label>
         <select id="input-default-proxy-preset" aria-label="Default CORS proxy preset">
+          <option value="https://momo-agent-workspaces.ameschot-b.workers.dev/?url={url}&amp;key={key}">My proxy</option>
           <option value="https://api.allorigins.win/raw?url={url}">AllOrigins</option>
           <option value="https://corsproxy.io/?url={url}">corsproxy.io</option>
           <option value="https://api.codetabs.com/v1/proxy?quest={url}">CodeTabs</option>
@@ -485,6 +486,7 @@
 const STORAGE_KEY = 'rss-reader-state';
 const DEFAULT_PROXY_TEMPLATE = 'https://momo-agent-workspaces.ameschot-b.workers.dev/?url={url}&key={key}';
 const CORS_PROXY_PRESETS = [
+  { label: 'My proxy', template: DEFAULT_PROXY_TEMPLATE },
   { label: 'AllOrigins', template: 'https://api.allorigins.win/raw?url={url}' },
   { label: 'corsproxy.io', template: 'https://corsproxy.io/?url={url}' },
   { label: 'CodeTabs', template: 'https://api.codetabs.com/v1/proxy?quest={url}' }
