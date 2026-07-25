@@ -404,6 +404,14 @@
         <label for="btn-show-images-list" style="font-size:.82rem;color:var(--text);">Show images in main feed</label>
         <button class="btn" id="btn-show-images-list">On</button>
       </div>
+      <div class="settings-row">
+        <label>Storage</label>
+        <span class="hint" id="storage-usage-text">Using 0 B of local storage.</span>
+      </div>
+      <div class="settings-row">
+        <button type="button" class="btn danger" id="btn-cleanup-old">🗑 Remove articles older than 10 days</button>
+        <span class="hint">Deletes cached article content and read/unread state for articles older than 10 days. Feed subscriptions themselves are kept.</span>
+      </div>
     </div>
 
     <div class="sidebar-section" data-section="search">
@@ -592,7 +600,22 @@ function loadState(){
 }
 
 function saveState(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const raw = JSON.stringify(state);
+  localStorage.setItem(STORAGE_KEY, raw);
+  updateStorageUsageUI(raw);
+}
+
+function formatBytes(bytes){
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function updateStorageUsageUI(raw){
+  const el = document.getElementById('storage-usage-text');
+  if (!el) return;
+  const bytes = new Blob([raw !== undefined ? raw : (localStorage.getItem(STORAGE_KEY) || '')]).size;
+  el.textContent = `Using ${formatBytes(bytes)} of local storage.`;
 }
 
 let state = loadState();
@@ -1298,6 +1321,25 @@ function markItemRead(feed, itemId){
   feed.newItemIds.splice(idx, 1);
   feed.unreadCount = Math.max(0, (feed.unreadCount || 0) - 1);
   return true;
+}
+
+function pruneOldItems(days){
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  let removedCount = 0;
+  for (const feed of state.feeds){
+    const items = feed.items || [];
+    const kept = items.filter(it => {
+      const t = it.date ? Date.parse(it.date) : NaN;
+      return isNaN(t) || t >= cutoff;
+    });
+    removedCount += items.length - kept.length;
+    feed.items = kept;
+    const keptIds = new Set(kept.map(it => it.id));
+    feed.knownItemIds = (feed.knownItemIds || []).filter(id => keptIds.has(id));
+    feed.newItemIds = (feed.newItemIds || []).filter(id => keptIds.has(id));
+    feed.unreadCount = feed.newItemIds.length;
+  }
+  return removedCount;
 }
 
 function updateGlobalBadge(){
@@ -2089,6 +2131,7 @@ function renderSettingsUI(){
   updateShowUnreadCountsUI();
   updateGroupByHourUI();
   updateShowImagesInListUI();
+  updateStorageUsageUI();
 }
 
 function syncDefaultProxyPresetSelect(){
@@ -2184,6 +2227,17 @@ document.getElementById('btn-show-images-list').addEventListener('click', () => 
   saveState();
   updateShowImagesInListUI();
   renderItems();
+});
+
+document.getElementById('btn-cleanup-old').addEventListener('click', async () => {
+  const confirmed = await confirmDialog('Remove old articles?', 'This deletes all cached articles older than 10 days across every feed, and cannot be undone.');
+  if (!confirmed) return;
+  const removed = pruneOldItems(10);
+  saveState();
+  renderFeedList();
+  renderItems();
+  updateGlobalBadge();
+  toast(removed > 0 ? `Removed ${removed} article${removed === 1 ? '' : 's'} older than 10 days.` : 'No articles older than 10 days.');
 });
 
 document.getElementById('btn-notifications').addEventListener('click', async () => {
