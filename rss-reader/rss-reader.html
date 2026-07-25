@@ -409,8 +409,8 @@
         <span class="hint" id="storage-usage-text">Using 0 B of local storage.</span>
       </div>
       <div class="settings-row">
-        <button type="button" class="btn danger" id="btn-cleanup-old">🗑 Remove articles older than 10 days</button>
-        <span class="hint">Deletes cached article content and read/unread state for articles older than 10 days. Feed subscriptions themselves are kept.</span>
+        <button type="button" class="btn danger" id="btn-cleanup-old">🗑 Remove articles older than 3 days</button>
+        <span class="hint">Deletes cached article content and read/unread state for articles older than 3 days. Feed subscriptions themselves are kept. Articles older than 5 days are also removed automatically, at most once a day.</span>
       </div>
     </div>
 
@@ -530,7 +530,8 @@ function defaultState(){
       groupArticlesByHour: false,
       showImagesInList: true,
       selectedFeedIds: [],
-      searchKeywords: ''
+      searchKeywords: '',
+      lastAutoPruneAt: null
     },
     feeds: [],
     bundles: []
@@ -2230,15 +2231,29 @@ document.getElementById('btn-show-images-list').addEventListener('click', () => 
 });
 
 document.getElementById('btn-cleanup-old').addEventListener('click', async () => {
-  const confirmed = await confirmDialog('Remove old articles?', 'This deletes all cached articles older than 10 days across every feed, and cannot be undone.');
+  const confirmed = await confirmDialog('Remove old articles?', 'This deletes all cached articles older than 3 days across every feed, and cannot be undone.');
   if (!confirmed) return;
-  const removed = pruneOldItems(10);
+  const removed = pruneOldItems(3);
   saveState();
   renderFeedList();
   renderItems();
   updateGlobalBadge();
-  toast(removed > 0 ? `Removed ${removed} article${removed === 1 ? '' : 's'} older than 10 days.` : 'No articles older than 10 days.');
+  toast(removed > 0 ? `Removed ${removed} article${removed === 1 ? '' : 's'} older than 3 days.` : 'No articles older than 3 days.');
 });
+
+const AUTO_PRUNE_MAX_AGE_DAYS = 5;
+const AUTO_PRUNE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+// Called once at startup, right before the initial render — so it never needs to
+// trigger its own re-render even when it removes items; the render calls that
+// follow it in the init sequence below will already reflect the pruned state.
+function runAutoPruneIfDue(){
+  const last = state.settings.lastAutoPruneAt ? Date.parse(state.settings.lastAutoPruneAt) : NaN;
+  if (!isNaN(last) && Date.now() - last < AUTO_PRUNE_CHECK_INTERVAL_MS) return;
+  pruneOldItems(AUTO_PRUNE_MAX_AGE_DAYS);
+  state.settings.lastAutoPruneAt = new Date().toISOString();
+  saveState();
+}
 
 document.getElementById('btn-notifications').addEventListener('click', async () => {
   if (!('Notification' in window)) return;
@@ -2441,6 +2456,7 @@ applySidebar();
 applyFilterSidebar();
 applyMenuNav();
 setupInstallability();
+runAutoPruneIfDue();
 renderSettingsUI();
 renderFeedList();
 renderItems();
