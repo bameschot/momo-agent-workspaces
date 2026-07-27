@@ -172,6 +172,28 @@ h1,h2,h3{margin:0;}
 .reader-topbar .title{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.9rem; font-weight:600; text-align:center;}
 .reader-chrome-hidden .reader-topbar{transform:translateY(-100%); opacity:0; pointer-events:none;}
 .reader-chrome-hidden .reader-bottombar{transform:translateY(100%); opacity:0; pointer-events:none;}
+/* Fixed overlay, not a flex-flow participant, so showing/hiding it never
+   touches #readerViewport's box size (which would trigger a repagination
+   pass). Tucked fully off-screen and non-interactive until chrome is
+   hidden, so it never sits atop the normal topbar/bottombar. */
+.chrome-reveal-tab{
+  position:fixed; top:0; left:50%;
+  transform:translate(-50%, -100%);
+  margin-top:env(safe-area-inset-top, 0px);
+  width:3.5rem; height:1.4rem;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--surface); color:var(--muted);
+  border:1px solid var(--border); border-top:none;
+  border-radius:0 0 var(--radius-md) var(--radius-md);
+  box-shadow:0 2px 6px var(--shadow-color);
+  opacity:0; pointer-events:none; z-index:15;
+  transition:opacity .2s, transform .2s;
+}
+.reader-chrome-hidden .chrome-reveal-tab{
+  opacity:.6; pointer-events:auto; transform:translate(-50%, 0);
+}
+.reader-chrome-hidden .chrome-reveal-tab:hover,
+.reader-chrome-hidden .chrome-reveal-tab:focus-visible{opacity:1;}
 #readerViewport{
   flex:1; position:relative; overflow:hidden; user-select:text;
   padding:2.5rem var(--reader-side-margin, 1.5rem);
@@ -409,6 +431,7 @@ mark.searchhit{background:var(--hl-yellow); color:#1a1a1a;}
       <span id="percentIndicator">0%</span>
       <span id="timeLeftIndicator"></span>
     </div>
+    <button id="chromeRevealTab" class="chrome-reveal-tab" aria-label="Show reader menu">⌄</button>
   </section>
 
   <!-- ===================== TOC Panel ===================== -->
@@ -4021,6 +4044,9 @@ function wireEvents(){
     const xRatio=(e.clientX-rect.left)/rect.width;
     if(xRatio<=0.22){ prevPage(); return; }
     if(xRatio>=0.78){ nextPage(); return; }
+    toggleReaderChrome();
+  });
+  document.getElementById('chromeRevealTab').addEventListener('click', ()=>{
     toggleReaderChrome();
   });
 
