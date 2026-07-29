@@ -405,6 +405,15 @@
         <button class="btn" id="btn-show-images-list">On</button>
       </div>
       <div class="settings-row">
+        <label for="input-preview-text-size">Preview text size</label>
+        <select id="input-preview-text-size">
+          <option value="small">Small</option>
+          <option value="medium">Medium</option>
+          <option value="large">Large</option>
+          <option value="full">Full text</option>
+        </select>
+      </div>
+      <div class="settings-row">
         <label>Storage</label>
         <span class="hint" id="storage-usage-text">Using 0 B of local storage.</span>
       </div>
@@ -510,6 +519,18 @@ const CORS_PROXY_PRESETS = [
 ];
 const FETCH_TIMEOUT_MS = 15000;
 
+const PREVIEW_TEXT_BASE_LENGTH = 250;
+const PREVIEW_TEXT_LENGTHS = {
+  small: PREVIEW_TEXT_BASE_LENGTH / 2,
+  medium: PREVIEW_TEXT_BASE_LENGTH,
+  large: PREVIEW_TEXT_BASE_LENGTH * 2,
+  full: Infinity
+};
+
+function previewTextLength(){
+  return PREVIEW_TEXT_LENGTHS[state.settings.previewTextSize] || PREVIEW_TEXT_BASE_LENGTH;
+}
+
 const BUNDLE_COLOR_PALETTE = ['#e07a5f', '#3d5a80', '#81b29a', '#f2cc8f', '#9b5de5', '#00b4d8', '#ef476f', '#06d6a0'];
 
 function nextBundleColor(){
@@ -529,6 +550,7 @@ function defaultState(){
       showUnreadCounts: true,
       groupArticlesByHour: false,
       showImagesInList: true,
+      previewTextSize: 'medium',
       selectedFeedIds: [],
       searchKeywords: '',
       lastAutoPruneAt: null
@@ -2151,7 +2173,7 @@ function renderItems(){
     const showThumb = state.settings.showImagesInList !== false && item.feedShowImages && item.imageUrl;
     const thumbHtml = showThumb ? `<img class="item-thumb" src="${escapeHtml(item.imageUrl)}" alt="" loading="lazy">` : '';
     const descSameAsTitle = item.titleIsGenerated && (item.desc || '').trim() === item.title;
-    const descHtml = (!item.desc || descSameAsTitle) ? '' : `<div class="desc">${escapeHtml(item.desc || '').slice(0, 250)}</div>`;
+    const descHtml = (!item.desc || descSameAsTitle) ? '' : `<div class="desc">${escapeHtml(item.desc || '').slice(0, previewTextLength())}</div>`;
     el.innerHTML = `
       ${thumbHtml}
       <div class="item-body">
@@ -2171,6 +2193,7 @@ function renderSettingsUI(){
   document.getElementById('input-default-proxy').value = state.settings.defaultProxyTemplate || '';
   document.getElementById('input-default-proxy-key').value = state.settings.defaultProxyKey || '';
   document.getElementById('input-search-keywords').value = state.settings.searchKeywords || '';
+  document.getElementById('input-preview-text-size').value = state.settings.previewTextSize || 'medium';
   syncDefaultProxyPresetSelect();
   updateAutoRefreshUI();
   updateToastNotificationUI();
@@ -2273,6 +2296,12 @@ document.getElementById('btn-show-images-list').addEventListener('click', () => 
   state.settings.showImagesInList = state.settings.showImagesInList === false;
   saveState();
   updateShowImagesInListUI();
+  renderItems();
+});
+
+document.getElementById('input-preview-text-size').addEventListener('change', (e) => {
+  state.settings.previewTextSize = e.target.value;
+  saveState();
   renderItems();
 });
 
