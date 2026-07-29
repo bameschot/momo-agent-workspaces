@@ -1156,6 +1156,19 @@ function sanitizeHtml(html, baseUrl){
   return doc.body.innerHTML.trim();
 }
 
+// Microblog-style feeds (e.g. Bluesky's per-profile RSS) never set <title> —
+// posts are just body text with no headline. Falling back to a literal
+// "(untitled)" for every single item is useless, so use the post's own text
+// as the title instead, and flag it so the list view doesn't also repeat
+// that same text underneath as a "description" snippet.
+function deriveTitle(rawTitle, desc){
+  if (rawTitle) return { title: rawTitle, titleIsGenerated: false };
+  const trimmed = (desc || '').trim();
+  if (!trimmed) return { title: '(untitled)', titleIsGenerated: false };
+  const title = trimmed.length > 80 ? trimmed.slice(0, 80).trimEnd() + '…' : trimmed;
+  return { title, titleIsGenerated: true };
+}
+
 async function parseFeedXml(xmlText){
   const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
   if (doc.querySelector('parsererror')) throw new Error('Could not parse feed XML.');
@@ -1172,16 +1185,17 @@ async function parseFeedXml(xmlText){
     for (const it of rawItems){
       const link = textOf(findChild(it, ['link']));
       const guid = textOf(findChild(it, ['guid']));
-      const title = textOf(findChild(it, ['title'])) || '(untitled)';
+      const rawTitle = textOf(findChild(it, ['title']));
       const date = textOf(findChild(it, ['pubdate', 'date'])) || '';
       const encodedEl = findChild(it, ['encoded']);
       const descEl = findChild(it, ['description', 'summary']);
       const fullHtmlRaw = textOf(encodedEl) || textOf(descEl);
       const previewRaw = textOf(descEl) || textOf(encodedEl);
       const desc = stripHtml(previewRaw);
+      const { title, titleIsGenerated } = deriveTitle(rawTitle, desc);
       const contentHtml = sanitizeHtml(fullHtmlRaw, link);
       const imageUrl = extractItemImageUrl(it, link) || firstImgSrc(contentHtml);
-      items.push({ id: guid || link, fallbackKey: title + '|' + date, title, link, date, desc, contentHtml, imageUrl });
+      items.push({ id: guid || link, fallbackKey: title + '|' + date, title, titleIsGenerated, link, date, desc, contentHtml, imageUrl });
     }
   } else if (rootName === 'feed'){
     feedTitle = textOf(findChild(root, ['title']));
@@ -1190,16 +1204,17 @@ async function parseFeedXml(xmlText){
       const linkEl = findAll(it, ['link']).find(l => !l.getAttribute('rel') || l.getAttribute('rel') === 'alternate');
       const link = linkEl ? (linkEl.getAttribute('href') || '') : '';
       const id = textOf(findChild(it, ['id']));
-      const title = textOf(findChild(it, ['title'])) || '(untitled)';
+      const rawTitle = textOf(findChild(it, ['title']));
       const date = textOf(findChild(it, ['updated', 'published'])) || '';
       const contentEl = findChild(it, ['content']);
       const summaryEl = findChild(it, ['summary']);
       const fullHtmlRaw = textOf(contentEl) || textOf(summaryEl);
       const previewRaw = textOf(summaryEl) || textOf(contentEl);
       const desc = stripHtml(previewRaw);
+      const { title, titleIsGenerated } = deriveTitle(rawTitle, desc);
       const contentHtml = sanitizeHtml(fullHtmlRaw, link);
       const imageUrl = extractItemImageUrl(it, link) || firstImgSrc(contentHtml);
-      items.push({ id: id || link, fallbackKey: title + '|' + date, title, link, date, desc, contentHtml, imageUrl });
+      items.push({ id: id || link, fallbackKey: title + '|' + date, title, titleIsGenerated, link, date, desc, contentHtml, imageUrl });
     }
   } else {
     throw new Error('Unrecognized feed format (not RSS or Atom).');
@@ -2135,12 +2150,13 @@ function renderItems(){
     const newPill = item.isNew ? '<span class="new-pill">New</span>' : '';
     const showThumb = state.settings.showImagesInList !== false && item.feedShowImages && item.imageUrl;
     const thumbHtml = showThumb ? `<img class="item-thumb" src="${escapeHtml(item.imageUrl)}" alt="" loading="lazy">` : '';
+    const descHtml = item.titleIsGenerated ? '' : `<div class="desc">${escapeHtml(item.desc || '').slice(0, 250)}</div>`;
     el.innerHTML = `
       ${thumbHtml}
       <div class="item-body">
         <h3>${escapeHtml(item.title)}${newPill}</h3>
         <div class="meta">${escapeHtml(item.feedTitle)}${dateStr ? ' · ' + escapeHtml(dateStr) : ''}</div>
-        <div class="desc">${escapeHtml(item.desc || '').slice(0, 250)}</div>
+        ${descHtml}
       </div>
     `;
     listEl.appendChild(el);
