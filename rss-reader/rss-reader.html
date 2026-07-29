@@ -1159,8 +1159,8 @@ function sanitizeHtml(html, baseUrl){
 // Microblog-style feeds (e.g. Bluesky's per-profile RSS) never set <title> —
 // posts are just body text with no headline. Falling back to a literal
 // "(untitled)" for every single item is useless, so use the post's own text
-// as the title instead, and flag it so the list view doesn't also repeat
-// that same text underneath as a "description" snippet.
+// as the title instead, and flag it so the list view can skip the
+// description snippet when it would just repeat that same text verbatim.
 function deriveTitle(rawTitle, desc){
   if (rawTitle) return { title: rawTitle, titleIsGenerated: false };
   const trimmed = (desc || '').trim();
@@ -2150,7 +2150,8 @@ function renderItems(){
     const newPill = item.isNew ? '<span class="new-pill">New</span>' : '';
     const showThumb = state.settings.showImagesInList !== false && item.feedShowImages && item.imageUrl;
     const thumbHtml = showThumb ? `<img class="item-thumb" src="${escapeHtml(item.imageUrl)}" alt="" loading="lazy">` : '';
-    const descHtml = item.titleIsGenerated ? '' : `<div class="desc">${escapeHtml(item.desc || '').slice(0, 250)}</div>`;
+    const descSameAsTitle = item.titleIsGenerated && (item.desc || '').trim() === item.title;
+    const descHtml = (!item.desc || descSameAsTitle) ? '' : `<div class="desc">${escapeHtml(item.desc || '').slice(0, 250)}</div>`;
     el.innerHTML = `
       ${thumbHtml}
       <div class="item-body">
