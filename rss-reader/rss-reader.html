@@ -889,6 +889,19 @@ function promptDialog(title, message, defaultValue){
 
 /* ---------- Article reader dialog ---------- */
 
+// Ignores WordPress-style resized filenames (photo-1024x683.jpg vs photo.jpg)
+// and query strings so a hero image isn't inserted on top of the same photo
+// the feed already embedded inline in the content.
+function normalizeImgUrl(url){
+  try{
+    const u = new URL(url, location.href);
+    const path = u.pathname.replace(/-\d+x\d+(?=\.\w+$)/, '');
+    return u.origin + path;
+  }catch(e){
+    return url;
+  }
+}
+
 function openArticleDialog(feed, item, cardEl){
   document.getElementById('article-title').textContent = item.title || '(untitled)';
   const dateStr = item.date && !isNaN(Date.parse(item.date)) ? new Date(item.date).toLocaleString(undefined, { hour12: false }) : '';
@@ -914,12 +927,16 @@ function openArticleDialog(feed, item, cardEl){
   }
 
   if (feed.showImages !== false && item.imageUrl){
-    const img = document.createElement('img');
-    img.className = 'article-hero-img';
-    img.src = item.imageUrl;
-    img.alt = '';
-    img.loading = 'lazy';
-    bodyEl.insertBefore(img, bodyEl.firstChild);
+    const alreadyShown = Array.from(bodyEl.querySelectorAll('img'))
+      .some(img => normalizeImgUrl(img.src) === normalizeImgUrl(item.imageUrl));
+    if (!alreadyShown){
+      const img = document.createElement('img');
+      img.className = 'article-hero-img';
+      img.src = item.imageUrl;
+      img.alt = '';
+      img.loading = 'lazy';
+      bodyEl.insertBefore(img, bodyEl.firstChild);
+    }
   }
 
   if (markItemRead(feed, item.id)){
@@ -1015,6 +1032,18 @@ function extractItemImageUrl(it, baseUrl){
   }
 
   return null;
+}
+
+// Some feeds (e.g. Bluesky's per-profile RSS) never expose the photo out-of-band —
+// it only exists as an <img> inside the description/content HTML. contentHtml is
+// already sanitized by this point, so any src found here is already an absolute,
+// safe URL.
+function firstImgSrc(html){
+  if (!html) return null;
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  const img = div.querySelector('img[src]');
+  return img ? img.getAttribute('src') : null;
 }
 
 async function hashString(str){
@@ -1151,7 +1180,7 @@ async function parseFeedXml(xmlText){
       const previewRaw = textOf(descEl) || textOf(encodedEl);
       const desc = stripHtml(previewRaw);
       const contentHtml = sanitizeHtml(fullHtmlRaw, link);
-      const imageUrl = extractItemImageUrl(it, link);
+      const imageUrl = extractItemImageUrl(it, link) || firstImgSrc(contentHtml);
       items.push({ id: guid || link, fallbackKey: title + '|' + date, title, link, date, desc, contentHtml, imageUrl });
     }
   } else if (rootName === 'feed'){
@@ -1169,7 +1198,7 @@ async function parseFeedXml(xmlText){
       const previewRaw = textOf(summaryEl) || textOf(contentEl);
       const desc = stripHtml(previewRaw);
       const contentHtml = sanitizeHtml(fullHtmlRaw, link);
-      const imageUrl = extractItemImageUrl(it, link);
+      const imageUrl = extractItemImageUrl(it, link) || firstImgSrc(contentHtml);
       items.push({ id: id || link, fallbackKey: title + '|' + date, title, link, date, desc, contentHtml, imageUrl });
     }
   } else {
