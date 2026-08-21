@@ -691,18 +691,77 @@ function downloadTextFile(filename, text, mime){
 /* === SECTION: INDEXEDDB === */
 
 const DB_NAME='ereader-db';
-const DB_VERSION=1;
+const DB_VERSION=2;
 let _dbPromise=null;
+
+/* Splits one flat "full book" object (the shape every caller outside this
+   section still reads/writes) into the two records actually stored on disk:
+   a small books_meta record (everything the library screen needs) and a
+   books_content record (chapter HTML, embedded images, bookCss, bookmarks,
+   highlights — the parts that are hundreds of KB-MB per book and only ever
+   needed for the one book currently open). Keeping this split in one place
+   means dbPut, and the v1->v2 migration below, can't drift apart. */
+function splitBookRecord(book){
+  return {
+    meta:{
+      id:book.id, title:book.title, author:book.author,
+      thumbnailDataUrl: book.thumbnailDataUrl!=null ? book.thumbnailDataUrl : null,
+      addedAt:book.addedAt, lastOpenedAt:book.lastOpenedAt,
+      progressPercent:book.progressPercent, position:book.position,
+      chapterCount:(book.chapters ? book.chapters.length : 0),
+      format:inferBookFormat(book), readingMs:book.readingMs||0
+    },
+    content:{
+      id:book.id, coverDataUrl:book.coverDataUrl, chapters:book.chapters, toc:book.toc,
+      hrefToChapterIndex:book.hrefToChapterIndex, chapterIdMaps:book.chapterIdMaps,
+      chapterDirs:book.chapterDirs, bookCss:book.bookCss, language:book.language,
+      bookmarks:book.bookmarks, highlights:book.highlights, settings:book.settings
+    }
+  };
+}
 
 function dbOpen(){
   if(_dbPromise) return _dbPromise;
   _dbPromise=new Promise((resolve,reject)=>{
     const req=indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded=()=>{
+    req.onupgradeneeded=(event)=>{
       const db=req.result;
-      if(!db.objectStoreNames.contains('books')){
-        db.createObjectStore('books', {keyPath:'id'});
+      if(event.oldVersion<1){
+        db.createObjectStore('books_meta', {keyPath:'id'});
+        db.createObjectStore('books_content', {keyPath:'id'});
+        return;
       }
+      /* event.oldVersion===1: split the old single 'books' store (every
+         book's full record held together) into books_meta/books_content.
+         This runs on the upgrade's own versionchange transaction — the only
+         one that can see the old store and the new ones at once — via
+         req.transaction rather than a fresh db.transaction() call. The
+         cursor loop must never yield to a macrotask (no await, no
+         setTimeout) or the transaction goes inactive and cursor.continue()
+         throws afterward; same constraint dbForEachMetaBook documents below
+         for a plain scan. Thumbnails are deliberately NOT generated here —
+         decoding an image is inherently async and doing that inside this
+         synchronous transaction would risk exactly that failure — migrated
+         books get thumbnailDataUrl:null and pick up a real thumbnail later
+         from the background backfill in boot(). The old store is dropped as
+         soon as every row has been copied, on the same transaction, so a
+         large existing library's disk usage doesn't temporarily double. */
+      const metaStore=db.createObjectStore('books_meta', {keyPath:'id'});
+      const contentStore=db.createObjectStore('books_content', {keyPath:'id'});
+      const oldStore=req.transaction.objectStore('books');
+      const cursorReq=oldStore.openCursor();
+      cursorReq.onsuccess=()=>{
+        const cursor=cursorReq.result;
+        if(cursor){
+          const book=Object.assign({}, cursor.value, {thumbnailDataUrl:null});
+          const {meta, content}=splitBookRecord(book);
+          metaStore.put(meta);
+          contentStore.put(content);
+          cursor.continue();
+        }else{
+          db.deleteObjectStore('books');
+        }
+      };
     };
     req.onsuccess=()=>resolve(req.result);
     req.onerror=()=>reject(req.error);
@@ -721,9 +780,14 @@ function dbOpen(){
 
 async function dbPut(book){
   const db=await dbOpen();
+  const {meta, content}=splitBookRecord(book);
   return new Promise((resolve,reject)=>{
-    const tx=db.transaction('books','readwrite');
-    tx.objectStore('books').put(book);
+    /* Both records go on one transaction so they always commit or fail
+       together — a book can never end up with a meta row and no content
+       row, or vice versa, even if e.g. a quota error aborts the write. */
+    const tx=db.transaction(['books_meta','books_content'],'readwrite');
+    tx.objectStore('books_meta').put(meta);
+    tx.objectStore('books_content').put(content);
     tx.oncomplete=()=>resolve(book);
     tx.onerror=()=>reject(tx.error);
   });
@@ -732,39 +796,31 @@ async function dbPut(book){
 async function dbGet(id){
   const db=await dbOpen();
   return new Promise((resolve,reject)=>{
-    const tx=db.transaction('books','readonly');
-    const req=tx.objectStore('books').get(id);
-    req.onsuccess=()=>resolve(req.result || null);
-    req.onerror=()=>reject(req.error);
+    const tx=db.transaction(['books_meta','books_content'],'readonly');
+    const metaReq=tx.objectStore('books_meta').get(id);
+    const contentReq=tx.objectStore('books_content').get(id);
+    tx.oncomplete=()=>{
+      const meta=metaReq.result, content=contentReq.result;
+      resolve((meta && content) ? Object.assign({}, content, meta) : null);
+    };
+    tx.onerror=()=>reject(tx.error);
   });
 }
 
-async function dbGetAll(){
+/* Visits every book's summary one at a time via a cursor over books_meta
+   only — never touching books_content (complete chapter HTML, inlined
+   cover/chapter images, bookCss...). This is the whole point of the
+   meta/content split: a large library's startup scan no longer has to
+   deserialize every book's full content just to throw most of it away.
+   callback must be synchronous and must not yield to a macrotask (e.g.
+   setTimeout) before returning: an IndexedDB transaction can go inactive
+   across such a yield, and calling cursor.continue() afterward would
+   throw. */
+async function dbForEachMetaBook(callback){
   const db=await dbOpen();
   return new Promise((resolve,reject)=>{
-    const tx=db.transaction('books','readonly');
-    const req=tx.objectStore('books').getAll();
-    req.onsuccess=()=>resolve(req.result || []);
-    req.onerror=()=>reject(req.error);
-  });
-}
-
-/* Visits every book one at a time via a cursor, instead of getAll()'s
-   single call that materializes every full book record (complete chapter
-   HTML, inlined cover/chapter images, bookCss...) simultaneously — for a
-   large library that can be hundreds of MB held in memory at once, and is
-   the root cause behind real out-of-memory tab crashes on
-   memory-constrained (mobile) devices. callback must be synchronous and
-   must not yield to a macrotask (e.g. setTimeout) before returning: an
-   IndexedDB transaction can go inactive across such a yield, and calling
-   cursor.continue() afterward would throw. If a caller needs to pace UI
-   updates during a long scan, do that via a separate timer reading a
-   shared counter (see exportLibraryBackup) rather than inside callback. */
-async function dbForEachBook(callback){
-  const db=await dbOpen();
-  return new Promise((resolve,reject)=>{
-    const tx=db.transaction('books','readonly');
-    const req=tx.objectStore('books').openCursor();
+    const tx=db.transaction('books_meta','readonly');
+    const req=tx.objectStore('books_meta').openCursor();
     req.onsuccess=()=>{
       const cursor=req.result;
       if(cursor){
@@ -778,22 +834,52 @@ async function dbForEachBook(callback){
   });
 }
 
+/* Same synchronous-callback contract as dbForEachMetaBook, but joins each
+   meta row with its books_content counterpart before invoking callback —
+   for the one caller (exportLibraryBackup) that genuinely needs full
+   records for every book. The content lookup is chained directly off the
+   meta cursor's own onsuccess with no yield in between, so the shared
+   transaction never goes inactive. A meta row with no matching content row
+   (shouldn't happen — dbPut/dbDelete always keep both stores in lockstep)
+   is skipped rather than handed to callback half-populated. */
+async function dbForEachBook(callback){
+  const db=await dbOpen();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(['books_meta','books_content'],'readonly');
+    const contentStore=tx.objectStore('books_content');
+    const cursorReq=tx.objectStore('books_meta').openCursor();
+    cursorReq.onsuccess=()=>{
+      const cursor=cursorReq.result;
+      if(!cursor) return;
+      const meta=cursor.value;
+      const contentReq=contentStore.get(meta.id);
+      contentReq.onsuccess=()=>{
+        const content=contentReq.result;
+        if(content) callback(Object.assign({}, content, meta));
+        cursor.continue();
+      };
+    };
+    cursorReq.onerror=()=>reject(cursorReq.error);
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error);
+  });
+}
+
 /* The lightweight subset of every book's record actually needed to render
    the library screen (tiles/rows/recent/recently-added, stats counts, and
-   title+author dedup checks on import) — NOT full chapter HTML, embedded
-   images, bookCss, or highlight text. Used anywhere the app previously
-   held dbGetAll()'s full result for the whole session or a whole loop;
-   anything that genuinely needs a specific book's full content still
+   title+author dedup checks on import) — sourced entirely from books_meta,
+   NOT full chapter HTML, embedded images, bookCss, or highlight text.
+   Anything that genuinely needs a specific book's full content still
    fetches it individually via dbGet(id) when that book is actually opened
    or processed. */
 async function dbGetLibrarySummaries(){
   const summaries=[];
-  await dbForEachBook(book=>{
+  await dbForEachMetaBook(meta=>{
     summaries.push({
-      id:book.id, title:book.title, author:book.author, coverDataUrl:book.coverDataUrl,
-      addedAt:book.addedAt, lastOpenedAt:book.lastOpenedAt, progressPercent:book.progressPercent,
-      position:book.position, chapterCount:(book.chapters ? book.chapters.length : 0),
-      format:inferBookFormat(book), readingMs:book.readingMs||0
+      id:meta.id, title:meta.title, author:meta.author, thumbnailDataUrl:meta.thumbnailDataUrl,
+      addedAt:meta.addedAt, lastOpenedAt:meta.lastOpenedAt, progressPercent:meta.progressPercent,
+      position:meta.position, chapterCount:meta.chapterCount, format:meta.format,
+      readingMs:meta.readingMs||0
     });
   });
   return summaries;
@@ -802,11 +888,38 @@ async function dbGetLibrarySummaries(){
 async function dbDelete(id){
   const db=await dbOpen();
   return new Promise((resolve,reject)=>{
-    const tx=db.transaction('books','readwrite');
-    tx.objectStore('books').delete(id);
+    const tx=db.transaction(['books_meta','books_content'],'readwrite');
+    tx.objectStore('books_meta').delete(id);
+    tx.objectStore('books_content').delete(id);
     tx.oncomplete=()=>resolve();
     tx.onerror=()=>reject(tx.error);
   });
+}
+
+/* Downscales a cover image (a data: URL, as produced by parseEpub or
+   restored from a backup) to a small thumbnail for library-screen use, so
+   tiles/rows never have to decode/paint a full-resolution embedded cover.
+   Returns null if there's no cover to start from, or if decoding fails for
+   any reason (corrupt/unsupported image bytes) — callers already treat a
+   missing thumbnail the same as a missing cover (placeholder color +
+   initial), so this is a safe, silent fallback rather than a thrown error. */
+async function makeThumbnailDataUrl(coverDataUrl, maxEdge=140, quality=0.82){
+  if(!coverDataUrl) return null;
+  try{
+    const img=new Image();
+    img.src=coverDataUrl;
+    await img.decode();
+    const scale=Math.min(1, maxEdge/Math.max(img.naturalWidth, img.naturalHeight));
+    const w=Math.max(1, Math.round(img.naturalWidth*scale));
+    const h=Math.max(1, Math.round(img.naturalHeight*scale));
+    const canvas=document.createElement('canvas');
+    canvas.width=w; canvas.height=h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', quality);
+  }catch(err){
+    console.error('Failed to generate cover thumbnail', err);
+    return null;
+  }
 }
 
 /* === SECTION: INFLATE === */
@@ -1499,6 +1612,7 @@ async function parseEpub(arrayBuffer){
     const bytes=zip.getFile(coverItem.href);
     if(bytes) coverDataUrl='data:'+guessMime(coverItem.href)+';base64,'+bytesToBase64(bytes);
   }
+  const thumbnailDataUrl=await makeThumbnailDataUrl(coverDataUrl);
 
   const chapters=[];
   const hrefToChapterIndex={};
@@ -1546,7 +1660,7 @@ async function parseEpub(arrayBuffer){
     toc=chapters.map((c,i)=>({label:c.title, chapterIndex:i, anchorId:null}));
   }
 
-  return {title, author, language, coverDataUrl, chapters, toc, hrefToChapterIndex, chapterIdMaps, chapterDirs, bookCss};
+  return {title, author, language, coverDataUrl, thumbnailDataUrl, chapters, toc, hrefToChapterIndex, chapterIdMaps, chapterDirs, bookCss};
 }
 
 /* === SECTION: TXT PARSER === */
@@ -2492,8 +2606,8 @@ function uniqueEpubFilename(title, usedNames){
    (parsed + regenerated forms) in memory simultaneously is exactly the
    kind of thing that crashed the JSON backup export before that was
    fixed (see exportLibraryBackup). Starts from the lightweight library
-   summaries (dbGetLibrarySummaries), not dbGetAll(), so even the initial
-   epub-only filtering step never materializes every book's full content
+   summaries (dbGetLibrarySummaries), not a full-record scan, so even the
+   initial epub-only filtering step never materializes every book's full content
    at once — each book's full record is fetched individually, right before
    it's needed, and left to be GC'd once its .epub bytes are appended to
    the outer zip. */
@@ -2541,7 +2655,7 @@ async function exportLibraryBackup(){
   try{
     const db=await dbOpen();
     const total=await new Promise((resolve,reject)=>{
-      const req=db.transaction('books','readonly').objectStore('books').count();
+      const req=db.transaction('books_meta','readonly').objectStore('books_meta').count();
       req.onsuccess=()=>resolve(req.result);
       req.onerror=()=>reject(req.error);
     });
@@ -2575,7 +2689,12 @@ async function exportLibraryBackup(){
           controller.enqueue(encoder.encode('{"app":"ereader-backup","version":1,"exportedAt":'+Date.now()+',"books":['));
           await dbForEachBook(book=>{
             if(done>0) controller.enqueue(encoder.encode(','));
-            controller.enqueue(encoder.encode(JSON.stringify(book)));
+            /* thumbnailDataUrl/chapterCount are storage-layer artifacts of
+               the books_meta/books_content split (see splitBookRecord) —
+               strip them so the backup file's schema stays exactly what it
+               was before that split, and interchangeable with old backups. */
+            const {thumbnailDataUrl, chapterCount, ...backupBook}=book;
+            controller.enqueue(encoder.encode(JSON.stringify(backupBook)));
             done++;
           });
           controller.enqueue(encoder.encode(']}'));
@@ -2780,6 +2899,11 @@ async function importLibraryBackup(file){
       const key=(book.title+'|'+book.author).toLowerCase();
       if(existingTitles.has(key)){ skipped++; return; }
       if(existingIds.has(book.id)) book.id=uid();
+      /* Regenerated here rather than trusted from the backup file itself —
+         sanitizeImportedBook already treats backup content as untrusted
+         input by design, and a backup made before this feature existed
+         wouldn't carry a thumbnail field at all. */
+      book.thumbnailDataUrl=await makeThumbnailDataUrl(book.coverDataUrl);
       await dbPut(book);
       existingIds.add(book.id);
       existingTitles.add(key);
@@ -2880,6 +3004,47 @@ async function refreshLibraryFromDb(){
   if(state.screen==='library') renderLibrary();
 }
 
+/* Books migrated from the pre-split v1 database (see dbOpen's upgrade
+   handler) have no thumbnail — generating one requires decoding an image,
+   which can't safely happen inside that synchronous migration transaction.
+   This fills them in afterward, one at a time, off the main thread's
+   critical path (paced via requestIdleCallback so it never competes with
+   user interaction), so an existing large library gets its cover art and
+   the thumbnail memory savings back within one session instead of only on
+   next import. A no-op after the first run: new imports and restored
+   backups already get a thumbnail up front (see makeBookRecord /
+   importLibraryBackup), so this queue is normally empty. */
+let _backfillingThumbnails=false;
+async function backfillMissingThumbnails(){
+  if(_backfillingThumbnails) return;
+  _backfillingThumbnails=true;
+  try{
+    const summaries=await dbGetLibrarySummaries();
+    const pending=summaries.filter(s=>s.thumbnailDataUrl==null);
+    const idle=typeof requestIdleCallback==='function'
+      ? (fn)=>requestIdleCallback(fn)
+      : (fn)=>setTimeout(fn, 0);
+    let sinceRefresh=0;
+    for(const summary of pending){
+      await new Promise(resolve=>idle(resolve));
+      try{
+        const full=await dbGet(summary.id);
+        if(full && full.coverDataUrl && full.thumbnailDataUrl==null){
+          full.thumbnailDataUrl=await makeThumbnailDataUrl(full.coverDataUrl);
+          await dbPut(full);
+          sinceRefresh++;
+        }
+      }catch(err){
+        console.error('Failed to backfill a cover thumbnail', err);
+      }
+      if(sinceRefresh>=5){ sinceRefresh=0; await refreshLibraryFromDb(); }
+    }
+    if(sinceRefresh>0) await refreshLibraryFromDb();
+  }finally{
+    _backfillingThumbnails=false;
+  }
+}
+
 /* Shared by the book-tile's menu button and the book-row's remove control —
    both trigger the same confirm-then-delete flow for a library entry. */
 async function removeBookWithConfirm(book){
@@ -2893,13 +3058,13 @@ function renderBookTile(book){
   const pct=bookProgressPercent(book);
   tile.innerHTML=
     '<div class="cover">'+
-      (book.coverDataUrl ? '<img src="'+book.coverDataUrl+'" alt="">' : '<span class="initial">'+escapeHtml((book.title||'?')[0].toUpperCase())+'</span>')+
+      (book.thumbnailDataUrl ? '<img src="'+book.thumbnailDataUrl+'" alt="">' : '<span class="initial">'+escapeHtml((book.title||'?')[0].toUpperCase())+'</span>')+
     '</div>'+
     '<div class="title">'+escapeHtml(book.title)+'</div>'+
     '<div class="author">'+escapeHtml(book.author)+'</div>'+
     '<div class="progress-track"><div class="progress-fill" style="width:'+pct+'%"></div></div>'+
     (book.lastOpenedAt ? '<div class="progress-pct">'+pct+'% read</div>' : '');
-  if(!book.coverDataUrl) tile.querySelector('.cover').style.background=placeholderColor(book.title);
+  if(!book.thumbnailDataUrl) tile.querySelector('.cover').style.background=placeholderColor(book.title);
   tile.addEventListener('click', ()=>openBook(book.id));
 
   const menuBtn=document.createElement('button');
@@ -2924,11 +3089,11 @@ function renderBookRow(book){
   const pct=bookProgressPercent(book);
   row.innerHTML=
     '<span class="cover-mini">'+
-      (book.coverDataUrl ? '<img src="'+book.coverDataUrl+'" alt="">' : escapeHtml((book.title||'?')[0].toUpperCase()))+
+      (book.thumbnailDataUrl ? '<img src="'+book.thumbnailDataUrl+'" alt="">' : escapeHtml((book.title||'?')[0].toUpperCase()))+
     '</span>'+
     '<span class="info"><span class="rt">'+escapeHtml(book.title)+'</span><span class="rp">'+(book.lastOpenedAt ? pct+'% read' : 'Not started')+'</span></span>'+
     '<span class="del" aria-label="Book options">⋮</span>';
-  if(!book.coverDataUrl) row.querySelector('.cover-mini').style.background=placeholderColor(book.title);
+  if(!book.thumbnailDataUrl) row.querySelector('.cover-mini').style.background=placeholderColor(book.title);
   row.querySelector('.del').addEventListener('click', async (e)=>{ e.stopPropagation(); await removeBookWithConfirm(book); });
   row.addEventListener('click', ()=>openBook(book.id));
   return row;
@@ -3110,6 +3275,7 @@ async function parseFileToBookData(file){
 function makeBookRecord(parsed, opened){
   return {
     id:uid(), title:parsed.title, author:parsed.author, coverDataUrl:parsed.coverDataUrl,
+    thumbnailDataUrl: parsed.thumbnailDataUrl || null,
     format: parsed.format, // 'epub' | 'txt' — see isEpubSourcedBook / downloadLibraryAsEpubZip
     chapters:parsed.chapters, toc:parsed.toc, language: parsed.language || null,
     /* Only present for EPUBs (txt books have neither in-book links to
@@ -4182,6 +4348,9 @@ async function boot(){
   await refreshLibraryFromDb();
   showLoading(false);
   showScreen('library');
+  /* Fire-and-forget: never delays first paint, and is a no-op for anyone
+     not carrying books migrated from the pre-split v1 database. */
+  backfillMissingThumbnails();
 }
 
 if(document.readyState==='loading'){
