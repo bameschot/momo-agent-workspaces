@@ -234,6 +234,7 @@
       display: block;
       transition: opacity 0.3s;
     }
+    #gallery.contain-mode .thumb img { object-fit: contain; }
     .thumb img.loading { opacity: 0; }
     .thumb .overlay {
       position: absolute;
@@ -418,6 +419,13 @@
       <option value="320">X-Large</option>
     </select>
   </label>
+  <label>
+    Fit
+    <select id="fit-select">
+      <option value="cover">Cropped</option>
+      <option value="contain" selected>Full (no crop)</option>
+    </select>
+  </label>
   <div style="display:flex;gap:0.5rem;align-items:center;">
     <button class="ss-btn" id="ss-toggle">▶ Slideshow</button>
     <select id="ss-speed" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:0.3rem 0.5rem;border-radius:6px;font-size:0.78rem;">
@@ -439,7 +447,7 @@
   </div>
 </div>
 
-<div id="gallery"></div>
+<div id="gallery" class="contain-mode"></div>
 <div id="load-more" aria-live="polite"></div>
 
 <!-- Lightbox -->
@@ -648,6 +656,11 @@ function loadFromJson(file) {
 // ── SIZE CONTROL ──────────────────────────────────────────────────────────────
 document.getElementById('size-select').addEventListener('change', e => {
   gallery.style.setProperty('--col-size', e.target.value + 'px');
+});
+
+// ── FIT CONTROL ───────────────────────────────────────────────────────────────
+document.getElementById('fit-select').addEventListener('change', e => {
+  gallery.classList.toggle('contain-mode', e.target.value === 'contain');
 });
 
 // ── SEARCH ────────────────────────────────────────────────────────────────────
