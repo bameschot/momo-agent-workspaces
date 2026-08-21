@@ -436,6 +436,7 @@
   <button id="download-btn">⬇ Download ZIP</button>
   <button id="download-json-btn">⬇ Download JSON</button>
 <button id="sort-dim-btn" class="ss-btn">⇅ Dimensions</button>
+  <button id="sort-ratio-btn" class="ss-btn">⇅ Aspect Ratio</button>
   <button id="shuffle-btn" class="ss-btn">🔀 Shuffle</button>
   <button id="folder-btn">📁 Open Folder</button>
   <input type="file" id="folder-file-input" webkitdirectory multiple />
@@ -1009,20 +1010,21 @@ document.getElementById('download-json-btn').addEventListener('click', async () 
     + ' ✨');
 });
 
-// ── SORT BY DIMENSIONS ────────────────────────────────────────────────────────
+// ── SORT BY DIMENSIONS / ASPECT RATIO ───────────────────────────────────────────
 const dimCache = new Map();
 let dimSortDir = 1;
+let ratioSortDir = 1;
 
 function getDimensions(url) {
   if (dimCache.has(url)) return Promise.resolve(dimCache.get(url));
   return new Promise(resolve => {
     const img = new Image();
     img.onload = () => {
-      const px = img.naturalWidth * img.naturalHeight;
-      dimCache.set(url, px);
-      resolve(px);
+      const info = { px: img.naturalWidth * img.naturalHeight, ratio: img.naturalWidth / img.naturalHeight };
+      dimCache.set(url, info);
+      resolve(info);
     };
-    img.onerror = () => { dimCache.set(url, 0); resolve(0); };
+    img.onerror = () => { const info = { px: 0, ratio: 0 }; dimCache.set(url, info); resolve(info); };
     img.src = url;
   });
 }
@@ -1032,13 +1034,31 @@ sortDimBtn.addEventListener('click', async () => {
   sortDimBtn.disabled = true;
   sortDimBtn.textContent = '⏳ Measuring…';
 
-  const withDims = await Promise.all(filtered.map(async img => ({ img, px: await getDimensions(img.url) })));
+  const withDims = await Promise.all(filtered.map(async img => ({ img, px: (await getDimensions(img.url)).px })));
   withDims.sort((a, b) => dimSortDir * (a.px - b.px));
   filtered = withDims.map(x => x.img);
 
   dimSortDir *= -1;
   sortDimBtn.textContent = dimSortDir === 1 ? '⇅ Dim ↑' : '⇅ Dim ↓';
   sortDimBtn.disabled = false;
+
+  rendered = 0;
+  gallery.innerHTML = '';
+  renderBatch();
+});
+
+const sortRatioBtn = document.getElementById('sort-ratio-btn');
+sortRatioBtn.addEventListener('click', async () => {
+  sortRatioBtn.disabled = true;
+  sortRatioBtn.textContent = '⏳ Measuring…';
+
+  const withRatio = await Promise.all(filtered.map(async img => ({ img, ratio: (await getDimensions(img.url)).ratio })));
+  withRatio.sort((a, b) => ratioSortDir * (a.ratio - b.ratio));
+  filtered = withRatio.map(x => x.img);
+
+  ratioSortDir *= -1;
+  sortRatioBtn.textContent = ratioSortDir === 1 ? '⇅ Ratio ↑' : '⇅ Ratio ↓';
+  sortRatioBtn.disabled = false;
 
   rendered = 0;
   gallery.innerHTML = '';
