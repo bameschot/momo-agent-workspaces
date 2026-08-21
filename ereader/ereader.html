@@ -532,6 +532,9 @@ mark.searchhit{background:var(--hl-yellow); color:#1a1a1a;}
         <div class="row1"><span><span class="entry-icon">📦</span>Download EPUBs (.zip)</span></div>
         <div class="excerpt">Text-file imports aren't included, only EPUBs.</div>
       </button>
+      <button type="button" class="list-entry btn-danger" id="clearDataBtn" style="margin-top:1rem" title="Delete every book in your library, including bookmarks, highlights, and reading progress">
+        <span class="entry-icon">🗑️</span>Clear all data
+      </button>
     </div>
   </div>
 
@@ -891,6 +894,20 @@ async function dbDelete(id){
     const tx=db.transaction(['books_meta','books_content'],'readwrite');
     tx.objectStore('books_meta').delete(id);
     tx.objectStore('books_content').delete(id);
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error);
+  });
+}
+
+/* Empties both stores in one transaction — used by the "Clear all data"
+   action. IDBObjectStore.clear() is a single request per store rather than
+   a delete per book, so this stays fast regardless of library size. */
+async function dbClearAllBooks(){
+  const db=await dbOpen();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(['books_meta','books_content'],'readwrite');
+    tx.objectStore('books_meta').clear();
+    tx.objectStore('books_content').clear();
     tx.oncomplete=()=>resolve();
     tx.onerror=()=>reject(tx.error);
   });
@@ -4095,6 +4112,21 @@ function wireEvents(){
   document.getElementById('restoreInput').addEventListener('change', (e)=>{
     const file=e.target.files[0]; e.target.value='';
     if(file) importLibraryBackup(file);
+  });
+  document.getElementById('clearDataBtn').addEventListener('click', async ()=>{
+    const count=state.library.length;
+    if(count===0){ showToast('Your library is already empty'); return; }
+    const ok=await confirmDialog('Clear all data?',
+      'This deletes all '+count+' book'+(count===1?'':'s')+' in your library, including bookmarks, highlights, and reading progress. This cannot be undone.');
+    if(!ok) return;
+    try{
+      await dbClearAllBooks();
+      await refreshLibraryFromDb();
+      showToast('Library cleared');
+    }catch(err){
+      console.error('Failed to clear library', err);
+      showToast('Could not clear your library: '+(err && err.message ? err.message : 'unknown error'));
+    }
   });
   document.getElementById('searchLibraryBtn').addEventListener('click', ()=>openSearch('library'));
   document.getElementById('installBtn').addEventListener('click', promptInstall);
