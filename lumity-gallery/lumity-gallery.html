@@ -348,21 +348,14 @@
     }
     .ss-btn:hover, .ss-btn.active { background: var(--glow); color: #fff; border-color: var(--accent); }
 
-    /* ── LOAD MORE ── */
+    /* ── LOAD MORE (infinite-scroll status/sentinel) ── */
     #load-more {
       display: block;
+      text-align: center;
       margin: 1.5rem auto;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--accent2);
-      padding: 0.6rem 2rem;
-      border-radius: 24px;
-      cursor: pointer;
-      font-size: 0.9rem;
-      transition: background 0.15s, border-color 0.15s;
+      color: var(--text-muted);
+      font-size: 0.85rem;
     }
-    #load-more:hover { background: var(--glow); border-color: var(--accent); color: #fff; }
-    #load-more:disabled { opacity: 0.4; cursor: default; }
 
     /* ── TOAST ── */
     #toast {
@@ -447,7 +440,7 @@
 </div>
 
 <div id="gallery"></div>
-<button id="load-more">Load more</button>
+<div id="load-more" aria-live="polite"></div>
 
 <!-- Lightbox -->
 <div id="lightbox" role="dialog" aria-modal="true">
@@ -687,10 +680,9 @@ function resetGallery() {
 // ── RENDER ────────────────────────────────────────────────────────────────────
 function updateCount() {
   countBadge.textContent = filtered.length + ' images';
-  loadMore.disabled = rendered >= filtered.length;
   loadMore.textContent = rendered < filtered.length
-    ? 'Load more (' + (filtered.length - rendered) + ' remaining)'
-    : 'All loaded';
+    ? 'Loading more… (' + (filtered.length - rendered) + ' remaining)'
+    : '';
 }
 
 function renderBatch() {
@@ -733,7 +725,10 @@ function renderBatch() {
   updateCount();
 }
 
-loadMore.addEventListener('click', renderBatch);
+const loadMoreObserver = new IntersectionObserver(entries => {
+  if (entries[0].isIntersecting && rendered < filtered.length) renderBatch();
+}, { rootMargin: '600px' });
+loadMoreObserver.observe(loadMore);
 
 // ── LIGHTBOX ──────────────────────────────────────────────────────────────────
 function openLightbox(idx) {
