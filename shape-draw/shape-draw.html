@@ -106,6 +106,11 @@
   }
   .result .actions{display:flex; gap:.6rem; margin-top:.6rem; width:100%; max-width:22rem;}
   .result .actions .btn{flex:1;}
+  .breakdown{font-size:.8rem; color:var(--muted); border-collapse:collapse; margin-top:.2rem; font-variant-numeric:tabular-nums;}
+  .breakdown td{padding:.05rem .5rem;}
+  .breakdown td:last-child{text-align:right; font-weight:600;}
+  .breakdown .minus{color:var(--bad);}
+  .breakdown .ok{color:var(--good);}
   .result .error{color:var(--bad); font-weight:600; font-size:1.1rem;}
 
   .toast{
@@ -314,12 +319,12 @@ function sizeOf(shape, r){
  * - drawing → ideal catches wobbles and wrong proportions
  * - ideal → drawing catches missing parts (unclosed shapes, a missing side)
  */
-function cost(shape, p, stroke){
+function cost(shape, p, stroke, idealCount){
   const od = makeOutlineDist(shape, p);
   let a = 0;
   for (const q of stroke) a += od(q.x, q.y);
   a /= stroke.length;
-  const ideal = idealSamples(shape, p, 96);
+  const ideal = idealSamples(shape, p, idealCount);
   let b = 0;
   for (const q of ideal){
     let best = Infinity;
@@ -333,31 +338,36 @@ function cost(shape, p, stroke){
   return (a + b) / 2 / sizeOf(shape, p.r);
 }
 
-/* Finds the position, size and rotation of the ideal shape that best matches the drawing. */
-function fit(shape, stroke){
+/*
+ * Finds the position, size and rotation of the ideal shape that best matches the drawing.
+ * A coarse search runs on a light version of the stroke, then the fit is refined on the
+ * dense one until the steps are far below a pixel, so a perfect drawing scores ~100%.
+ */
+function fit(shape, coarse, fine){
   let cx = 0, cy = 0;
-  for (const q of stroke){ cx += q.x; cy += q.y; }
-  cx /= stroke.length; cy /= stroke.length;
+  for (const q of fine){ cx += q.x; cy += q.y; }
+  cx /= fine.length; cy /= fine.length;
   let r0 = 0;
-  for (const q of stroke) r0 += dist(q.x, q.y, cx, cy);
-  r0 /= stroke.length;
+  for (const q of fine) r0 += dist(q.x, q.y, cx, cy);
+  r0 /= fine.length;
 
   // Coarse search over rotation and size.
   let best = {cx, cy, r: r0, a: 0}, bestCost = Infinity;
   const period = ROT_PERIOD[shape];
-  const angleSteps = period ? 36 : 1;
+  const angleSteps = period ? 48 : 1;
   const scales = shape === 'circle' ? [0.9, 1, 1.1] : [1, 1.1, 1.2, 1.3, 1.4, 1.5];
   for (let i = 0; i < angleSteps; i++){
     for (const s of scales){
       const p = {cx, cy, r: r0 * s, a: period * i / angleSteps};
-      const c = cost(shape, p, stroke);
+      const c = cost(shape, p, coarse, 96);
       if (c < bestCost){ bestCost = c; best = p; }
     }
   }
 
-  // Local refinement (coordinate descent with shrinking steps).
-  let stepPos = r0 * 0.1, stepR = r0 * 0.05, stepA = period ? period / 36 : 0;
-  for (let iter = 0; iter < 60 && stepPos > r0 * 0.002; iter++){
+  // Local refinement on the dense stroke (coordinate descent with shrinking steps).
+  bestCost = cost(shape, best, fine, 240);
+  let stepPos = r0 * 0.05, stepR = r0 * 0.03, stepA = period ? period / 48 : 0;
+  for (let iter = 0; iter < 250 && stepPos > r0 * 0.0002; iter++){
     let improved = false;
     const tries = [
       ['cx', stepPos], ['cx', -stepPos], ['cy', stepPos], ['cy', -stepPos],
@@ -367,7 +377,7 @@ function fit(shape, stroke){
     for (const [k, d] of tries){
       const p = {...best, [k]: best[k] + d};
       if (p.r <= 0) continue;
-      const c = cost(shape, p, stroke);
+      const c = cost(shape, p, fine, 240);
       if (c < bestCost){ bestCost = c; best = p; improved = true; }
     }
     if (!improved){ stepPos /= 2; stepR /= 2; stepA /= 2; }
@@ -375,23 +385,100 @@ function fit(shape, stroke){
   return {params: best, error: bestCost};
 }
 
-/* Maps relative error to a 0–100 accuracy. An error of 16% of the shape's size or more scores 0. */
+/*
+ * Maps relative error to a 0–100 fit score. The curve is forgiving for the small wobbles
+ * every hand makes (2% error ≈ 95%) but drops quickly for the wrong shape (10% ≈ 45%).
+ */
 function errorToScore(err){
-  return Math.max(0, Math.min(100, 100 * (1 - err / 0.16)));
+  return 100 / (1 + (err / 0.09) ** 2);
+}
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const MAX_PENALTY = 3; // each detail check can cost at most this many points
+
+/* Smallest distance from point q to the polyline pts[from..to). */
+function nearestOnRange(q, pts, from, to){
+  let best = Infinity;
+  for (let i = Math.max(1, from); i < to; i++){
+    const d = segDist(q.x, q.y, pts[i-1].x, pts[i-1].y, pts[i].x, pts[i].y);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/*
+ * Extra checks on top of the overall fit, each a mild penalty of up to MAX_PENALTY points.
+ * Returns [{label, value, penalty}] where value is a human-readable measurement.
+ */
+function detailChecks(shape, p, stroke){
+  const S = sizeOf(shape, p.r), P = 2 * Math.PI * S, n = stroke.length;
+  const checks = [];
+  const pct = (v) => (v * 100).toFixed(1) + '%';
+
+  // Closing gap: how far the end is from the start. Measured against the other end's first/last
+  // 25% so that drawing past the start (overshoot) doesn't count as a gap.
+  const tail = Math.round(n * 0.25);
+  const gap = Math.min(
+    nearestOnRange(stroke[n-1], stroke, 1, tail),
+    nearestOnRange(stroke[0], stroke, n - tail, n)
+  ) / P;
+  checks.push({label: 'Closing gap', value: pct(gap), penalty: clamp((gap - 0.01) * 50, 0, MAX_PENALTY)});
+
+  // Overshoot: how far past one full lap around the centre the stroke goes.
+  let sweep = 0;
+  let prevA = Math.atan2(stroke[0].y - p.cy, stroke[0].x - p.cx);
+  for (let i = 1; i < n; i++){
+    const a = Math.atan2(stroke[i].y - p.cy, stroke[i].x - p.cx);
+    let d = a - prevA;
+    if (d > Math.PI) d -= 2 * Math.PI;
+    if (d < -Math.PI) d += 2 * Math.PI;
+    sweep += d; prevA = a;
+  }
+  const over = Math.max(0, Math.abs(sweep) / (2 * Math.PI) - 1);
+  checks.push({label: 'Overshoot', value: pct(over), penalty: clamp((over - 0.03) * 25, 0, MAX_PENALTY)});
+
+  if (shape === 'circle'){
+    // Ovalness: strength of the 2nd harmonic of the radius error (an ellipse shows up as cos 2θ).
+    // Using the deviation from the fitted radius keeps gaps and overlaps from looking oval.
+    let c2 = 0, s2 = 0;
+    for (const q of stroke){
+      const t = Math.atan2(q.y - p.cy, q.x - p.cx), dr = dist(q.x, q.y, p.cx, p.cy) - p.r;
+      c2 += dr * Math.cos(2 * t); s2 += dr * Math.sin(2 * t);
+    }
+    const oval = 2 * Math.hypot(c2, s2) / n / p.r;
+    checks.push({label: 'Roundness', value: pct(oval) + ' oval', penalty: clamp((oval - 0.01) * 60, 0, MAX_PENALTY)});
+  } else {
+    // Corners: the drawn point closest to each ideal corner; far away means a rounded corner.
+    const v = polygon(SIDES[shape], p.cx, p.cy, p.r, p.a);
+    const drawn = v.map(c => {
+      let bi = 0, bd = Infinity;
+      stroke.forEach((q, i) => { const d = dist(q.x, q.y, c.x, c.y); if (d < bd){ bd = d; bi = i; } });
+      return {q: stroke[bi], d: bd};
+    });
+    const corner = drawn.reduce((t, c) => t + c.d, 0) / drawn.length / S;
+    checks.push({label: 'Sharp corners', value: pct(corner) + ' off', penalty: clamp((corner - 0.02) * 40, 0, MAX_PENALTY)});
+
+    // Equal sides: spread of the distances between the drawn corners.
+    const sides = drawn.map((c, i) => { const o = drawn[(i + 1) % drawn.length].q; return dist(c.q.x, c.q.y, o.x, o.y); });
+    const mean = sides.reduce((t, x) => t + x, 0) / sides.length;
+    const cv = Math.sqrt(sides.reduce((t, x) => t + (x - mean) ** 2, 0) / sides.length) / mean;
+    checks.push({label: 'Equal sides', value: pct(cv) + ' spread', penalty: clamp((cv - 0.02) * 40, 0, MAX_PENALTY)});
+  }
+  return checks;
 }
 
 function verdict(score){
-  if (score >= 97) return 'Flawless!';
-  if (score >= 92) return 'Excellent!';
-  if (score >= 85) return 'Great!';
-  if (score >= 75) return 'Good';
-  if (score >= 60) return 'Not bad';
-  if (score >= 40) return 'Keep practising';
+  if (score >= 98.5) return 'Flawless!';
+  if (score >= 95) return 'Excellent!';
+  if (score >= 90) return 'Great!';
+  if (score >= 80) return 'Good';
+  if (score >= 65) return 'Not bad';
+  if (score >= 45) return 'Keep practising';
   return 'Hmm… is that the right shape?';
 }
 
 function scoreColorVar(score){
-  return score >= 85 ? '--good' : score >= 60 ? '--ok' : '--bad';
+  return score >= 90 ? '--good' : score >= 65 ? '--ok' : '--bad';
 }
 
 /* Compact thumbnail of the drawing as an SVG path in a 100×100 box. */
@@ -413,7 +500,7 @@ const $ = (id) => document.getElementById(id);
 const LABEL = {circle: 'Circle', triangle: 'Triangle', square: 'Square'};
 let activeTab = 'circle';
 
-function fmt(score){ return score.toFixed(1) + '%'; }
+function fmt(score){ return score.toFixed(2) + '%'; }
 
 function renderHome(){
   for (const s of SHAPES){
@@ -570,7 +657,7 @@ canvas.addEventListener('pointermove', (e) => {
   const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
   for (const ev of evs.length ? evs : [e]){
     const p = pos(ev), last = raw[raw.length - 1];
-    if (dist(p.x, p.y, last.x, last.y) >= 1) raw.push(p);
+    if (dist(p.x, p.y, last.x, last.y) >= 0.5) raw.push(p);
   }
   redraw();
 });
@@ -597,9 +684,12 @@ function finish(){
     return;
   }
 
-  const stroke = resample(raw, 128);
-  const {params, error} = fit(shape, stroke);
-  const score = Math.round(errorToScore(error) * 10) / 10;
+  const stroke = resample(raw, 256);
+  const {params, error} = fit(shape, resample(raw, 128), stroke);
+  const fitScore = errorToScore(error);
+  const checks = detailChecks(shape, params, stroke);
+  const penalty = checks.reduce((t, c) => t + c.penalty, 0);
+  const score = Math.round(Math.max(0, fitScore - penalty) * 100) / 100;
   lastResult = {params, stroke, score};
   done = true;
   redraw();
@@ -615,7 +705,12 @@ function finish(){
   showResult(`
     ${badge}
     <div class="pct" style="color:var(${scoreColorVar(score)})">${fmt(score)}</div>
-    <div class="verdict">${verdict(score)}</div>`);
+    <div class="verdict">${verdict(score)}</div>
+    <table class="breakdown">
+      <tr><td>Shape fit</td><td></td><td>${fitScore.toFixed(2)}</td></tr>
+      ${checks.map(c => `<tr><td>${c.label}</td><td>${c.value}</td>
+        <td class="${c.penalty >= 0.005 ? 'minus' : 'ok'}">${c.penalty >= 0.005 ? '−' + c.penalty.toFixed(2) : '✓'}</td></tr>`).join('')}
+    </table>`);
 }
 
 function showResult(html){
