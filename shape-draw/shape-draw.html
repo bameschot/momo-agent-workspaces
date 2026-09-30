@@ -109,6 +109,8 @@
   .breakdown{font-size:.8rem; color:var(--muted); border-collapse:collapse; margin-top:.2rem; font-variant-numeric:tabular-nums;}
   .breakdown td{padding:.05rem .5rem;}
   .breakdown td:last-child{text-align:right; font-weight:600;}
+  .breakdown small{font-size:.7rem; opacity:.8;}
+  .breakdown .sum td{border-top:1px solid var(--border); color:var(--text);}
   .breakdown .minus{color:var(--bad);}
   .breakdown .ok{color:var(--good);}
   .result .error{color:var(--bad); font-weight:600; font-size:1.1rem;}
@@ -386,11 +388,112 @@ function fit(shape, coarse, fine){
 }
 
 /*
- * Maps relative error to a 0–100 fit score. The curve is forgiving for the small wobbles
- * every hand makes (2% error ≈ 95%) but drops quickly for the wrong shape (10% ≈ 45%).
+ * Maps a measurement to a 0–100 score: 100 at 0, 50 at `half`. The curve is flat near 0, so
+ * the small errors every hand makes cost little, and drops quickly for big mistakes.
  */
-function errorToScore(err){
-  return 100 / (1 + (err / 0.09) ** 2);
+function curve(v, half){
+  return 100 / (1 + (v / half) ** 2);
+}
+
+/* Outline fit score. Circles get a slightly softer curve than polygons. */
+function errorToScore(err, shape){
+  return curve(err, shape === 'circle' ? 0.105 : 0.09);
+}
+
+/* Principal-axis line through a set of points: centre, unit direction and RMS distance off the line. */
+function fitLine(pts){
+  let mx = 0, my = 0;
+  for (const q of pts){ mx += q.x; my += q.y; }
+  mx /= pts.length; my /= pts.length;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (const q of pts){ const dx = q.x - mx, dy = q.y - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+  const t = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  let dx = Math.cos(t), dy = Math.sin(t);
+  // Point the direction along the drawing order.
+  const a = pts[0], b = pts[pts.length - 1];
+  if ((b.x - a.x) * dx + (b.y - a.y) * dy < 0){ dx = -dx; dy = -dy; }
+  let e = 0;
+  for (const q of pts){ const d = (q.x - mx) * -dy + (q.y - my) * dx; e += d * d; }
+  return {x: mx, y: my, dx, dy, rms: Math.sqrt(e / pts.length)};
+}
+
+function intersect(l1, l2){
+  const den = l1.dx * l2.dy - l1.dy * l2.dx;
+  if (Math.abs(den) < 1e-6) return null;
+  const t = ((l2.x - l1.x) * l2.dy - (l2.y - l1.y) * l2.dx) / den;
+  return {x: l1.x + t * l1.dx, y: l1.y + t * l1.dy};
+}
+
+/*
+ * Square/triangle analysis: split the stroke into sides at the corners, fit a straight line to
+ * each side, then measure how straight the sides are, how sharp the corners are, how close each
+ * corner angle is to 90°/60°, and how equal the side lengths are (between the corners where the
+ * fitted lines meet).
+ */
+function polygonParts(shape, p, stroke){
+  const k = SIDES[shape], n = stroke.length;
+  const v = polygon(k, p.cx, p.cy, p.r, p.a);
+  let cornerOff = 0;
+  const idx = v.map(c => {
+    let bi = 0, bd = Infinity;
+    stroke.forEach((q, i) => { const d = dist(q.x, q.y, c.x, c.y); if (d < bd){ bd = d; bi = i; } });
+    cornerOff += bd;
+    return bi;
+  }).sort((a, b) => a - b);
+  // Sharp corners: how far the drawing stays from each ideal corner (a rounded corner cuts it short).
+  cornerOff /= k * sizeOf(shape, p.r);
+  if (new Set(idx).size < k) return null;
+
+  // Points of each side, in drawing order; the last side wraps from the last corner back to the first.
+  const sides = [];
+  for (let j = 0; j < k; j++){
+    const from = idx[j], to = idx[(j + 1) % k];
+    const pts = j < k - 1 ? stroke.slice(from, to + 1) : stroke.slice(from).concat(stroke.slice(0, to + 1));
+    // Leave out the ends near the corners so a rounded corner doesn't count as a bent side.
+    const trim = Math.floor(pts.length * 0.12);
+    sides.push(pts.length - 2 * trim >= 4 ? pts.slice(trim, pts.length - trim) : pts);
+  }
+  const lines = sides.map(fitLine);
+
+  const corners = lines.map((l, j) => intersect(lines[(j + k - 1) % k], l) || stroke[idx[j]]);
+  const lens = corners.map((c, j) => { const o = corners[(j + 1) % k]; return dist(c.x, c.y, o.x, o.y); });
+  const meanLen = lens.reduce((t, x) => t + x, 0) / k;
+
+  // Straightness: RMS distance of each side from its line, relative to the side length.
+  const bend = lines.reduce((t, l) => t + l.rms, 0) / k / meanLen;
+
+  // Corner angles: the turn between neighbouring sides should be 360°/k (90° square, 120° triangle).
+  const target = 360 / k;
+  const angleErr = lines.reduce((t, l, j) => {
+    const m = lines[(j + k - 1) % k];
+    const turn = Math.abs(Math.atan2(m.dx * l.dy - m.dy * l.dx, m.dx * l.dx + m.dy * l.dy)) * 180 / Math.PI;
+    return t + Math.abs(turn - target);
+  }, 0) / k;
+
+  const cv = Math.sqrt(lens.reduce((t, x) => t + (x - meanLen) ** 2, 0) / k) / meanLen;
+  const interior = shape === 'square' ? 90 : 60;
+  return [
+    {label: 'Straight lines', value: (bend * 100).toFixed(1) + '% bend', score: curve(bend, 0.025), weight: 0.3},
+    {label: 'Sharp corners', value: (cornerOff * 100).toFixed(1) + '% off', score: curve(cornerOff, 0.06), weight: 0.1},
+    {label: 'Corner angles', value: '±' + angleErr.toFixed(1) + '° from ' + interior + '°', score: curve(angleErr, 12), weight: 0.15},
+    {label: 'Equal sides', value: (cv * 100).toFixed(1) + '% spread', score: curve(cv, 0.08), weight: 0.2},
+  ];
+}
+
+/*
+ * Main score before detail penalties. Circles are judged on the outline fit alone. Squares and
+ * triangles combine the outline fit with straight lines, corner angles and equal sides as a
+ * weighted geometric mean, so doing badly on any one of them pulls the score down.
+ */
+function mainScore(shape, p, stroke, error){
+  const fitPart = {label: 'Outline fit', value: '', score: errorToScore(error, shape), weight: 1};
+  if (shape === 'circle') return {score: fitPart.score, parts: [fitPart]};
+  const parts = polygonParts(shape, p, stroke);
+  if (!parts) return {score: fitPart.score * 0.5, parts: [fitPart]};
+  fitPart.weight = 1 - parts.reduce((t, x) => t + x.weight, 0);
+  parts.unshift(fitPart);
+  const score = Math.exp(parts.reduce((t, x) => t + x.weight * Math.log(Math.max(x.score, 0.01)), 0));
+  return {score, parts};
 }
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -407,7 +510,7 @@ function nearestOnRange(q, pts, from, to){
 }
 
 /*
- * Extra checks on top of the overall fit, each a mild penalty of up to MAX_PENALTY points.
+ * Extra checks on top of the main score, each a mild penalty of up to MAX_PENALTY points.
  * Returns [{label, value, penalty}] where value is a human-readable measurement.
  */
 function detailChecks(shape, p, stroke){
@@ -447,22 +550,6 @@ function detailChecks(shape, p, stroke){
     }
     const oval = 2 * Math.hypot(c2, s2) / n / p.r;
     checks.push({label: 'Roundness', value: pct(oval) + ' oval', penalty: clamp((oval - 0.01) * 60, 0, MAX_PENALTY)});
-  } else {
-    // Corners: the drawn point closest to each ideal corner; far away means a rounded corner.
-    const v = polygon(SIDES[shape], p.cx, p.cy, p.r, p.a);
-    const drawn = v.map(c => {
-      let bi = 0, bd = Infinity;
-      stroke.forEach((q, i) => { const d = dist(q.x, q.y, c.x, c.y); if (d < bd){ bd = d; bi = i; } });
-      return {q: stroke[bi], d: bd};
-    });
-    const corner = drawn.reduce((t, c) => t + c.d, 0) / drawn.length / S;
-    checks.push({label: 'Sharp corners', value: pct(corner) + ' off', penalty: clamp((corner - 0.02) * 40, 0, MAX_PENALTY)});
-
-    // Equal sides: spread of the distances between the drawn corners.
-    const sides = drawn.map((c, i) => { const o = drawn[(i + 1) % drawn.length].q; return dist(c.q.x, c.q.y, o.x, o.y); });
-    const mean = sides.reduce((t, x) => t + x, 0) / sides.length;
-    const cv = Math.sqrt(sides.reduce((t, x) => t + (x - mean) ** 2, 0) / sides.length) / mean;
-    checks.push({label: 'Equal sides', value: pct(cv) + ' spread', penalty: clamp((cv - 0.02) * 40, 0, MAX_PENALTY)});
   }
   return checks;
 }
@@ -686,10 +773,10 @@ function finish(){
 
   const stroke = resample(raw, 256);
   const {params, error} = fit(shape, resample(raw, 128), stroke);
-  const fitScore = errorToScore(error);
+  const main = mainScore(shape, params, stroke, error);
   const checks = detailChecks(shape, params, stroke);
   const penalty = checks.reduce((t, c) => t + c.penalty, 0);
-  const score = Math.round(Math.max(0, fitScore - penalty) * 100) / 100;
+  const score = Math.round(Math.max(0, main.score - penalty) * 100) / 100;
   lastResult = {params, stroke, score};
   done = true;
   redraw();
@@ -707,7 +794,9 @@ function finish(){
     <div class="pct" style="color:var(${scoreColorVar(score)})">${fmt(score)}</div>
     <div class="verdict">${verdict(score)}</div>
     <table class="breakdown">
-      <tr><td>Shape fit</td><td></td><td>${fitScore.toFixed(2)}</td></tr>
+      ${main.parts.map(x => `<tr><td>${x.label}${main.parts.length > 1 ? ` <small>×${Math.round(x.weight * 100)}%</small>` : ''}</td>
+        <td>${x.value}</td><td>${x.score.toFixed(2)}</td></tr>`).join('')}
+      ${main.parts.length > 1 ? `<tr class="sum"><td>Shape score</td><td></td><td>${main.score.toFixed(2)}</td></tr>` : ''}
       ${checks.map(c => `<tr><td>${c.label}</td><td>${c.value}</td>
         <td class="${c.penalty >= 0.005 ? 'minus' : 'ok'}">${c.penalty >= 0.005 ? '−' + c.penalty.toFixed(2) : '✓'}</td></tr>`).join('')}
     </table>`);
