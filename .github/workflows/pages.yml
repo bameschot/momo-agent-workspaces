@@ -31,6 +31,7 @@ jobs:
           cp -r map-generator _site/
           cp -r lumity-gallery _site/
           cp -r rss-reader _site/
+          cp -r shape-draw _site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: '_site'
