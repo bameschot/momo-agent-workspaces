@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="description" content="Draw a circle, triangle or square as accurately as you can and beat your local high scores.">
+<title>Shape Draw</title>
+<meta name="theme-color" content="#0d0f14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shape Draw">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<style>
+  :root{
+    --bg:#0d0f14; --surface:#171a21; --surface-2:#1e222c; --text:#e8eaf0; --muted:#9aa2b1;
+    --accent:#8b5cf6; --accent-2:#a78bfa; --border:#2a2e3a;
+    --good:#34d399; --ok:#fbbf24; --bad:#f26b7d; --ink:#e8eaf0; --guide:#a78bfa;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f4f5f8; --surface:#ffffff; --surface-2:#eceef3; --text:#1b1e26; --muted:#5f6675;
+      --accent:#7c3aed; --accent-2:#6d28d9; --border:#d9dce4;
+      --good:#059669; --ok:#d97706; --bad:#dc2645; --ink:#1b1e26; --guide:#7c3aed;
+    }
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    overscroll-behavior:none; user-select:none; -webkit-user-select:none;
+  }
+  button{font:inherit; color:inherit; cursor:pointer;}
+  .screen{display:none; min-height:100%; flex-direction:column;}
+  .screen.active{display:flex;}
+
+  /* ---------- Header ---------- */
+  header{
+    display:flex; align-items:center; gap:.5rem;
+    padding:calc(env(safe-area-inset-top) + .75rem) 1rem .75rem;
+    border-bottom:1px solid var(--border); background:var(--surface);
+  }
+  header h1{font-size:1.1rem; margin:0; flex:1;}
+  .btn{
+    background:var(--surface-2); border:1px solid var(--border); border-radius:.6rem;
+    padding:.55rem .9rem; font-size:.95rem;
+  }
+  .btn:active{transform:scale(.97);}
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .btn.icon{padding:.45rem .65rem;}
+  .btn[hidden]{display:none;}
+
+  /* ---------- Home ---------- */
+  .home{padding:1.25rem 1rem calc(env(safe-area-inset-bottom) + 1.5rem); max-width:34rem; width:100%; margin:0 auto;}
+  .lead{color:var(--muted); margin:.25rem 0 1.25rem; font-size:.95rem;}
+  .shapes{display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem;}
+  .shape-card{
+    background:var(--surface); border:1px solid var(--border); border-radius:1rem;
+    padding:1rem .5rem .85rem; display:flex; flex-direction:column; align-items:center; gap:.4rem;
+  }
+  .shape-card:active{border-color:var(--accent); transform:scale(.98);}
+  .shape-card svg{width:3.4rem; height:3.4rem; stroke:var(--accent-2); fill:none; stroke-width:6; stroke-linejoin:round;}
+  .shape-card .name{font-weight:600;}
+  .shape-card .best{font-size:.8rem; color:var(--muted);}
+
+  h2{font-size:1rem; margin:1.75rem 0 .75rem;}
+  .tabs{display:flex; gap:.4rem; margin-bottom:.75rem;}
+  .tab{flex:1; background:var(--surface); border:1px solid var(--border); border-radius:.6rem; padding:.5rem; font-size:.9rem;}
+  .tab.active{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .scores{list-style:none; margin:0; padding:0; background:var(--surface); border:1px solid var(--border); border-radius:.9rem; overflow:hidden;}
+  .scores li{display:flex; align-items:center; gap:.75rem; padding:.55rem .85rem; border-top:1px solid var(--border);}
+  .scores li:first-child{border-top:none;}
+  .scores .rank{width:1.6rem; color:var(--muted); font-variant-numeric:tabular-nums;}
+  .scores .thumb{width:2.4rem; height:2.4rem; flex:none;}
+  .scores .thumb path{fill:none; stroke:var(--ink); stroke-width:4; stroke-linecap:round; stroke-linejoin:round;}
+  .scores .pct{font-weight:700; font-variant-numeric:tabular-nums; flex:1;}
+  .scores .date{font-size:.8rem; color:var(--muted);}
+  .scores .empty{justify-content:center; color:var(--muted); padding:1.25rem;}
+  .stats{font-size:.85rem; color:var(--muted); margin:.6rem .2rem 0; display:flex; justify-content:space-between; align-items:center;}
+  .link{background:none; border:none; color:var(--bad); font-size:.85rem; padding:.25rem;}
+
+  /* ---------- Draw ---------- */
+  #screen-draw{height:100%; position:fixed; inset:0;}
+  .stage{position:relative; flex:1; overflow:hidden;}
+  canvas{position:absolute; inset:0; width:100%; height:100%; touch-action:none; display:block;}
+  .hint{
+    position:absolute; left:0; right:0; top:40%; text-align:center; color:var(--muted);
+    pointer-events:none; font-size:1.05rem; padding:0 1.5rem; transition:opacity .2s;
+  }
+  .hint.hide{opacity:0;}
+  .result{
+    position:absolute; left:0; right:0; bottom:0; padding:1rem 1rem calc(env(safe-area-inset-bottom) + 1rem);
+    background:var(--surface); border-top:1px solid var(--border);
+    display:flex; flex-direction:column; align-items:center; gap:.35rem;
+    transform:translateY(105%); transition:transform .25s ease;
+  }
+  .result.show{transform:none;}
+  .result .pct{font-size:3rem; font-weight:800; line-height:1; font-variant-numeric:tabular-nums;}
+  .result .verdict{color:var(--muted);}
+  .result .badge{
+    background:var(--accent); color:#fff; font-size:.8rem; font-weight:700; letter-spacing:.04em;
+    padding:.2rem .6rem; border-radius:99px; text-transform:uppercase;
+  }
+  .result .actions{display:flex; gap:.6rem; margin-top:.6rem; width:100%; max-width:22rem;}
+  .result .actions .btn{flex:1;}
+  .result .error{color:var(--bad); font-weight:600; font-size:1.1rem;}
+
+  .toast{
+    position:fixed; left:50%; bottom:calc(env(safe-area-inset-bottom) + 1rem); transform:translateX(-50%);
+    background:var(--surface-2); border:1px solid var(--border); padding:.6rem 1rem; border-radius:.6rem;
+    font-size:.9rem; opacity:0; transition:opacity .2s; pointer-events:none;
+  }
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+
+<!-- ======================= Home ======================= -->
+<section class="screen active" id="screen-home">
+  <header>
+    <h1>Shape Draw</h1>
+    <button class="btn icon primary" id="btn-install" title="Install app" aria-label="Install app" hidden>⬇️ Install</button>
+  </header>
+  <div class="home">
+    <p class="lead">Pick a shape and draw it in one stroke. The closer to perfect, the higher your score.</p>
+    <div class="shapes">
+      <button class="shape-card" data-shape="circle">
+        <svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="25"/></svg>
+        <span class="name">Circle</span><span class="best" data-best="circle">–</span>
+      </button>
+      <button class="shape-card" data-shape="triangle">
+        <svg viewBox="0 0 64 64"><polygon points="32,6 58.5,52 5.5,52"/></svg>
+        <span class="name">Triangle</span><span class="best" data-best="triangle">–</span>
+      </button>
+      <button class="shape-card" data-shape="square">
+        <svg viewBox="0 0 64 64"><rect x="8" y="8" width="48" height="48"/></svg>
+        <span class="name">Square</span><span class="best" data-best="square">–</span>
+      </button>
+    </div>
+
+    <h2>High scores</h2>
+    <div class="tabs">
+      <button class="tab active" data-tab="circle">Circle</button>
+      <button class="tab" data-tab="triangle">Triangle</button>
+      <button class="tab" data-tab="square">Square</button>
+    </div>
+    <ol class="scores" id="score-list"></ol>
+    <div class="stats"><span id="stats"></span><button class="link" id="btn-clear">Reset scores</button></div>
+  </div>
+</section>
+
+<!-- ======================= Draw ======================= -->
+<section class="screen" id="screen-draw">
+  <header>
+    <button class="btn icon" id="btn-back" aria-label="Back">←</button>
+    <h1 id="draw-title">Circle</h1>
+    <span id="draw-best" style="color:var(--muted);font-size:.9rem"></span>
+  </header>
+  <div class="stage" id="stage">
+    <canvas id="canvas"></canvas>
+    <div class="hint" id="hint">Draw a circle</div>
+    <div class="result" id="result">
+      <div id="result-body"></div>
+      <div class="actions">
+        <button class="btn" id="btn-menu">Shapes</button>
+        <button class="btn primary" id="btn-again">Try again</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+/* ================= Storage ================= */
+
+const STORE_KEY = 'shape-draw-v1';
+const SHAPES = ['circle', 'triangle', 'square'];
+const MAX_SCORES = 10;
+
+function loadData(){
+  let data = null;
+  try { data = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (e) {}
+  if (!data || typeof data !== 'object') data = {};
+  for (const s of SHAPES){
+    if (!data[s]) data[s] = {scores: [], attempts: 0};
+  }
+  return data;
+}
+function saveData(){
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) {}
+}
+let data = loadData();
+
+/* Records a score; returns its rank (1-based) or 0 if it didn't make the list. */
+function recordScore(shape, score, thumb){
+  const entry = {score, date: Date.now(), thumb};
+  const d = data[shape];
+  d.attempts++;
+  d.scores.push(entry);
+  d.scores.sort((a, b) => b.score - a.score);
+  d.scores = d.scores.slice(0, MAX_SCORES);
+  saveData();
+  return d.scores.indexOf(entry) + 1;
+}
+
+/* ================= Geometry ================= */
+
+function dist(ax, ay, bx, by){ return Math.hypot(ax - bx, ay - by); }
+
+function segDist(px, py, ax, ay, bx, by){
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+function pathLength(pts){
+  let L = 0;
+  for (let i = 1; i < pts.length; i++) L += dist(pts[i-1].x, pts[i-1].y, pts[i].x, pts[i].y);
+  return L;
+}
+
+/* Resamples a polyline to n points spaced evenly along its length. */
+function resample(pts, n){
+  const L = pathLength(pts);
+  const step = L / (n - 1);
+  const out = [{x: pts[0].x, y: pts[0].y}];
+  let acc = 0;
+  let prev = {x: pts[0].x, y: pts[0].y};
+  for (let i = 1; i < pts.length && out.length < n; i++){
+    let cur = pts[i];
+    let d = dist(prev.x, prev.y, cur.x, cur.y);
+    while (acc + d >= step && out.length < n){
+      const t = (step - acc) / d;
+      const nx = prev.x + t * (cur.x - prev.x), ny = prev.y + t * (cur.y - prev.y);
+      out.push({x: nx, y: ny});
+      prev = {x: nx, y: ny};
+      d = dist(prev.x, prev.y, cur.x, cur.y);
+      acc = 0;
+    }
+    acc += d;
+    prev = cur;
+  }
+  while (out.length < n) out.push({x: pts[pts.length-1].x, y: pts[pts.length-1].y});
+  return out;
+}
+
+const SIDES = {triangle: 3, square: 4};
+const ROT_PERIOD = {circle: 0, triangle: 2 * Math.PI / 3, square: Math.PI / 2};
+
+/* Vertices of a regular polygon with circumradius r and rotation a (first vertex straight up at a=0). */
+function polygon(n, cx, cy, r, a){
+  const v = [];
+  for (let k = 0; k < n; k++){
+    const t = a + 2 * Math.PI * k / n - Math.PI / 2;
+    v.push({x: cx + r * Math.cos(t), y: cy + r * Math.sin(t)});
+  }
+  return v;
+}
+
+/* Points evenly spread along the outline of the ideal shape. */
+function idealSamples(shape, p, m){
+  const out = [];
+  if (shape === 'circle'){
+    for (let i = 0; i < m; i++){
+      const t = 2 * Math.PI * i / m;
+      out.push({x: p.cx + p.r * Math.cos(t), y: p.cy + p.r * Math.sin(t)});
+    }
+    return out;
+  }
+  const v = polygon(SIDES[shape], p.cx, p.cy, p.r, p.a);
+  const n = v.length, per = m / n;
+  for (let k = 0; k < n; k++){
+    const a = v[k], b = v[(k + 1) % n];
+    for (let i = 0; i < per; i++){
+      const t = i / per;
+      out.push({x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y)});
+    }
+  }
+  return out;
+}
+
+/* Distance from a point to the ideal shape's outline. */
+function makeOutlineDist(shape, p){
+  if (shape === 'circle') return (x, y) => Math.abs(dist(x, y, p.cx, p.cy) - p.r);
+  const v = polygon(SIDES[shape], p.cx, p.cy, p.r, p.a);
+  return (x, y) => {
+    let best = Infinity;
+    for (let k = 0; k < v.length; k++){
+      const a = v[k], b = v[(k + 1) % v.length];
+      const d = segDist(x, y, a.x, a.y, b.x, b.y);
+      if (d < best) best = d;
+    }
+    return best;
+  };
+}
+
+/* Perimeter / 2π of the ideal shape: an "equivalent radius" so all shapes are judged on the same scale. */
+function sizeOf(shape, r){
+  if (shape === 'circle') return r;
+  const n = SIDES[shape];
+  return n * 2 * r * Math.sin(Math.PI / n) / (2 * Math.PI);
+}
+
+/*
+ * Symmetric mean distance between the drawing and the ideal shape, relative to its size:
+ * - drawing → ideal catches wobbles and wrong proportions
+ * - ideal → drawing catches missing parts (unclosed shapes, a missing side)
+ */
+function cost(shape, p, stroke){
+  const od = makeOutlineDist(shape, p);
+  let a = 0;
+  for (const q of stroke) a += od(q.x, q.y);
+  a /= stroke.length;
+  const ideal = idealSamples(shape, p, 96);
+  let b = 0;
+  for (const q of ideal){
+    let best = Infinity;
+    for (let i = 1; i < stroke.length; i++){
+      const d = segDist(q.x, q.y, stroke[i-1].x, stroke[i-1].y, stroke[i].x, stroke[i].y);
+      if (d < best) best = d;
+    }
+    b += best;
+  }
+  b /= ideal.length;
+  return (a + b) / 2 / sizeOf(shape, p.r);
+}
+
+/* Finds the position, size and rotation of the ideal shape that best matches the drawing. */
+function fit(shape, stroke){
+  let cx = 0, cy = 0;
+  for (const q of stroke){ cx += q.x; cy += q.y; }
+  cx /= stroke.length; cy /= stroke.length;
+  let r0 = 0;
+  for (const q of stroke) r0 += dist(q.x, q.y, cx, cy);
+  r0 /= stroke.length;
+
+  // Coarse search over rotation and size.
+  let best = {cx, cy, r: r0, a: 0}, bestCost = Infinity;
+  const period = ROT_PERIOD[shape];
+  const angleSteps = period ? 36 : 1;
+  const scales = shape === 'circle' ? [0.9, 1, 1.1] : [1, 1.1, 1.2, 1.3, 1.4, 1.5];
+  for (let i = 0; i < angleSteps; i++){
+    for (const s of scales){
+      const p = {cx, cy, r: r0 * s, a: period * i / angleSteps};
+      const c = cost(shape, p, stroke);
+      if (c < bestCost){ bestCost = c; best = p; }
+    }
+  }
+
+  // Local refinement (coordinate descent with shrinking steps).
+  let stepPos = r0 * 0.1, stepR = r0 * 0.05, stepA = period ? period / 36 : 0;
+  for (let iter = 0; iter < 60 && stepPos > r0 * 0.002; iter++){
+    let improved = false;
+    const tries = [
+      ['cx', stepPos], ['cx', -stepPos], ['cy', stepPos], ['cy', -stepPos],
+      ['r', stepR], ['r', -stepR],
+    ];
+    if (stepA) tries.push(['a', stepA], ['a', -stepA]);
+    for (const [k, d] of tries){
+      const p = {...best, [k]: best[k] + d};
+      if (p.r <= 0) continue;
+      const c = cost(shape, p, stroke);
+      if (c < bestCost){ bestCost = c; best = p; improved = true; }
+    }
+    if (!improved){ stepPos /= 2; stepR /= 2; stepA /= 2; }
+  }
+  return {params: best, error: bestCost};
+}
+
+/* Maps relative error to a 0–100 accuracy. An error of 16% of the shape's size or more scores 0. */
+function errorToScore(err){
+  return Math.max(0, Math.min(100, 100 * (1 - err / 0.16)));
+}
+
+function verdict(score){
+  if (score >= 97) return 'Flawless!';
+  if (score >= 92) return 'Excellent!';
+  if (score >= 85) return 'Great!';
+  if (score >= 75) return 'Good';
+  if (score >= 60) return 'Not bad';
+  if (score >= 40) return 'Keep practising';
+  return 'Hmm… is that the right shape?';
+}
+
+function scoreColorVar(score){
+  return score >= 85 ? '--good' : score >= 60 ? '--ok' : '--bad';
+}
+
+/* Compact thumbnail of the drawing as an SVG path in a 100×100 box. */
+function makeThumb(stroke){
+  const pts = resample(stroke, 48);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const q of pts){
+    minX = Math.min(minX, q.x); maxX = Math.max(maxX, q.x);
+    minY = Math.min(minY, q.y); maxY = Math.max(maxY, q.y);
+  }
+  const s = 84 / Math.max(maxX - minX, maxY - minY, 1);
+  const ox = 50 - (minX + maxX) / 2 * s, oy = 50 - (minY + maxY) / 2 * s;
+  return 'M' + pts.map(q => Math.round(q.x * s + ox) + ' ' + Math.round(q.y * s + oy)).join('L');
+}
+
+/* ================= UI: home ================= */
+
+const $ = (id) => document.getElementById(id);
+const LABEL = {circle: 'Circle', triangle: 'Triangle', square: 'Square'};
+let activeTab = 'circle';
+
+function fmt(score){ return score.toFixed(1) + '%'; }
+
+function renderHome(){
+  for (const s of SHAPES){
+    const best = data[s].scores[0];
+    document.querySelector(`[data-best="${s}"]`).textContent = best ? 'Best ' + fmt(best.score) : 'No score yet';
+  }
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === activeTab));
+  const list = $('score-list');
+  list.innerHTML = '';
+  const scores = data[activeTab].scores;
+  if (!scores.length){
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = `No ${activeTab} scores yet — go draw one!`;
+    list.appendChild(li);
+  }
+  scores.forEach((e, i) => {
+    const li = document.createElement('li');
+    const date = new Date(e.date).toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'});
+    li.innerHTML = `<span class="rank">${i + 1}.</span>
+      <svg class="thumb" viewBox="0 0 100 100"><path d="${e.thumb || ''}"/></svg>
+      <span class="pct" style="color:var(${scoreColorVar(e.score)})">${fmt(e.score)}</span>
+      <span class="date">${date}</span>`;
+    list.appendChild(li);
+  });
+  const total = SHAPES.reduce((n, s) => n + data[s].attempts, 0);
+  $('stats').textContent = `${data[activeTab].attempts} ${activeTab} attempts · ${total} total`;
+}
+
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  activeTab = t.dataset.tab;
+  renderHome();
+}));
+document.querySelectorAll('.shape-card').forEach(c => c.addEventListener('click', () => startDraw(c.dataset.shape)));
+$('btn-clear').addEventListener('click', () => {
+  if (!confirm('Delete all high scores for every shape?')) return;
+  data = {};
+  for (const s of SHAPES) data[s] = {scores: [], attempts: 0};
+  saveData();
+  renderHome();
+  toast('High scores reset.');
+});
+
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === id));
+}
+
+/* ================= UI: drawing ================= */
+
+const canvas = $('canvas');
+const ctx = canvas.getContext('2d');
+let shape = 'circle';
+let raw = [];            // points of the current stroke, in CSS pixels
+let drawing = false;
+let done = false;
+let lastResult = null;   // {params, stroke, score} for redraw on resize
+
+function cssVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function resizeCanvas(){
+  const r = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(r.width * dpr);
+  canvas.height = Math.round(r.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  redraw();
+}
+window.addEventListener('resize', () => { if ($('screen-draw').classList.contains('active')) resizeCanvas(); });
+
+function startDraw(s){
+  shape = s;
+  $('draw-title').textContent = LABEL[s];
+  const best = data[s].scores[0];
+  $('draw-best').textContent = best ? 'Best ' + fmt(best.score) : '';
+  showScreen('screen-draw');
+  reset();
+  resizeCanvas();
+}
+
+function reset(){
+  raw = []; drawing = false; done = false; lastResult = null;
+  $('hint').textContent = `Draw a ${shape} in one stroke`;
+  $('hint').classList.remove('hide');
+  $('result').classList.remove('show');
+  redraw();
+}
+
+function strokePath(pts){
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+}
+
+function redraw(){
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+  if (lastResult){
+    const {params: p, stroke} = lastResult;
+    // Ideal shape as a dashed guide.
+    ctx.save();
+    ctx.setLineDash([8, 8]);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = cssVar('--guide');
+    ctx.globalAlpha = .75;
+    if (shape === 'circle'){
+      ctx.beginPath(); ctx.arc(p.cx, p.cy, p.r, 0, Math.PI * 2);
+    } else {
+      const v = polygon(SIDES[shape], p.cx, p.cy, p.r, p.a);
+      strokePath(v); ctx.closePath();
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // Drawing, coloured by how far each part strays from the ideal shape.
+    const od = makeOutlineDist(shape, p);
+    const size = sizeOf(shape, p.r);
+    const cols = [cssVar('--good'), cssVar('--ok'), cssVar('--bad')];
+    ctx.lineWidth = 5;
+    for (let i = 1; i < stroke.length; i++){
+      const a = stroke[i-1], b = stroke[i];
+      const e = od((a.x + b.x) / 2, (a.y + b.y) / 2) / size;
+      ctx.strokeStyle = e < 0.04 ? cols[0] : e < 0.1 ? cols[1] : cols[2];
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    return;
+  }
+
+  if (raw.length > 1){
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = cssVar('--ink');
+    strokePath(raw);
+    ctx.stroke();
+  }
+}
+
+function pos(e){
+  const r = canvas.getBoundingClientRect();
+  return {x: e.clientX - r.left, y: e.clientY - r.top};
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (done || drawing) return;
+  drawing = true;
+  canvas.setPointerCapture(e.pointerId);
+  raw = [pos(e)];
+  $('hint').classList.add('hide');
+  redraw();
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (!drawing) return;
+  const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  for (const ev of evs.length ? evs : [e]){
+    const p = pos(ev), last = raw[raw.length - 1];
+    if (dist(p.x, p.y, last.x, last.y) >= 1) raw.push(p);
+  }
+  redraw();
+});
+
+function endStroke(){
+  if (!drawing) return;
+  drawing = false;
+  finish();
+}
+canvas.addEventListener('pointerup', endStroke);
+canvas.addEventListener('pointercancel', endStroke);
+
+function finish(){
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const minSize = Math.min(w, h) * 0.2;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const q of raw){
+    minX = Math.min(minX, q.x); maxX = Math.max(maxX, q.x);
+    minY = Math.min(minY, q.y); maxY = Math.max(maxY, q.y);
+  }
+  if (raw.length < 10 || Math.max(maxX - minX, maxY - minY) < minSize){
+    done = true;
+    showResult(`<div class="error">Too small — draw a bigger ${shape}.</div>`);
+    return;
+  }
+
+  const stroke = resample(raw, 128);
+  const {params, error} = fit(shape, stroke);
+  const score = Math.round(errorToScore(error) * 10) / 10;
+  lastResult = {params, stroke, score};
+  done = true;
+  redraw();
+
+  const prevBest = data[shape].scores[0] ? data[shape].scores[0].score : null;
+  const rank = recordScore(shape, score, makeThumb(stroke));
+  const best = data[shape].scores[0];
+  $('draw-best').textContent = 'Best ' + fmt(best.score);
+
+  let badge = '';
+  if (rank === 1 && (prevBest === null || score > prevBest)) badge = '<span class="badge">New best!</span>';
+  else if (rank) badge = `<span class="badge">#${rank} high score</span>`;
+  showResult(`
+    ${badge}
+    <div class="pct" style="color:var(${scoreColorVar(score)})">${fmt(score)}</div>
+    <div class="verdict">${verdict(score)}</div>`);
+}
+
+function showResult(html){
+  $('result-body').innerHTML = html;
+  $('result-body').style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:.35rem';
+  $('result').classList.add('show');
+}
+
+$('btn-again').addEventListener('click', reset);
+function goHome(){ renderHome(); showScreen('screen-home'); }
+$('btn-menu').addEventListener('click', goHome);
+$('btn-back').addEventListener('click', goHome);
+
+/* ================= Toast ================= */
+
+let toastTimer = null;
+function toast(msg){
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* ================= Install (PWA) ================= */
+
+if ('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((err) => console.error('Service worker registration failed', err));
+  });
+}
+
+let deferredInstallPrompt = null;
+const installBtn = $('btn-install');
+
+function isStandalone(){
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  if (!isStandalone()) installBtn.hidden = false;
+});
+
+installBtn.addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return;
+  installBtn.disabled = true;
+  deferredInstallPrompt.prompt();
+  const choice = await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  installBtn.hidden = true;
+  installBtn.disabled = false;
+  toast(choice.outcome === 'accepted' ? 'App installed.' : 'Install dismissed.');
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  installBtn.hidden = true;
+  toast('Shape Draw installed.');
+});
+
+renderHome();
+</script>
+</body>
+</html>
