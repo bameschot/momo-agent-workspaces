@@ -232,10 +232,11 @@ dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12
   <h1><a href="../index.html" aria-label="Back to all apps">⬅</a> Sudoku</h1>
   <div class="hdr-controls">
     <select id="difficulty" class="btn" aria-label="Difficulty">
-      <option value="1">Easy</option>
-      <option value="2">Medium</option>
-      <option value="3">Hard</option>
-      <option value="4">Expert</option>
+      <option value="1">Beginner</option>
+      <option value="2">Easy</option>
+      <option value="3">Medium</option>
+      <option value="4">Hard</option>
+      <option value="5">Expert</option>
     </select>
     <button id="btn-new" class="btn primary">New game</button>
     <button id="btn-code" class="btn" title="Load a puzzle by its code">Code…</button>
@@ -556,19 +557,19 @@ function xyzWing(s) {
 // Ordered easiest first; level = difficulty tier at which it becomes allowed.
 const TECHNIQUES = [
   { level: 1, name: 'Naked single', fn: nakedSingle },
-  { level: 1, name: 'Hidden single', fn: hiddenSingle },
-  { level: 2, name: 'Pointing / claiming', fn: pointingClaiming },
-  { level: 2, name: 'Naked pair', fn: nakedSubset(2) },
-  { level: 2, name: 'Hidden pair', fn: hiddenSubset(2) },
-  { level: 3, name: 'Naked triple', fn: nakedSubset(3) },
-  { level: 3, name: 'Hidden triple', fn: hiddenSubset(3) },
-  { level: 3, name: 'X-Wing', fn: fish(2) },
-  { level: 3, name: 'Naked quad', fn: nakedSubset(4) },
-  { level: 3, name: 'Hidden quad', fn: hiddenSubset(4) },
-  { level: 3, name: 'XY-Wing', fn: xyWing },
-  { level: 4, name: 'Swordfish', fn: fish(3) },
-  { level: 4, name: 'XYZ-Wing', fn: xyzWing },
-  { level: 4, name: 'Jellyfish', fn: fish(4) },
+  { level: 2, name: 'Hidden single', fn: hiddenSingle },
+  { level: 3, name: 'Pointing / claiming', fn: pointingClaiming },
+  { level: 3, name: 'Naked pair', fn: nakedSubset(2) },
+  { level: 3, name: 'Hidden pair', fn: hiddenSubset(2) },
+  { level: 4, name: 'Naked triple', fn: nakedSubset(3) },
+  { level: 4, name: 'Hidden triple', fn: hiddenSubset(3) },
+  { level: 4, name: 'X-Wing', fn: fish(2) },
+  { level: 4, name: 'Naked quad', fn: nakedSubset(4) },
+  { level: 4, name: 'Hidden quad', fn: hiddenSubset(4) },
+  { level: 4, name: 'XY-Wing', fn: xyWing },
+  { level: 5, name: 'Swordfish', fn: fish(3) },
+  { level: 5, name: 'XYZ-Wing', fn: xyzWing },
+  { level: 5, name: 'Jellyfish', fn: fish(4) },
 ];
 
 /* Solves with logic only (no guessing), using techniques up to maxLevel.
@@ -612,20 +613,25 @@ function randomFullGrid(rng) {
   return g;
 }
 
+// level = hardest technique tier allowed; minGrade = hardest tier the puzzle must actually need.
+// Beginner and Easy share minGrade 1 (Easy is told apart by fewer clues and hidden singles being
+// allowed); this also keeps codes created before Beginner existed rebuilding the same puzzles.
 const DIFFICULTIES = [
   null,
-  { key: 'E', name: 'Easy', minClues: 36 },
-  { key: 'M', name: 'Medium', minClues: 28 },
-  { key: 'H', name: 'Hard', minClues: 0 },
-  { key: 'X', name: 'Expert', minClues: 0 },
+  { key: 'B', name: 'Beginner', minClues: 40, minGrade: 1 },
+  { key: 'E', name: 'Easy', minClues: 36, minGrade: 1 },
+  { key: 'M', name: 'Medium', minClues: 28, minGrade: 3 },
+  { key: 'H', name: 'Hard', minClues: 0, minGrade: 4 },
+  { key: 'X', name: 'Expert', minClues: 0, minGrade: 5 },
 ];
+const MAX_LEVEL = DIFFICULTIES.length - 1;
 const MAX_ATTEMPTS = 1500;
 
 /* Deterministic for a given (level, seed): the same code always rebuilds the same puzzle.
    A generator so the UI can run attempts in small time slices without freezing. */
 function* puzzleGenerator(level, seed) {
   const rng = mulberry32(seed);
-  const minClues = DIFFICULTIES[level].minClues;
+  const { minClues, minGrade } = DIFFICULTIES[level];
   let best = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const solution = randomFullGrid(rng);
@@ -644,7 +650,7 @@ function* puzzleGenerator(level, seed) {
     }
     const grade = solveLogic(puzzle, level).level;
     if (!best || grade > best.grade) best = { puzzle, solution, grade, clues };
-    if (grade === level) break;
+    if (grade >= minGrade) break;
     yield attempt;
   }
   return best;
@@ -659,7 +665,9 @@ function generatePuzzle(level, seed) {
 /* ===== App state ===== */
 const STORE_KEY = 'sudoku-game';
 const THEME_KEY = 'sudoku-theme';
-const DIFF_KEY = 'sudoku-difficulty';
+const DIFF_KEY = 'sudoku-level';
+const OLD_DIFF_KEY = 'sudoku-difficulty'; // pre-Beginner numbering (1 = Easy … 4 = Expert)
+const SAVE_VERSION = 2;           // v2 added Beginner as level 1
 const HISTORY_LIMIT = 300;
 
 let game = null;        // { level, seed, puzzle, solution, values, notes, hinted, hints, completed }
@@ -674,7 +682,7 @@ const cellEls = [], padBtns = [];
 
 function codeOf(level, seed) { return DIFFICULTIES[level].key + '-' + seed; }
 function parseCode(str) {
-  const m = /^\s*([EMHX])\s*-?\s*(\d{1,9})\s*$/i.exec(str || '');
+  const m = /^\s*([BEMHX])\s*-?\s*(\d{1,9})\s*$/i.exec(str || '');
   if (!m) return null;
   const level = DIFFICULTIES.findIndex(d => d && d.key === m[1].toUpperCase());
   const seed = parseInt(m[2], 10);
@@ -692,6 +700,8 @@ function load() {
   try {
     const d = JSON.parse(lsGet(STORE_KEY));
     const g = d && d.game;
+    // Saves from before Beginner existed number levels one lower (1 = Easy).
+    if (g && !g.v && Number.isInteger(g.level)) { g.level += 1; g.v = SAVE_VERSION; }
     if (!g || !DIFFICULTIES[g.level] || ![g.puzzle, g.solution, g.values, g.notes, g.hinted].every(a => Array.isArray(a) && a.length === 81)) return false;
     game = g;
     history = Array.isArray(d.history) ? d.history : [];
@@ -718,7 +728,7 @@ function startGame(level, seed) {
     if (!r.done) { setTimeout(step, 0); return; }
     const res = r.value;
     game = {
-      level, seed,
+      v: SAVE_VERSION, level, seed,
       puzzle: res.puzzle, solution: res.solution,
       values: new Array(81).fill(0), notes: new Array(81).fill(0), hinted: new Array(81).fill(0),
       hints: 0, completed: false,
@@ -1002,8 +1012,9 @@ function openCodeDialog() {
 function init() {
   initTheme();
   buildBoard();
-  const storedDiff = parseInt(lsGet(DIFF_KEY), 10);
-  $('difficulty').value = String(storedDiff >= 1 && storedDiff <= 4 ? storedDiff : 2);
+  let storedDiff = parseInt(lsGet(DIFF_KEY), 10);
+  if (!storedDiff) storedDiff = parseInt(lsGet(OLD_DIFF_KEY), 10) + 1;
+  $('difficulty').value = String(storedDiff >= 1 && storedDiff <= MAX_LEVEL ? storedDiff : 3);
 
   $('btn-new').addEventListener('click', newGame);
   $('btn-again').addEventListener('click', () => startGame(+$('difficulty').value, randomSeed()));
@@ -1020,7 +1031,7 @@ function init() {
   $('code-cancel').addEventListener('click', () => $('dlg-code').close());
   $('code-form').addEventListener('submit', e => {
     const parsed = parseCode($('code-input').value);
-    if (!parsed) { e.preventDefault(); $('code-err').textContent = 'Use a letter E, M, H or X, then a number, e.g. H-482913.'; return; }
+    if (!parsed) { e.preventDefault(); $('code-err').textContent = 'Use a letter B, E, M, H or X, then a number, e.g. H-482913.'; return; }
     const inProgress = game && !game.completed && game.values.some(Boolean);
     if (inProgress && !confirm('Load this puzzle? Your current progress will be lost.')) { e.preventDefault(); return; }
     startGame(parsed.level, parsed.seed);
