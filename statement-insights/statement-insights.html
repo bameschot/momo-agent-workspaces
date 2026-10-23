@@ -123,6 +123,7 @@ h1 { font-size: 17px; line-height: 1.25; margin: 0; font-weight: 600; white-spac
 }
 .dropzone h2 { color: var(--text-primary); font-size: 15px; font-weight: 600; margin: 0 0 6px; }
 .dropzone p { margin: 0 0 16px; }
+.dropzone .reset-start { display: block; margin: 12px auto 0; height: auto; color: var(--text-muted); font-size: 12px; }
 body.dragging .dropzone, body.dragging .card { border-color: var(--accent); }
 body.dragging::after {
   content: "Drop PDF or .jsonl files to load"; position: fixed; inset: 12px; z-index: 50;
@@ -536,7 +537,8 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
             <button type="button" data-download="transactions">Download transactions (.jsonl)</button>
             <button type="button" data-download="counterparties">Download counterparties (.jsonl)</button>
             <hr>
-            <button type="button" class="danger" id="clearBtn">Clear data</button>
+            <button type="button" class="danger" id="clearBtn">Remove statements</button>
+            <button type="button" class="danger" id="resetBtn">Reset everything…</button>
           </div>
         </details>
       </div>
@@ -547,6 +549,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
     <h2>Load statements</h2>
     <p>Drop Rabobank PDF statements, or <code>.jsonl</code> from <code>parse_rabobank_statement.py</code>, here or choose them. Overlapping files are merged without double-counting. Everything stays on this device; nothing is uploaded.</p>
     <label class="btn primary">Choose files…<input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input id="fileInput"></label>
+    <button type="button" class="date-reset reset-start" id="resetStart" hidden>Reset rules and settings…</button>
   </section>
 
   <main id="app" hidden>
@@ -859,6 +862,7 @@ const state = {
   txLimit: 50,        // rows shown on phones before "Show more"
   manageLimit: 50,
   recLimit: 15,
+  statements: [],     // loaded PDF statements: { iban, from, to, opening, closing, file }
   rangeTouched: false, // the user narrowed From/To; keep it when more files are added
   dataMin: '',
   dataMax: '',
@@ -897,9 +901,24 @@ function idb(mode, fn) {
 }
 // Storage failures (private mode, quota) only mean the data isn't remembered; the session still works.
 const savedRows = {
-  async load() { try { return await idb('readonly', (st) => st.get('rows')); } catch { return null; } },
-  async save() { try { await idb('readwrite', (st) => st.put(state.rows.map((r) => r.raw), 'rows')); } catch (err) { console.warn('Could not save transactions', err); } },
-  async clear() { try { await idb('readwrite', (st) => st.delete('rows')); } catch { /* nothing saved */ } },
+  async load() {
+    try {
+      const [rows, statements] = await Promise.all([idb('readonly', (st) => st.get('rows')), idb('readonly', (st) => st.get('statements'))]);
+      return { rows, statements };
+    } catch { return null; }
+  },
+  async save() {
+    try {
+      await idb('readwrite', (st) => st.put(state.rows.map((r) => r.raw), 'rows'));
+      await idb('readwrite', (st) => st.put(state.statements, 'statements'));
+    } catch (err) { console.warn('Could not save transactions', err); }
+  },
+  async clear() {
+    try {
+      await idb('readwrite', (st) => st.delete('rows'));
+      await idb('readwrite', (st) => st.delete('statements'));
+    } catch { /* nothing saved */ }
+  },
 };
 
 /* ---------- PDF reading (plain JS, no libraries) ----------
@@ -1490,13 +1509,41 @@ function toast(text, { warn = false, ms = 4000 } = {}) {
 
 const listNames = (names) => (names.length <= 2 ? names.join(' and ') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
 
+const nextDay = (iso) => new Date(toDay(iso) + dayMs).toISOString().slice(0, 10);
+
+// Consecutive statements of one account should join up: no missing days, and each opening balance
+// equal to the previous closing balance. Only pairs that involve one of `fresh` are reported.
+function statementGaps(statements, fresh) {
+  const notes = [];
+  const byIban = new Map();
+  for (const st of statements) {
+    if (!byIban.has(st.iban)) byIban.set(st.iban, []);
+    byIban.get(st.iban).push(st);
+  }
+  for (const [iban, list] of byIban) {
+    list.sort((a, b) => a.from.localeCompare(b.from));
+    for (let i = 1; i < list.length; i++) {
+      const prev = list[i - 1], cur = list[i];
+      if (!fresh.has(prev) && !fresh.has(cur)) continue;
+      const acct = `Account …${iban.slice(-4)}`;
+      if (cur.from > nextDay(prev.to)) {
+        notes.push(`${acct}: no statement loaded between ${fmtDate(nextDay(prev.to))} and ${fmtDate(new Date(toDay(cur.from) - dayMs).toISOString().slice(0, 10))}.`);
+      } else if (cur.from === nextDay(prev.to) && cur.opening !== prev.closing) {
+        notes.push(`${acct}: the balance on ${fmtDate(cur.from)} (${eur(cur.opening)}) doesn't match the previous closing balance (${eur(prev.closing)}); a statement may be missing.`);
+      }
+    }
+  }
+  return notes;
+}
+
 async function loadFiles(fileList) {
   const files = [...fileList];
   if (!files.length) return;
   const reading = toast(`Reading ${files.length === 1 ? shortName(files[0].name) : `${files.length} files`}…`, { ms: 0 });
-  let added = 0;
+  let added = 0, dup = 0;
   const loadedNames = [];
   const knownNames = [];
+  const fresh = new Set();
   for (const file of files) {
     const name = shortName(file.name);
     try {
@@ -1505,9 +1552,27 @@ async function loadFiles(fileList) {
         toast(`${name}: no transactions found. Load a Rabobank PDF statement or a JSONL file from parse_rabobank_statement.py.`, { warn: true });
         continue;
       }
-      const merged = mergeRows(parsed.rows);
-      added += merged.added;
-      (merged.added ? loadedNames : knownNames).push(name);
+      // Duplicates are dropped across files only: a statement that is already loaded is skipped as a
+      // whole, and mergeRows keeps identical lines that occur within one statement or file.
+      let fileAdded = 0, fileDup = 0;
+      if (parsed.statements.length) {
+        for (const st of parsed.statements) {
+          const known = state.statements.some((s) => s.iban === st.iban && s.from === st.dateFrom && s.to === st.dateTo);
+          if (known) { fileDup += st.transactions.length; continue; }
+          const merged = mergeRows(st.transactions.map(normalizeRow));
+          fileAdded += merged.added;
+          fileDup += merged.dup;
+          const entry = { iban: st.iban, from: st.dateFrom, to: st.dateTo, opening: st.opening, closing: st.closing, file: file.name };
+          state.statements.push(entry);
+          fresh.add(entry);
+        }
+      } else {
+        const merged = mergeRows(parsed.rows);
+        fileAdded = merged.added;
+        fileDup = merged.dup;
+      }
+      added += fileAdded;
+      if (fileAdded) { loadedNames.push(name); dup += fileDup; } else knownNames.push(name);
       for (const st of parsed.statements) {
         if (st.problems.length) toast(`${name}: ${st.problems.join('; ')}`, { warn: true });
       }
@@ -1518,10 +1583,11 @@ async function loadFiles(fileList) {
   }
   reading();
   state.files += files.length;
-  if (loadedNames.length) toast(`Loaded ${listNames(loadedNames)}`);
+  if (loadedNames.length) toast(`Loaded ${listNames(loadedNames)}${dup ? ` · ${dup} duplicate${dup === 1 ? '' : 's'} skipped` : ''}`);
+  for (const note of statementGaps(state.statements, fresh)) toast(note, { warn: true });
   if (knownNames.length) toast(`${listNames(knownNames)} ${knownNames.length === 1 ? 'was' : 'were'} already loaded`);
   if (!state.rows.length) return;
-  if (added) savedRows.save();
+  if (added || fresh.size) savedRows.save();
   showApp();
 }
 
@@ -1537,7 +1603,7 @@ function showApp() {
 
 function clearData() {
   Object.assign(state, {
-    rows: [], filtered: [], files: 0, focus: null, search: '', account: 'all', from: '', to: '',
+    rows: [], statements: [], filtered: [], files: 0, focus: null, search: '', account: 'all', from: '', to: '',
     rangeTouched: false, sort: { col: 'date', dir: -1 },
   });
   saveSettings();
@@ -1548,6 +1614,18 @@ function clearData() {
   syncInstallUi();
   $('#dropzone').hidden = false;
   $('#toasts').innerHTML = '';
+  syncResetLink();
+}
+
+// Wipes everything this app keeps on the device and starts over.
+async function resetEverything() {
+  if (!confirm('Delete all statements, category rules, your category assignments and settings from this device? This can\'t be undone.')) return;
+  await savedRows.clear();
+  for (const key of [RULES_KEY, SETTINGS_KEY, ASSIGN_KEY]) store.remove(key);
+  location.reload();
+}
+function syncResetLink() {
+  $('#resetStart').hidden = ![RULES_KEY, SETTINGS_KEY, ASSIGN_KEY].some((key) => store.get(key) !== null);
 }
 
 /* ---------- Derived fields ---------- */
@@ -2592,11 +2670,15 @@ applyPointerWords();
 hoverless.addEventListener('change', applyPointerWords);
 
 // Reopen with the transactions loaded last time on this device.
-savedRows.load().then((raw) => {
-  if (!Array.isArray(raw) || !raw.length || state.rows.length) return;
-  state.rows = raw.map(normalizeRow);
+savedRows.load().then((saved) => {
+  if (!saved || !Array.isArray(saved.rows) || !saved.rows.length || state.rows.length) return;
+  state.rows = saved.rows.map(normalizeRow);
+  state.statements = Array.isArray(saved.statements) ? saved.statements : [];
   showApp();
 });
+syncResetLink();
+$('#resetStart').addEventListener('click', resetEverything);
+$('#resetBtn').addEventListener('click', () => { $('#moreMenu').open = false; resetEverything(); });
 
 let resizeTimer;
 window.addEventListener('resize', () => {
