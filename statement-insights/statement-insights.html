@@ -95,10 +95,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; }
 code { font-family: var(--mono); font-size: inherit; background: var(--surface-2); padding: 1px 4px; border-radius: 4px; }
 
-header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px var(--gap); margin-bottom: 12px; }
-h1 { font-size: 22px; line-height: 1.25; margin: 0 0 4px; font-weight: 600; }
-.lede { margin: 0; color: var(--text-secondary); }
-.top-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+header.top {
+  display: flex; align-items: center; gap: 12px; flex-wrap: nowrap;
+  min-height: var(--h); padding-bottom: 12px; margin-bottom: var(--gap); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.brand svg { flex: none; color: var(--accent); }
+h1 { font-size: 17px; line-height: 1.25; margin: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.btn svg { flex: none; }
+.btn.icon-only { width: var(--h); padding: 0; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -134,6 +140,7 @@ body.dragging::after {
 .menu > summary { list-style: none; }
 .menu > summary::-webkit-details-marker { display: none; }
 .menu > summary::after { content: "▾"; font-size: 10px; color: var(--text-muted); }
+.menu > summary.icon-only::after { content: none; }
 .menu-panel {
   position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 200px;
   display: flex; flex-direction: column; padding: 4px;
@@ -144,6 +151,8 @@ body.dragging::after {
   text-align: left; font-size: 13px; cursor: pointer; white-space: nowrap;
 }
 .menu-panel button:hover { background: var(--surface-2); }
+.menu-panel hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--border); }
+.menu-panel .danger { color: var(--neg); }
 
 .filters {
   position: sticky; top: 0; z-index: 10;
@@ -379,6 +388,8 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 /* ---------- Phones ---------- */
 @media (max-width: 600px) {
   .mobile-only { display: flex; }
+  header.top .btn .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  header.top .btn.add-file { width: var(--h); padding: 0; }
   .mobile-bar {
     display: block; position: sticky; top: 0; z-index: 20;
     margin: 0 -16px var(--gap); padding: 8px 16px;
@@ -456,29 +467,31 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 <body>
 <div class="wrap">
   <header class="top">
-    <div>
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><rect width="22" height="22" rx="5" fill="currentColor"/><g fill="#fff"><rect x="4.5" y="11" width="2.6" height="6" rx=".8"/><rect x="8.3" y="7.5" width="2.6" height="9.5" rx=".8"/><rect x="12.1" y="9.5" width="2.6" height="7.5" rx=".8"/><rect x="15.9" y="5" width="2.6" height="12" rx=".8"/></g></svg>
       <h1>Statement Insights</h1>
-      <p class="lede">Load Rabobank PDF statements, or <code>.jsonl</code> from <code>parse_rabobank_statement.py</code>. Everything stays in this browser; nothing is uploaded.</p>
     </div>
     <div class="top-actions">
-    <div class="top-actions" id="topActions" hidden>
-      <label class="btn">Add file…<input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input></label>
-      <details class="menu" id="downloadMenu">
-        <summary class="btn">Download</summary>
-        <div class="menu-panel">
-          <button type="button" data-download="transactions">Transactions (.jsonl)</button>
-          <button type="button" data-download="counterparties">Counterparties (.jsonl)</button>
-        </div>
-      </details>
-      <button type="button" class="btn" id="clearBtn">Clear data</button>
-    </div>
-    <button type="button" class="btn primary" id="installBtn" hidden>Install app</button>
+      <button type="button" class="btn icon-only" id="installBtn" title="Install app" aria-label="Install app" hidden><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div class="top-actions" id="topActions" hidden>
+        <label class="btn add-file" title="Add file"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="label">Add file</span><input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input></label>
+        <details class="menu" id="moreMenu">
+          <summary class="btn icon-only" title="More" aria-label="More actions"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="3" cy="8" r="1.6"/><circle cx="8" cy="8" r="1.6"/><circle cx="13" cy="8" r="1.6"/></svg></summary>
+          <div class="menu-panel">
+            <button type="button" id="installMenuItem" hidden>Install app</button>
+            <button type="button" data-download="transactions">Download transactions (.jsonl)</button>
+            <button type="button" data-download="counterparties">Download counterparties (.jsonl)</button>
+            <hr>
+            <button type="button" class="danger" id="clearBtn">Clear data</button>
+          </div>
+        </details>
+      </div>
     </div>
   </header>
 
   <section class="dropzone" id="dropzone">
     <h2>Load statements</h2>
-    <p>Drop Rabobank PDF statements or <code>.jsonl</code> files here, or choose them. Overlapping files are merged without double-counting.</p>
+    <p>Drop Rabobank PDF statements, or <code>.jsonl</code> from <code>parse_rabobank_statement.py</code>, here or choose them. Overlapping files are merged without double-counting. Everything stays in this browser; nothing is uploaded.</p>
     <label class="btn primary">Choose files…<input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input id="fileInput"></label>
   </section>
   <p class="status" id="status" role="status"></p>
@@ -1420,6 +1433,7 @@ async function loadFiles(fileList) {
   setupFilters();
   $('#dropzone').hidden = true;
   $('#topActions').hidden = false;
+  syncInstallUi();
   $('#app').hidden = false;
   render();
 }
@@ -1429,6 +1443,7 @@ function clearData() {
   $('#search').value = '';
   $('#app').hidden = true;
   $('#topActions').hidden = true;
+  syncInstallUi();
   $('#dropzone').hidden = false;
   $('#status').textContent = '';
 }
@@ -2261,7 +2276,7 @@ document.addEventListener('drop', (e) => {
   if (e.dataTransfer?.files?.length) loadFiles(e.dataTransfer.files);
 });
 
-$('#clearBtn').addEventListener('click', clearData);
+$('#clearBtn').addEventListener('click', () => { $('#moreMenu').open = false; clearData(); });
 $('#fAccount').addEventListener('change', (e) => { state.account = e.target.value; state.focus = null; saveSettings(); render(); });
 $('#fFrom').addEventListener('change', (e) => { state.from = e.target.value; render(); });
 $('#fTo').addEventListener('change', (e) => { state.to = e.target.value; render(); });
@@ -2403,10 +2418,10 @@ $('#txBody').addEventListener('click', (e) => {
 $('#exportBtn').addEventListener('click', exportCsv);
 document.querySelectorAll('[data-download]').forEach((b) => b.addEventListener('click', () => {
   downloadJsonl(b.dataset.download);
-  $('#downloadMenu').open = false;
+  $('#moreMenu').open = false;
 }));
 document.addEventListener('click', (e) => {
-  const menu = $('#downloadMenu');
+  const menu = $('#moreMenu');
   if (menu.open && !menu.contains(e.target)) menu.open = false;
 });
 
@@ -2478,22 +2493,32 @@ if ('serviceWorker' in navigator) {
 // checks (manifest, secure origin, active service worker); surface it as a button.
 let deferredInstallPrompt = null;
 const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+// The bar button shows while the ⋯ menu is hidden (no data loaded); otherwise the menu item does.
+function syncInstallUi() {
+  const can = !!deferredInstallPrompt && !isStandalone();
+  $('#installBtn').hidden = !can || !$('#topActions').hidden;
+  $('#installMenuItem').hidden = !can;
+}
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredInstallPrompt = e;
-  if (!isStandalone()) $('#installBtn').hidden = false;
+  syncInstallUi();
 });
 window.addEventListener('appinstalled', () => {
   deferredInstallPrompt = null;
-  $('#installBtn').hidden = true;
+  syncInstallUi();
 });
-$('#installBtn').addEventListener('click', async () => {
+async function promptInstall() {
   if (!deferredInstallPrompt) return;
-  $('#installBtn').hidden = true;
-  deferredInstallPrompt.prompt();
-  await deferredInstallPrompt.userChoice;
+  const prompt = deferredInstallPrompt;
   deferredInstallPrompt = null;
-});
+  $('#moreMenu').open = false;
+  syncInstallUi();
+  prompt.prompt();
+  await prompt.userChoice;
+}
+$('#installBtn').addEventListener('click', promptInstall);
+$('#installMenuItem').addEventListener('click', promptInstall);
 </script>
 </body>
 </html>
