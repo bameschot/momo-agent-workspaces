@@ -130,8 +130,16 @@ body.dragging::after {
   border: 2px dashed var(--accent); border-radius: 12px;
   background: color-mix(in srgb, var(--page) 88%, transparent); pointer-events: none;
 }
-.status { color: var(--text-secondary); font-size: 13px; margin: 12px 0 0; }
+.status { color: var(--text-secondary); font-size: 13px; margin: 12px 0 var(--gap); }
 .status:empty { display: none; }
+.status-row { display: flex; align-items: flex-start; gap: 8px; }
+.status-row > span { flex: 1; min-width: 0; padding-top: 2px; }
+.status-x {
+  flex: none; display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); font-size: 16px; line-height: 1; cursor: pointer;
+}
+.status-x:hover { background: var(--surface-2); color: var(--text-primary); }
+.status details summary { cursor: pointer; color: var(--text-muted); width: fit-content; }
 .status.error, .status .warn { color: var(--neg); }
 .status .ok { color: var(--pos); }
 .status ul { margin: 4px 0 0; padding-left: 18px; }
@@ -185,6 +193,13 @@ body.dragging::after {
   border: 0; background: transparent; border-radius: 999px; cursor: pointer; font-size: 15px; line-height: 1; color: var(--text-secondary);
 }
 .chip button:hover { background: var(--border); color: var(--text-primary); }
+.chip button.chip-go { width: auto; padding: 0 8px; font-size: 12px; color: var(--accent); white-space: nowrap; }
+.date-reset { align-self: flex-end; height: var(--h); padding: 0 4px; border: 0; background: transparent; color: var(--accent); font-size: 13px; cursor: pointer; }
+.date-reset:hover { text-decoration: underline; }
+.btn[data-panel]::after { content: "▾"; font-size: 10px; color: var(--text-muted); }
+.btn[data-panel][aria-expanded="true"] { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--axis); }
+.btn[data-panel][aria-expanded="true"]::after { content: "▴"; }
+.type-desc { display: none; }
 
 .excluded-bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
@@ -202,6 +217,7 @@ body.dragging::after {
 .kpi .sub { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
 .kpi .value.pos { color: var(--pos); }
 .kpi .value.neg { color: var(--neg); }
+@media (max-width: 600px) { .kpi { padding: 12px; } .kpi .value { font-size: clamp(15px, 4.6vw, 19px); } }
 
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); margin-bottom: var(--gap); }
 @media (max-width: 760px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
@@ -383,6 +399,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 }
 @media (hover: none) {
   .x-btn, .cat-btn::after { opacity: 1; }
+  .type-desc { display: block; color: var(--text-muted); font-size: 11px; }
 }
 
 /* ---------- Phones ---------- */
@@ -491,10 +508,10 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 
   <section class="dropzone" id="dropzone">
     <h2>Load statements</h2>
-    <p>Drop Rabobank PDF statements, or <code>.jsonl</code> from <code>parse_rabobank_statement.py</code>, here or choose them. Overlapping files are merged without double-counting. Everything stays in this browser; nothing is uploaded.</p>
+    <p>Drop Rabobank PDF statements, or <code>.jsonl</code> from <code>parse_rabobank_statement.py</code>, here or choose them. Overlapping files are merged without double-counting. Everything stays on this device; nothing is uploaded.</p>
     <label class="btn primary">Choose files…<input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input id="fileInput"></label>
   </section>
-  <p class="status" id="status" role="status"></p>
+  <div class="status" id="status" role="status"></div>
 
   <main id="app" hidden>
     <!-- Phones only: a compact sticky bar with a filter summary and section tabs. -->
@@ -522,6 +539,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
       <label class="field">To
         <input type="date" id="fTo">
       </label>
+      <button type="button" class="date-reset" id="dateReset" hidden>Reset dates</button>
       <label class="field">Group by
         <select id="fGroup">
           <option value="iban">Counterparty IBAN (name if none)</option>
@@ -529,10 +547,10 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
           <option value="category">Category</option>
         </select>
       </label>
-      <div class="field range"><span id="topLabel">Top counterparties</span>
+      <div class="field range" title="How many entries each donut chart lists before grouping the rest as “Other”"><span id="topLabel">Items per chart</span>
         <div class="range-row"><input type="range" id="fTop" min="3" max="50" step="1" value="7" aria-labelledby="topLabel"><output id="fTopOut">7</output></div>
       </div>
-      <label class="field check"><input type="checkbox" id="fTb" checked> Include own transfers (tb)</label>
+      <label class="field check"><input type="checkbox" id="fTb" checked> Include transfers between own accounts</label>
       <div id="focusChip"></div>
       <button type="button" class="btn primary mobile-only" id="filtersDone">Show results</button>
     </div>
@@ -544,13 +562,13 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
     <div class="grid2">
       <section class="card">
         <div class="card-head">
-          <div><h2 id="inTitle">Money in by counterparty</h2><p class="hint">Click a slice or row to filter the transactions table.</p></div>
+          <div><h2 id="inTitle">Money in by counterparty</h2><p class="hint"><span data-act>Click</span> a slice or row to filter the transactions table.</p></div>
         </div>
         <div id="donutIn" class="donut-host"></div>
       </section>
       <section class="card">
         <div class="card-head">
-          <div><h2 id="outTitle">Money out by counterparty</h2><p class="hint">Click a slice or row to filter the transactions table.</p></div>
+          <div><h2 id="outTitle">Money out by counterparty</h2><p class="hint"><span data-act>Click</span> a slice or row to filter the transactions table.</p></div>
         </div>
         <div id="donutOut" class="donut-host"></div>
       </section>
@@ -558,7 +576,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 
     <section class="card" id="secCashflow">
       <div class="card-head">
-        <div><h2>Cash flow</h2><p class="hint">Money in vs. out per period; the line is the net result.</p></div>
+        <div><h2>Cash flow</h2><p class="hint">Money in vs. out per period; the line is the net result. <span data-act>Click</span> a period to filter the transactions table.</p></div>
         <div class="seg" role="group" aria-label="Period">
           <button type="button" data-gran="month" aria-pressed="true">Month</button>
           <button type="button" data-gran="week" aria-pressed="false">Week</button>
@@ -579,7 +597,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 
     <section class="card" id="secCategories">
       <div class="card-head">
-        <div><h2>Categories</h2><p class="hint">Counterparties you assign by hand come first; otherwise the first matching rule wins. Click a category to filter the table.</p></div>
+        <div><h2>Categories</h2><p class="hint">Counterparties you assign by hand come first; otherwise the first matching rule wins. <span data-act>Click</span> a category to filter the table.</p></div>
         <div class="card-actions">
           <button type="button" class="btn small" data-panel="managePanel" aria-expanded="false" aria-controls="managePanel">Assign counterparties</button>
           <button type="button" class="btn small" data-panel="rulesPanel" aria-expanded="false" aria-controls="rulesPanel">Edit rules</button>
@@ -626,7 +644,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 
     <section class="card" id="secRecurring">
       <div class="card-head">
-        <div><h2>Recurring payments</h2><p class="hint">Direct debits, transfers and other non-card payments to the same counterparty, of a similar amount (±15%), about once a month. "Name" adds up all recurring amounts per counterparty name, across IBANs. Indicative: a short statement period only shows a few repeats. Click a row to filter the table.</p></div>
+        <div><h2>Recurring payments</h2><p class="hint">Direct debits, transfers and other non-card payments to the same counterparty, of a similar amount (±15%), about once a month. "Name" adds up all recurring amounts per counterparty name, across IBANs. Indicative: a short statement period only shows a few repeats. <span data-act>Click</span> a row to filter the table.</p></div>
         <div class="seg" role="group" aria-label="Group recurring payments by">
           <button type="button" data-recby="iban" aria-pressed="true">Name + IBAN</button>
           <button type="button" data-recby="name" aria-pressed="false">Name</button>
@@ -637,7 +655,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 
     <section class="card" id="txCard">
       <div class="card-head">
-        <div><h2>Transactions</h2><p class="hint">Sort with the column headers and tap a description to expand it. Tap a category to change it; the eye icon hides a counterparty from all views.</p></div>
+        <div><h2>Transactions</h2><p class="hint">Sort with the column headers and <span data-act="lower">click</span> a description to expand it. <span data-act>Click</span> a category to change it; the eye icon hides a counterparty from all views.</p></div>
       </div>
       <div class="toolbar">
         <label class="field">Search
@@ -751,10 +769,11 @@ const MAX_TOP = 50;
 const EYE_OFF = '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M1.8 8S4 4 8 4s6.2 4 6.2 4S12 12 8 12 1.8 8 1.8 8Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3 13 13 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
 
 const $ = (sel) => document.querySelector(sel);
-const eurFmt = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' });
+const eurFmt = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'EUR' });
 const eur = (cents) => eurFmt.format(cents / 100);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fmtDate = (iso) => (iso ? `${iso.slice(8, 10)}-${iso.slice(5, 7)}-${iso.slice(0, 4)}` : '');
+const dateFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+const fmtDate = (iso) => (iso ? dateFmt.format(new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)))) : '');
 const fmtIban = (s) => (s || '').replace(/(.{4})/g, '$1 ').trim();
 const normName = (s) => (s || '').toUpperCase().replace(/\s+/g, ' ').trim();
 const pct = (part, whole) => (whole ? `${(part / whole * 100).toLocaleString('en', { maximumFractionDigits: part / whole < 0.1 ? 1 : 0 })}%` : '');
@@ -799,7 +818,9 @@ const state = {
   txLimit: 50,        // rows shown on phones before "Show more"
   manageLimit: 50,
   recLimit: 15,
-  cashSelected: null, // cash-flow period pinned by a click or tap
+  rangeTouched: false, // the user narrowed From/To; keep it when more files are added
+  dataMin: '',
+  dataMax: '',
   sort: { col: 'date', dir: -1 },
   gran: saved.gran === 'week' ? 'week' : 'month',
   recurringBy: saved.recurringBy === 'name' ? 'name' : 'iban',
@@ -814,6 +835,31 @@ function saveSettings() {
   const { account, includeTb, topN, groupBy, excluded, gran, catDir, recurringBy } = state;
   store.set(SETTINGS_KEY, JSON.stringify({ account, includeTb, topN, groupBy, excluded, gran, catDir, recurringBy }));
 }
+
+/* ---------- Loaded transactions, kept on this device (IndexedDB) ---------- */
+
+const DB_NAME = 'statement-insights';
+const DB_STORE = 'data';
+function idb(mode, fn) {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open(DB_NAME, 1);
+    open.onupgradeneeded = () => open.result.createObjectStore(DB_STORE);
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result;
+      const tx = db.transaction(DB_STORE, mode);
+      const req = fn(tx.objectStore(DB_STORE));
+      tx.oncomplete = () => { db.close(); resolve(req.result); };
+      tx.onerror = tx.onabort = () => { db.close(); reject(tx.error); };
+    };
+  });
+}
+// Storage failures (private mode, quota) only mean the data isn't remembered; the session still works.
+const savedRows = {
+  async load() { try { return await idb('readonly', (st) => st.get('rows')); } catch { return null; } },
+  async save() { try { await idb('readwrite', (st) => st.put(state.rows.map((r) => r.raw), 'rows')); } catch (err) { console.warn('Could not save transactions', err); } },
+  async clear() { try { await idb('readwrite', (st) => st.delete('rows')); } catch { /* nothing saved */ } },
+};
 
 /* ---------- PDF reading (plain JS, no libraries) ----------
    Reads just enough PDF for Rabobank statements: top-level and object-stream objects,
@@ -1395,10 +1441,12 @@ async function loadFiles(fileList) {
   status.textContent = `Reading ${files.length === 1 ? shortName(files[0].name) : `${files.length} files`}…`;
   let added = 0, dup = 0, bad = 0, loaded = 0;
   const notes = [];
+  let warned = false;
   for (const file of files) {
     try {
       const parsed = await readStatementFile(file);
       if (!parsed.rows.length) {
+        warned = true;
         notes.push(`<li class="warn">${esc(shortName(file.name))}: no transactions found (not a Rabobank PDF statement or a JSONL file from parse_rabobank_statement.py)</li>`);
         continue;
       }
@@ -1408,27 +1456,37 @@ async function loadFiles(fileList) {
       added += merged.added;
       dup += merged.dup;
       for (const st of parsed.statements) {
+        if (st.problems.length) warned = true;
         const check = st.problems.length
           ? `<span class="warn">⚠ ${esc(st.problems.join('; '))}</span>`
           : '<span class="ok">✓ matches the statement totals</span>';
         notes.push(`<li>${esc(shortName(file.name))} · ${esc(fmtIban(st.iban))} · ${fmtDate(st.dateFrom)} – ${fmtDate(st.dateTo)} · ${st.transactions.length} transactions · ${check}</li>`);
       }
     } catch (err) {
+      warned = true;
       notes.push(`<li class="warn">${esc(shortName(file.name))}: couldn't read this file (${esc(err.message)})</li>`);
     }
   }
   state.files += files.length;
-  const details = notes.length ? `<ul>${notes.join('')}</ul>` : '';
-  if (!state.rows.length) {
-    status.innerHTML = `No transactions found. Load a Rabobank PDF statement or a JSONL file from parse_rabobank_statement.py.${details}`;
+  const details = notes.length ? `<details${warned ? ' open' : ''}><summary>Details per file</summary><ul>${notes.join('')}</ul></details>` : '';
+  const setStatus = (html) => {
+    status.innerHTML = `<div class="status-row"><span>${html}</span><button type="button" class="status-x" aria-label="Dismiss" title="Dismiss">×</button></div>${details}`;
+    status.querySelector('.status-x').onclick = () => { status.innerHTML = ''; status.classList.remove('error'); };
+  };
+  if (!added && !state.rows.length) {
+    setStatus('No transactions found. Load a Rabobank PDF statement or a JSONL file from parse_rabobank_statement.py.');
     status.classList.add('error');
     return;
   }
   const parts = [`Added ${added} transaction${added === 1 ? '' : 's'} from ${loaded} file${loaded === 1 ? '' : 's'}`];
   if (dup) parts.push(`${dup} already loaded`);
   if (bad) parts.push(`${bad} unreadable line${bad === 1 ? '' : 's'} skipped`);
-  status.innerHTML = `${esc(parts.join(' · '))}. ${state.rows.length} transactions in total.${details}`;
+  setStatus(`${esc(parts.join(' · '))}. ${state.rows.length} transactions in total.`);
+  if (added) savedRows.save();
+  showApp();
+}
 
+function showApp() {
   derive();
   setupFilters();
   $('#dropzone').hidden = true;
@@ -1439,7 +1497,12 @@ async function loadFiles(fileList) {
 }
 
 function clearData() {
-  Object.assign(state, { rows: [], filtered: [], files: 0, focus: null, search: '', account: 'all', from: '', to: '' });
+  Object.assign(state, {
+    rows: [], filtered: [], files: 0, focus: null, search: '', account: 'all', from: '', to: '',
+    rangeTouched: false, sort: { col: 'date', dir: -1 },
+  });
+  saveSettings();
+  savedRows.clear();
   $('#search').value = '';
   $('#app').hidden = true;
   $('#topActions').hidden = true;
@@ -1579,11 +1642,10 @@ function setupFilters() {
     [...accounts].map(([iban, n]) => `<option value="${esc(iban)}">${esc(fmtIban(iban))} (${n})</option>`).join('');
   if (state.account !== 'all' && !accounts.has(state.account)) state.account = 'all';
   sel.value = state.account;
-  for (const id of ['#fFrom', '#fTo']) { $(id).min = min; $(id).max = max; }
-  state.from = min;
-  state.to = max;
-  $('#fFrom').value = min;
-  $('#fTo').value = max;
+  state.dataMin = min;
+  state.dataMax = max;
+  // A range the user narrowed survives adding files; otherwise show everything.
+  if (!state.rangeTouched || !state.from || !state.to) { state.from = min; state.to = max; state.rangeTouched = false; }
   $('#fTop').value = state.topN;
   $('#fTopOut').textContent = state.topN;
   $('#fGroup').value = state.groupBy;
@@ -1591,6 +1653,25 @@ function setupFilters() {
   document.querySelectorAll('[data-gran]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.gran === state.gran)));
   document.querySelectorAll('[data-catdir]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.catdir === state.catDir)));
   document.querySelectorAll('[data-recby]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.recby === state.recurringBy)));
+}
+
+function setRange(from, to) {
+  from = from || state.dataMin;
+  to = to || state.dataMax;
+  if (from > to) [from, to] = [to, from];
+  state.from = from;
+  state.to = to;
+  state.rangeTouched = from !== state.dataMin || to !== state.dataMax;
+  render();
+}
+
+function syncDateInputs() {
+  const f = $('#fFrom'), t = $('#fTo');
+  f.value = state.from;
+  t.value = state.to;
+  f.min = state.dataMin; f.max = state.to || state.dataMax;
+  t.min = state.from || state.dataMin; t.max = state.dataMax;
+  $('#dateReset').hidden = !state.rangeTouched;
 }
 
 const passesBaseFilters = (r) =>
@@ -1658,6 +1739,7 @@ function matchesFocus(r, f) {
   const value = f.field === 'cat' ? r.category
     : f.field === 'name' ? nameKeyOf(r)
     : f.field === 'pair' ? pairKeyOf(r)
+    : f.field === 'period' ? bucketOf(r.date)
     : r.key;
   return f.keys ? f.keys.has(value) : value === f.key;
 }
@@ -1675,8 +1757,9 @@ function renderFocusChip() {
   const dir = f?.dir === 'in' ? 'in' : f?.dir === 'out' ? 'out' : '';
   for (const el of [$('#focusChip'), $('#focusChipMobile')]) {
     if (!f) { el.innerHTML = ''; continue; }
-    el.innerHTML = `<span class="chip"><span title="${esc(f.label)}">Table: ${esc(f.label)}${dir ? ` (${dir})` : ''}</span><button type="button" aria-label="Clear table filter">×</button></span>`;
-    el.querySelector('button').onclick = () => setFocus(null);
+    el.innerHTML = `<span class="chip"><span title="${esc(f.label)}">Table: ${esc(f.label)}${dir ? ` (${dir})` : ''}</span><button type="button" class="chip-go" title="Go to the transactions table">Show ↓</button><button type="button" class="chip-x" aria-label="Clear table filter">×</button></span>`;
+    el.querySelector('.chip-go').onclick = () => { setFiltersOpen(false); scrollToSection($('#txCard')); };
+    el.querySelector('.chip-x').onclick = () => setFocus(null);
   }
 }
 
@@ -1724,12 +1807,13 @@ function renderKpis() {
   const net = inC - outC;
   const days = state.from && state.to ? Math.round((toDay(state.to) - toDay(state.from)) / dayMs) + 1 : 0;
   const months = days / 30.44;
+  const groups = new Set(state.filtered.map((r) => r.key)).size;
   const perMonth = months >= 0.9 ? `≈ ${eur(Math.round(outC / months))} per month` : '';
   const tiles = [
     ['Money in', eur(inC), '', `${state.filtered.filter((r) => r.cents > 0).length} transactions`],
     ['Money out', eur(outC), '', perMonth],
     ['Net', (net > 0 ? '+' : '') + eur(net), net > 0 ? 'pos' : net < 0 ? 'neg' : '', net >= 0 ? 'more in than out' : 'more out than in'],
-    ['Transactions', state.filtered.length.toLocaleString('en'), '', `${new Set(state.filtered.map((r) => r.key)).size} ${groupNoun(true)}`],
+    ['Transactions', state.filtered.length.toLocaleString('en'), '', `${groups} ${groupNoun(groups !== 1)}`],
     ['Period', days ? `${days} days` : '–', '', `${fmtDate(state.from)} – ${fmtDate(state.to)}`],
   ];
   $('#kpis').innerHTML = tiles.map(([label, value, cls, sub]) =>
@@ -1810,10 +1894,10 @@ function renderDonut(el, agg, opts) {
     <svg viewBox="0 0 ${size} ${size}" role="img" aria-label="${esc(opts.aria)}: ${eur(agg.total)} total">
       ${paths}
       <text class="donut-total" x="${c}" y="${c + 1}" text-anchor="middle">${esc(eur(agg.total))}</text>
-      <text class="donut-sub" x="${c}" y="${c + 21}" text-anchor="middle">${agg.distinct} ${esc(opts.unit)}</text>
+      <text class="donut-sub" x="${c}" y="${c + 21}" text-anchor="middle">${agg.distinct} ${esc(agg.distinct === 1 ? opts.unitOne : opts.unit)}</text>
     </svg>
     <div style="min-width:0"><ul class="legend${agg.items.length > 9 ? ' scroll' : ''}">${legend}</ul>${
-      showRank ? `<p class="legend-note">Top ${SLOT_COUNT} in colour; ranks ${SLOT_COUNT + 1}–${SLOT_COUNT + tailCount} in grey (hover a slice to identify it).</p>` : ''
+      showRank ? `<p class="legend-note">Top ${SLOT_COUNT} in colour; ranks ${SLOT_COUNT + 1}–${SLOT_COUNT + tailCount} in grey${hoverless.matches ? '' : ' (hover a slice to identify it)'}.</p>` : ''
     }</div></div>`;
 
   const pick = (i) => {
@@ -1838,15 +1922,14 @@ function renderDonuts() {
   const outs = state.filtered.filter((r) => r.cents < 0);
   const byKey = (r) => r.key;
   renderDonut($('#donutIn'), aggregate(ins, byKey, labelOf, state.topN),
-    { chart: 'in', field: 'key', dir: 'in', empty: 'No incoming money in this selection.', aria: `Money in by ${groupNoun(false)}`, unit: groupNoun(true), excludable: true });
+    { chart: 'in', field: 'key', dir: 'in', empty: 'No incoming money in this selection.', aria: `Money in by ${groupNoun(false)}`, unit: groupNoun(true), unitOne: groupNoun(false), excludable: true });
   renderDonut($('#donutOut'), aggregate(outs, byKey, labelOf, state.topN),
-    { chart: 'out', field: 'key', dir: 'out', empty: 'No outgoing money in this selection.', aria: `Money out by ${groupNoun(false)}`, unit: groupNoun(true), excludable: true });
+    { chart: 'out', field: 'key', dir: 'out', empty: 'No outgoing money in this selection.', aria: `Money out by ${groupNoun(false)}`, unit: groupNoun(true), unitOne: groupNoun(false), excludable: true });
   $('#inTitle').textContent = `Money in by ${groupNoun(false)}`;
   $('#outTitle').textContent = `Money out by ${groupNoun(false)}`;
-  $('#topLabel').textContent = `Top ${groupNoun(true)}`;
   const catRows = state.filtered.filter((r) => (state.catDir === 'in' ? r.cents > 0 : r.cents < 0));
   renderDonut($('#donutCat'), aggregate(catRows, (r) => r.category, (k) => k, state.topN),
-    { chart: 'cat', field: 'cat', dir: state.catDir, empty: 'Nothing in this selection.', aria: `Money ${state.catDir} by category`, unit: 'categories' });
+    { chart: 'cat', field: 'cat', dir: state.catDir, empty: 'Nothing in this selection.', aria: `Money ${state.catDir} by category`, unit: 'categories', unitOne: 'category' });
 }
 
 /* ---------- Cash flow ---------- */
@@ -1873,7 +1956,7 @@ function bucketLabel(b, short) {
     const s = monthFmt.format(new Date(toDay(`${b}-01`)));
     return short ? s.replace(/ (\d{2})(\d{2})$/, " '$2") : s;
   }
-  return short ? `${b.slice(8, 10)}-${b.slice(5, 7)}` : `Week of ${fmtDate(b)}`;
+  return short ? shortDate(b) : `Week of ${fmtDate(b)}`;
 }
 
 function cashflowBuckets() {
@@ -1959,18 +2042,19 @@ function renderCashflow() {
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Cash flow per ${state.gran}: money in, money out and net">${svg}</svg>`;
   // Hover shows a tooltip; a click or tap pins the period's numbers below the chart.
   const showDetail = () => {
-    const d = data.find((x) => x.b === state.cashSelected);
+    const selected = state.focus?.chart === 'cashflow' ? state.focus.key : null;
+    const d = data.find((x) => x.b === selected);
     el.querySelectorAll('.band-hit').forEach((r) => r.classList.toggle('on', data[+r.dataset.i] === d));
     $('#cashflowDetail').innerHTML = d
       ? `<strong>${esc(bucketLabel(d.b, false))}</strong> · in ${eur(d.in)} · out ${eur(d.out)} · net ${eur(d.net)} · cumulative ${eur(d.cum)}`
-      : `${hoverless.matches ? 'Tap' : 'Click'} a ${state.gran} to see its numbers.`;
+      : `${pointerWord()} a ${state.gran} to see its numbers and filter the transactions table.`;
   };
   el.querySelectorAll('.band-hit').forEach((r) => {
     const d = data[+r.dataset.i];
     r.addEventListener('mousemove', (e) => showTip(e,
       `<div class="t">${esc(bucketLabel(d.b, false))}</div>${tipRow('In', eur(d.in))}${tipRow('Out', eur(d.out))}${tipRow('Net', eur(d.net))}${tipRow('Cumulative net', eur(d.cum))}`));
     r.addEventListener('mouseleave', hideTip);
-    r.addEventListener('click', () => { state.cashSelected = state.cashSelected === d.b ? null : d.b; showDetail(); });
+    r.addEventListener('click', () => { hideTip(); setFocus({ chart: 'cashflow', field: 'period', key: d.b, keys: null, label: bucketLabel(d.b, false) }); });
   });
   showDetail();
 
@@ -2134,7 +2218,7 @@ function renderTable() {
       <td class="c-cp"><div class="cp-cell"><div><div class="cp">${esc(r.cpName || '(unknown)')}</div><div class="sub">${esc(fmtIban(r.cpIban))}${multiAccount ? `${r.cpIban ? ' · ' : ''}acct …${esc(r.account.slice(-4))}` : ''}</div></div>
         <button type="button" class="x-btn" data-ex="${i}" title="Exclude ${esc(byCategory ? `category “${r.category}”` : 'this counterparty')} from all views" aria-label="Exclude ${esc(byCategory ? `category ${r.category}` : r.cpName || 'this counterparty')} from all views">${EYE_OFF}</button></div></td>
       <td class="c-cat"><button type="button" class="cat-btn${state.assignments[pairKeyOf(r)] ? ' manual' : ''}" data-assign="${i}" title="Change the category of this counterparty">${esc(r.category)}</button></td>
-      <td class="c-type"><abbr title="${esc(r.typeDesc)}">${esc(r.type)}</abbr></td>
+      <td class="c-type"><abbr title="${esc(r.typeDesc)}">${esc(r.type)}</abbr>${r.typeDesc ? `<small class="type-desc">${esc(r.typeDesc)}</small>` : ''}</td>
       <td class="desc"><button type="button" title="Click to expand">${esc(r.desc || '–')}</button></td>
       <td class="num amt ${r.cents > 0 ? 'pos' : ''}">${r.cents > 0 ? '+' : ''}${eur(r.cents)}</td></tr>`).join('')
     : '<tr><td colspan="6" class="empty">No transactions match.</td></tr>';
@@ -2183,6 +2267,7 @@ function downloadJsonl(kind) {
 
 function render() {
   hideTip();
+  syncDateInputs();
   applyFilters();
   state.txLimit = PAGE_SIZE;
   state.manageLimit = PAGE_SIZE;
@@ -2276,10 +2361,15 @@ document.addEventListener('drop', (e) => {
   if (e.dataTransfer?.files?.length) loadFiles(e.dataTransfer.files);
 });
 
-$('#clearBtn').addEventListener('click', () => { $('#moreMenu').open = false; clearData(); });
+$('#clearBtn').addEventListener('click', () => {
+  $('#moreMenu').open = false;
+  const n = state.rows.length;
+  if (confirm(`Remove all ${n.toLocaleString('en')} loaded transaction${n === 1 ? '' : 's'} from this device? Your rules and categories are kept.`)) clearData();
+});
 $('#fAccount').addEventListener('change', (e) => { state.account = e.target.value; state.focus = null; saveSettings(); render(); });
-$('#fFrom').addEventListener('change', (e) => { state.from = e.target.value; render(); });
-$('#fTo').addEventListener('change', (e) => { state.to = e.target.value; render(); });
+$('#fFrom').addEventListener('change', (e) => setRange(e.target.value, state.to));
+$('#fTo').addEventListener('change', (e) => setRange(state.from, e.target.value));
+$('#dateReset').addEventListener('click', () => setRange(state.dataMin, state.dataMax));
 $('#fTb').addEventListener('change', (e) => { state.includeTb = e.target.checked; saveSettings(); render(); });
 $('#fGroup').addEventListener('change', (e) => {
   state.groupBy = e.target.value;
@@ -2301,10 +2391,10 @@ $('#fTop').addEventListener('input', (e) => {
 
 document.querySelectorAll('[data-gran]').forEach((b) => b.addEventListener('click', () => {
   state.gran = b.dataset.gran;
-  state.cashSelected = null;
+  if (state.focus?.chart === 'cashflow') state.focus = null;
   document.querySelectorAll('[data-gran]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
   saveSettings();
-  renderCashflow();
+  render();
 }));
 document.querySelectorAll('[data-catdir]').forEach((b) => b.addEventListener('click', () => {
   state.catDir = b.dataset.catdir;
@@ -2333,12 +2423,10 @@ function applyRules(text) {
   render();
 }
 document.querySelectorAll('[data-panel]').forEach((b) => {
-  const label = b.textContent;
   b.addEventListener('click', () => {
     const panel = document.getElementById(b.dataset.panel);
     panel.hidden = !panel.hidden;
     b.setAttribute('aria-expanded', String(!panel.hidden));
-    b.textContent = panel.hidden ? label : 'Close';
     renderManage();
   });
 });
@@ -2373,7 +2461,11 @@ $('#assignSave').addEventListener('click', () => {
   setAssignment(assignTarget.key, { category, scope, name: assignTarget.name, iban: assignTarget.iban });
 });
 $('#rulesApply').addEventListener('click', () => applyRules($('#rulesText').value));
-$('#rulesReset').addEventListener('click', () => { $('#rulesText').value = DEFAULT_RULES; applyRules(DEFAULT_RULES); });
+$('#rulesReset').addEventListener('click', () => {
+  if ($('#rulesText').value !== DEFAULT_RULES && !confirm('Replace your category rules with the defaults? Your own rules will be lost.')) return;
+  $('#rulesText').value = DEFAULT_RULES;
+  applyRules(DEFAULT_RULES);
+});
 
 let searchTimer;
 $('#search').addEventListener('input', (e) => {
@@ -2438,6 +2530,24 @@ function onPhoneChange() {
   renderManage();
 }
 phone.addEventListener('change', onPhoneChange);
+
+// "Click" on mouse screens, "Tap" on touch screens, in every hint.
+function pointerWord() { return hoverless.matches ? 'Tap' : 'Click'; }
+function applyPointerWords() {
+  document.querySelectorAll('[data-act]').forEach((el) => {
+    el.textContent = el.dataset.act === 'lower' ? pointerWord().toLowerCase() : pointerWord();
+  });
+  if (state.rows.length) render();
+}
+applyPointerWords();
+hoverless.addEventListener('change', applyPointerWords);
+
+// Reopen with the transactions loaded last time on this device.
+savedRows.load().then((raw) => {
+  if (!Array.isArray(raw) || !raw.length || state.rows.length) return;
+  state.rows = raw.map(normalizeRow);
+  showApp();
+});
 
 let resizeTimer;
 window.addEventListener('resize', () => {
