@@ -529,7 +529,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
     <div class="top-actions">
       <button type="button" class="btn icon-only" id="installBtn" title="Install app" aria-label="Install app" hidden><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <div class="top-actions" id="topActions" hidden>
-        <label class="btn add-file" title="Add file"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="label">Add file</span><input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input></label>
+        <label class="btn add-file" title="Add files (you can pick several at once)"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="label">Add files</span><input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input></label>
         <details class="menu" id="moreMenu">
           <summary class="btn icon-only" title="More" aria-label="More actions"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="3" cy="8" r="1.6"/><circle cx="8" cy="8" r="1.6"/><circle cx="13" cy="8" r="1.6"/></svg></summary>
           <div class="menu-panel">
@@ -547,8 +547,8 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 
   <section class="dropzone" id="dropzone">
     <h2>Load statements</h2>
-    <p>Drop Rabobank PDF statements, or <code>.jsonl</code> from <code>parse_rabobank_statement.py</code>, here or choose them. Overlapping files are merged without double-counting. Everything stays on this device; nothing is uploaded.</p>
-    <label class="btn primary">Choose files…<input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input id="fileInput"></label>
+    <p>Drop Rabobank PDF statements, or <code>.jsonl</code> from <code>parse_rabobank_statement.py</code>, here or choose them. You can pick several files at once, e.g. a whole year of monthly statements. Overlapping files are merged without double-counting. Everything stays on this device; nothing is uploaded.</p>
+    <label class="btn primary">Choose one or more files…<input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input id="fileInput"></label>
     <button type="button" class="date-reset reset-start" id="resetStart" hidden>Reset rules and settings…</button>
   </section>
 
