@@ -233,6 +233,19 @@ body.dragging::after {
 .card-head > div:first-child { flex: 1 1 300px; min-width: 0; }
 .card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .card h2 { font-size: 15px; line-height: 1.3; margin: 0; font-weight: 600; }
+.collapse-btn {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; margin: -4px 0 -4px -6px; padding: 4px 6px;
+  border: 0; border-radius: 6px; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+@media (hover: hover) { .collapse-btn:hover { background: var(--surface-2); } }
+.collapse-btn .chev { flex: none; color: var(--text-muted); transition: transform .15s ease; }
+.card.collapsed { padding-top: 12px; padding-bottom: 12px; }
+.card.collapsed > :not(.card-head),
+.card.collapsed .card-head .hint,
+.card.collapsed .card-head > :not(:first-child) { display: none; }
+.card.collapsed .card-head { margin-bottom: 0; }
+.card.collapsed .collapse-btn .chev { transform: rotate(-90deg); }
+@media (prefers-reduced-motion: reduce) { .collapse-btn .chev { transition: none; } }
 .card .hint { color: var(--text-muted); font-size: 12px; margin: 4px 0 0; max-width: 80ch; }
 
 .seg { display: inline-flex; height: var(--h-sm); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
@@ -529,11 +542,13 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
     <div class="top-actions">
       <button type="button" class="btn icon-only" id="installBtn" title="Install app" aria-label="Install app" hidden><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <div class="top-actions" id="topActions" hidden>
-        <label class="btn add-file" title="Add file"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="label">Add file</span><input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input></label>
+        <label class="btn add-file" title="Add files (you can pick several at once)"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="label">Add files</span><input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input></label>
         <details class="menu" id="moreMenu">
           <summary class="btn icon-only" title="More" aria-label="More actions"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="3" cy="8" r="1.6"/><circle cx="8" cy="8" r="1.6"/><circle cx="13" cy="8" r="1.6"/></svg></summary>
           <div class="menu-panel">
             <button type="button" id="installMenuItem" hidden>Install app</button>
+            <button type="button" id="collapseAllBtn">Collapse all sections</button>
+            <hr>
             <button type="button" data-download="transactions">Download transactions (.jsonl)</button>
             <button type="button" data-download="counterparties">Download counterparties (.jsonl)</button>
             <hr>
@@ -547,8 +562,8 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 
   <section class="dropzone" id="dropzone">
     <h2>Load statements</h2>
-    <p>Drop Rabobank PDF statements, or <code>.jsonl</code> from <code>parse_rabobank_statement.py</code>, here or choose them. Overlapping files are merged without double-counting. Everything stays on this device; nothing is uploaded.</p>
-    <label class="btn primary">Choose files…<input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input id="fileInput"></label>
+    <p>Drop Rabobank PDF statements, or <code>.jsonl</code> from <code>parse_rabobank_statement.py</code>, here or choose them. You can pick several files at once, e.g. a whole year of monthly statements. Overlapping files are merged without double-counting. Everything stays on this device; nothing is uploaded.</p>
+    <label class="btn primary">Choose one or more files…<input type="file" accept=".pdf,application/pdf,.jsonl,.json,.txt" multiple class="visually-hidden" data-file-input id="fileInput"></label>
     <button type="button" class="date-reset reset-start" id="resetStart" hidden>Reset rules and settings…</button>
   </section>
 
@@ -603,15 +618,15 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
     <section class="kpis" id="kpis" aria-label="Totals"></section>
 
     <div class="grid2">
-      <section class="card">
+      <section class="card" id="secIn">
         <div class="card-head">
-          <div><h2 id="inTitle">Money in by counterparty</h2><p class="hint"><span data-act>Click</span> a slice or row to filter the transactions table.</p></div>
+          <div><h2><button type="button" class="collapse-btn" aria-expanded="true" aria-controls="secIn"><svg class="chev" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="inTitle">Money in by counterparty</span></button></h2><p class="hint"><span data-act>Click</span> a slice or row to filter the transactions table.</p></div>
         </div>
         <div id="donutIn" class="donut-host"></div>
       </section>
-      <section class="card">
+      <section class="card" id="secOut">
         <div class="card-head">
-          <div><h2 id="outTitle">Money out by counterparty</h2><p class="hint"><span data-act>Click</span> a slice or row to filter the transactions table.</p></div>
+          <div><h2><button type="button" class="collapse-btn" aria-expanded="true" aria-controls="secOut"><svg class="chev" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="outTitle">Money out by counterparty</span></button></h2><p class="hint"><span data-act>Click</span> a slice or row to filter the transactions table.</p></div>
         </div>
         <div id="donutOut" class="donut-host"></div>
       </section>
@@ -619,7 +634,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 
     <section class="card" id="secCashflow">
       <div class="card-head">
-        <div><h2>Cash flow</h2><p class="hint">Money in vs. out per period; the line is the net result. <span data-act>Click</span> a period to filter the transactions table.</p></div>
+        <div><h2><button type="button" class="collapse-btn" aria-expanded="true" aria-controls="secCashflow"><svg class="chev" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Cash flow</span></button></h2><p class="hint">Money in vs. out per period; the line is the net result. <span data-act>Click</span> a period to filter the transactions table.</p></div>
         <div class="seg" role="group" aria-label="Period">
           <button type="button" data-gran="month" aria-pressed="true">Month</button>
           <button type="button" data-gran="week" aria-pressed="false">Week</button>
@@ -640,7 +655,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 
     <section class="card" id="secCategories">
       <div class="card-head">
-        <div><h2>Categories</h2><p class="hint">Counterparties you assign by hand come first; otherwise the first matching rule wins. <span data-act>Click</span> a category to filter the table.</p></div>
+        <div><h2><button type="button" class="collapse-btn" aria-expanded="true" aria-controls="secCategories"><svg class="chev" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Categories</span></button></h2><p class="hint">Counterparties you assign by hand come first; otherwise the first matching rule wins. <span data-act>Click</span> a category to filter the table.</p></div>
         <div class="card-actions">
           <button type="button" class="btn small" data-panel="managePanel" aria-expanded="false" aria-controls="managePanel">Assign counterparties</button>
           <button type="button" class="btn small" data-panel="rulesPanel" aria-expanded="false" aria-controls="rulesPanel">Edit rules</button>
@@ -687,7 +702,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 
     <section class="card" id="secRecurring">
       <div class="card-head">
-        <div><h2>Recurring payments</h2><p class="hint">Direct debits, transfers and other non-card payments to the same counterparty, of a similar amount (±15%), about once a month. "Name" adds up all recurring amounts per counterparty name, across IBANs. Indicative: a short statement period only shows a few repeats. <span data-act>Click</span> a row to filter the table.</p></div>
+        <div><h2><button type="button" class="collapse-btn" aria-expanded="true" aria-controls="secRecurring"><svg class="chev" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Recurring payments</span></button></h2><p class="hint">Direct debits, transfers and other non-card payments to the same counterparty, of a similar amount (±15%), about once a month. "Name" adds up all recurring amounts per counterparty name, across IBANs. Indicative: a short statement period only shows a few repeats. <span data-act>Click</span> a row to filter the table.</p></div>
         <div class="seg" role="group" aria-label="Group recurring payments by">
           <button type="button" data-recby="iban" aria-pressed="true">Name + IBAN</button>
           <button type="button" data-recby="name" aria-pressed="false">Name</button>
@@ -698,7 +713,7 @@ dialog.dialog::backdrop { background: rgba(0,0,0,.35); }
 
     <section class="card" id="txCard">
       <div class="card-head">
-        <div><h2>Transactions</h2><p class="hint">Sort with the column headers and <span data-act="lower">click</span> a description to expand it. <span data-act>Click</span> a category to change it; the eye icon hides a counterparty from all views.</p></div>
+        <div><h2><button type="button" class="collapse-btn" aria-expanded="true" aria-controls="txCard"><svg class="chev" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Transactions</span></button></h2><p class="hint">Sort with the column headers and <span data-act="lower">click</span> a description to expand it. <span data-act>Click</span> a category to change it; the eye icon hides a counterparty from all views.</p></div>
       </div>
       <div class="toolbar">
         <label class="field">Search
@@ -869,6 +884,7 @@ const state = {
   sort: { col: 'date', dir: -1 },
   gran: saved.gran === 'week' ? 'week' : 'month',
   recurringBy: saved.recurringBy === 'name' ? 'name' : 'iban',
+  collapsed: Array.isArray(saved.collapsed) ? saved.collapsed.filter((id) => typeof id === 'string') : [],
   catDir: saved.catDir === 'in' ? 'in' : 'out',
   rulesText: store.get(RULES_KEY) || DEFAULT_RULES,
   // Manual categories per counterparty: { "<iban>|<normalised name>": { category, name, iban } }.
@@ -877,8 +893,8 @@ const state = {
 };
 
 function saveSettings() {
-  const { account, includeTb, topN, groupBy, excluded, gran, catDir, recurringBy } = state;
-  store.set(SETTINGS_KEY, JSON.stringify({ account, includeTb, topN, groupBy, excluded, gran, catDir, recurringBy }));
+  const { account, includeTb, topN, groupBy, excluded, gran, catDir, recurringBy, collapsed } = state;
+  store.set(SETTINGS_KEY, JSON.stringify({ account, includeTb, topN, groupBy, excluded, gran, catDir, recurringBy, collapsed }));
 }
 
 /* ---------- Loaded transactions, kept on this device (IndexedDB) ---------- */
@@ -1875,7 +1891,7 @@ function renderFocusChip() {
   for (const el of [$('#focusChip'), $('#focusChipMobile')]) {
     if (!f) { el.innerHTML = ''; continue; }
     el.innerHTML = `<span class="chip"><span title="${esc(f.label)}">Table: ${esc(f.label)}${dir ? ` (${dir})` : ''}</span><button type="button" class="chip-go" title="Go to the transactions table">Show ↓</button><button type="button" class="chip-x" aria-label="Clear table filter">×</button></span>`;
-    el.querySelector('.chip-go').onclick = () => { setFiltersOpen(false); scrollToSection($('#txCard')); };
+    el.querySelector('.chip-go').onclick = () => { setFiltersOpen(false); expandSection($('#txCard')); scrollToSection($('#txCard')); };
     el.querySelector('.chip-x').onclick = () => setFocus(null);
   }
 }
@@ -2686,6 +2702,47 @@ window.addEventListener('resize', () => {
   resizeTimer = setTimeout(() => { if (state.rows.length) renderCashflow(); onPhoneChange(); }, 120);
 });
 
+/* ---------- Collapsible sections ---------- */
+
+const CARD_IDS = ['secIn', 'secOut', 'secCashflow', 'secCategories', 'secRecurring', 'txCard'];
+
+function setCollapsed(id, collapsed) {
+  const card = document.getElementById(id);
+  card.classList.toggle('collapsed', collapsed);
+  card.querySelector('.collapse-btn').setAttribute('aria-expanded', String(!collapsed));
+  state.collapsed = state.collapsed.filter((x) => x !== id).concat(collapsed ? [id] : []);
+  // A chart drawn while hidden has no width; draw it again now that it shows.
+  if (!collapsed && id === 'secCashflow' && state.rows.length) renderCashflow();
+}
+
+function syncCollapseAll() {
+  $('#collapseAllBtn').textContent = state.collapsed.length === CARD_IDS.length ? 'Expand all sections' : 'Collapse all sections';
+}
+
+function expandSection(el) {
+  if (!el?.classList.contains('collapsed')) return;
+  setCollapsed(el.id, false);
+  saveSettings();
+  syncCollapseAll();
+}
+
+for (const id of CARD_IDS) {
+  setCollapsed(id, state.collapsed.includes(id));
+  document.getElementById(id).querySelector('.collapse-btn').addEventListener('click', () => {
+    setCollapsed(id, !document.getElementById(id).classList.contains('collapsed'));
+    saveSettings();
+    syncCollapseAll();
+  });
+}
+syncCollapseAll();
+$('#collapseAllBtn').addEventListener('click', () => {
+  const collapse = state.collapsed.length !== CARD_IDS.length;
+  for (const id of CARD_IDS) setCollapsed(id, collapse);
+  saveSettings();
+  syncCollapseAll();
+  $('#moreMenu').open = false;
+});
+
 /* ---------- Phone bar: filters toggle and section tabs ---------- */
 
 $('#filtersToggle').addEventListener('click', () => setFiltersOpen(!document.body.classList.contains('filters-open')));
@@ -2726,7 +2783,9 @@ window.addEventListener('scroll', () => {
 document.querySelectorAll('#sideNav a').forEach((a) => a.addEventListener('click', (e) => {
   e.preventDefault();
   setSheet(null);
-  scrollToSection(document.querySelector(a.getAttribute('href')));
+  const target = document.querySelector(a.getAttribute('href'));
+  expandSection(target);
+  scrollToSection(target);
 }));
 
 if ('serviceWorker' in navigator) {
