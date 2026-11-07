@@ -496,7 +496,8 @@
       border-radius: 6px;
       font-size: 0.9rem;
     }
-    .dialog-check { display: flex; gap: 0.5rem; align-items: center; color: var(--text); font-size: 0.85rem; cursor: pointer; }
+    .dialog-check { display: flex; gap: 0.55rem; align-items: center; color: var(--text); font-size: 0.85rem; cursor: pointer; }
+    .dialog-check input { flex: none; margin: 0; width: 1rem; height: 1rem; accent-color: var(--accent2); }
     .dialog-check[hidden] { display: none; }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 0.6rem; flex-wrap: wrap; }
     .dialog-actions button, #progress-cancel {
@@ -512,27 +513,56 @@
     .dialog-actions button:hover, #progress-cancel:hover { border-color: var(--accent2); }
     #progress-cancel[hidden] { display: none; }
     .dialog-card { width: min(560px, 100%); }
+    /* Sections: one left edge, even spacing, a thin line between them */
+    .dialog-card { gap: 0; }
+    .dialog-card > h2 { margin-bottom: 0.3rem; }
+    .dialog-card > fieldset, .dialog-card > .preview, .dialog-card > #skip-row { padding: 0.9rem 0; border-top: 1px solid var(--border); }
+    .dialog-card > #enhance-target { margin-bottom: 0.9rem; }
+    .dialog-card > #tuning-fields { border-top: none; padding-top: 0; }       /* belongs to Cleanup */
+    .dialog-card fieldset { min-width: 0; margin: 0; padding-left: 0; padding-right: 0; }
+    .dialog-card legend { padding: 0; float: left; width: 100%; }
+    .dialog-card legend + * { clear: both; }
+    /* Buttons stay in view at the bottom while the settings scroll */
+    .dialog-foot { position: sticky; bottom: -1.2rem; margin: 0 -1.3rem -1.2rem; padding: 0.75rem 1.3rem 1rem;
+      background: var(--surface); border-top: 1px solid var(--border); border-radius: 0 0 14px 14px;
+      display: flex; flex-direction: column; gap: 0.6rem; z-index: 1; }
 
     /* Lumity sliders */
     #tuning-fields[hidden] { display: none; }
     .extra { align-items: flex-start; }
-    .extra input { margin-top: 0.2rem; flex: none; }
+    .extra input { margin-top: 0.15rem; }
     .extra span { display: flex; flex-direction: column; gap: 0.1rem; }
     .extra small { color: var(--text-muted); font-size: 0.76rem; line-height: 1.35; }
     #extras-fields:disabled .extra { opacity: 0.45; cursor: default; }
     #device-fields:disabled .chips { opacity: 0.45; }
     .chips input:disabled + span { opacity: 0.4; cursor: not-allowed; }
     .chips label[hidden] { display: none; }
-    .ai-models { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.35rem; }
-    .ai-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; color: var(--text); }
-    .ai-row .ai-name { flex: 1 1 12rem; min-width: 0; }
-    .ai-row .ai-name small { display: block; color: var(--text-muted); font-size: 0.72rem; }
-    .ai-row .ai-status { color: var(--text-muted); font-size: 0.75rem; }
+    /* AI model list: name + details | status over button, one row per model */
+    .ai-manage { border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); }
+    .ai-manage summary { cursor: pointer; padding: 0.45rem 0.7rem; color: var(--text); font-size: 0.82rem; list-style-position: inside; }
+    .ai-manage summary span { color: var(--text-muted); font-size: 0.76rem; }
+    .ai-manage[open] summary { border-bottom: 1px solid var(--border); }
+    .ai-models { display: flex; flex-direction: column; padding: 0 0.7rem; }
+    .ai-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.25rem 0.75rem;
+      padding: 0.5rem 0; font-size: 0.8rem; color: var(--text); }
+    .ai-row + .ai-row { border-top: 1px solid var(--border); }
+    .ai-row .ai-name { grid-row: span 2; min-width: 0; }
+    .ai-row .ai-name small { display: block; color: var(--text-muted); font-size: 0.72rem; line-height: 1.35; margin-top: 0.1rem; }
+    .ai-row .ai-status { color: var(--text-muted); font-size: 0.74rem; text-align: right; white-space: nowrap; }
     .ai-row .ai-status.ready { color: var(--accent2); }
-    .ai-row button, #ai-load-files { background: var(--surface2); border: 1px solid var(--border); color: var(--accent2); border-radius: 6px; padding: 0.2rem 0.6rem; cursor: pointer; font-size: 0.78rem; }
+    .ai-row button { justify-self: end; min-width: 5.6rem; }
+    .ai-row button[hidden] { display: none; }
+    .ai-row button, #ai-load-files { background: var(--surface); border: 1px solid var(--border); color: var(--accent2); border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; font-size: 0.78rem; }
     .ai-row button:disabled { opacity: 0.45; cursor: not-allowed; }
-    #ai-note { color: var(--text-muted); font-size: 0.75rem; line-height: 1.4; }
-    #ai-options { margin-top: 0.45rem; }
+    .ai-files { padding: 0.5rem 0.7rem 0; border-top: 1px solid var(--border); }
+    #ai-note { color: var(--text-muted); font-size: 0.74rem; line-height: 1.4; padding: 0.4rem 0.7rem 0.6rem; }
+    #ai-options { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.15rem; }
+    /* Equal-width chips (engine choice), so rows wrap evenly */
+    .chips.even { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.2rem, 1fr)); }
+    .chips.even span { display: block; text-align: center; }
+    /* Label + control rows share one label column */
+    .opt-row { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); align-items: center; gap: 0.6rem; color: var(--text); font-size: 0.85rem; }
+    .opt-row[hidden] { display: none; }
     #ai-options[hidden], #ai-pick-hint[hidden], #scale-hint[hidden], #denoise-row[hidden], #cugan-row[hidden] { display: none; }
     #use-ai + span small { display: block; color: var(--text-muted); font-size: 0.72rem; }
     #ai-note a { color: var(--accent2); }
@@ -787,28 +817,33 @@
     <p class="dialog-sub" id="enhance-target"></p>
     <fieldset id="engine-fields">
       <legend>Engine</legend>
-      <label class="dialog-check"><input type="checkbox" id="use-ai"> <span>🤖 Use AI upscaling<small id="use-ai-sub">Optional Real-ESRGAN and Real-CUGAN models, downloaded once and kept offline.</small></span></label>
+      <label class="dialog-check extra"><input type="checkbox" id="use-ai"> <span>🤖 Use AI upscaling<small id="use-ai-sub">Optional Real-ESRGAN and Real-CUGAN models, downloaded once and kept offline.</small></span></label>
       <div id="ai-options" hidden>
-        <div class="chips">
+        <div class="chips even" id="engine-chips">
           <label hidden><input type="radio" name="engine" value="builtin" checked><span>Built-in</span></label>
           <label><input type="radio" name="engine" value="animevideov3" disabled><span>🤖 AI · Fast</span></label>
           <label><input type="radio" name="engine" value="generalv3" disabled><span>🤖 AI · Balanced</span></label>
           <label><input type="radio" name="engine" value="anime6b" disabled><span>🤖 AI · Best</span></label>
           <label><input type="radio" name="engine" value="cugan" disabled><span>🤖 AI · Anime+</span></label>
         </div>
-        <div class="chips" id="cugan-row" hidden>
-          <label><input type="radio" name="cuganMode" value="conservative" checked><span>Conservative</span></label>
-          <label><input type="radio" name="cuganMode" value="denoise3x"><span>Denoise</span></label>
+        <div class="opt-row" id="cugan-row" hidden><span>Mode</span>
+          <div class="chips">
+            <label><input type="radio" name="cuganMode" value="conservative" checked><span>Conservative</span></label>
+            <label><input type="radio" name="cuganMode" value="denoise3x"><span>Denoise</span></label>
+          </div>
         </div>
         <label class="slider-row" id="denoise-row" hidden>Denoise
           <input type="range" id="ai-denoise" min="0" max="100" step="5" value="50">
           <output id="ai-denoise-out">50</output>
         </label>
         <p class="dialog-sub" id="ai-pick-hint" hidden></p>
-        <div class="ai-models" id="ai-models"></div>
-        <div class="ai-row"><button type="button" id="ai-load-files">Load model files…</button>
-          <input type="file" id="ai-file-input" multiple accept=".param,.bin" hidden></div>
-        <p id="ai-note"></p>
+        <details class="ai-manage" id="ai-manage">
+          <summary>Manage AI models <span id="ai-manage-count"></span></summary>
+          <div class="ai-models" id="ai-models"></div>
+          <div class="ai-files"><button type="button" id="ai-load-files">Load model files…</button>
+            <input type="file" id="ai-file-input" multiple accept=".param,.bin" hidden></div>
+          <p id="ai-note"></p>
+        </details>
       </div>
     </fieldset>
     <fieldset id="device-fields">
@@ -892,10 +927,12 @@
       </div>
       <div id="preview-status" aria-live="polite"></div>
     </div>
-    <p class="dialog-sub" id="enhance-summary"></p>
-    <div class="dialog-actions">
-      <button type="button" id="enhance-cancel">Cancel</button>
-      <button type="submit" class="primary" id="enhance-go">✨ Enhance</button>
+    <div class="dialog-foot">
+      <p class="dialog-sub" id="enhance-summary"></p>
+      <div class="dialog-actions">
+        <button type="button" id="enhance-cancel">Cancel</button>
+        <button type="submit" class="primary" id="enhance-go">✨ Enhance</button>
+      </div>
     </div>
   </form>
 </div>
@@ -3709,6 +3746,8 @@ function openEnhanceDialog(targets, mode) {
   document.getElementById('use-ai').checked = saved.useAi != null ? !!saved.useAi : !!(saved.engine && saved.engine !== 'builtin');
   if (saved.aiEngine || (saved.engine && saved.engine !== 'builtin')) lastAiEngine = saved.aiEngine || saved.engine;
   aiRefreshUi().then(() => {
+    // Model list: collapsed once a model is ready, open while none is.
+    document.getElementById('ai-manage').open = !AI_MODELS.some(m => aiState.stored.has(m.id));
     if (document.getElementById('use-ai').checked) pickAiEngine();
     // "None (AI as-is)" was reset while the engine still read Built-in.
     if (saved.preset === 'none' && f.engine.value !== 'builtin') f.preset.value = 'none';
@@ -5593,6 +5632,8 @@ async function aiRefreshUi() {
     }
   }
   AI_MODELS.forEach(m => aiRefreshRow(m.id));
+  const ready = AI_MODELS.filter(m => aiState.stored.has(m.id)).length;
+  document.getElementById('ai-manage-count').textContent = '· ' + ready + ' of ' + AI_MODELS.length + ' downloaded';
   for (const m of AI_MODELS) {
     const radio = enhanceForm.querySelector('input[name=engine][value="' + m.id + '"]');
     radio.disabled = !aiReady(m.id);
