@@ -533,7 +533,7 @@
     .ai-row button:disabled { opacity: 0.45; cursor: not-allowed; }
     #ai-note { color: var(--text-muted); font-size: 0.75rem; line-height: 1.4; }
     #ai-options { margin-top: 0.45rem; }
-    #ai-options[hidden], #ai-pick-hint[hidden], #scale-hint[hidden], #denoise-row[hidden] { display: none; }
+    #ai-options[hidden], #ai-pick-hint[hidden], #scale-hint[hidden], #denoise-row[hidden], #cugan-row[hidden] { display: none; }
     #use-ai + span small { display: block; color: var(--text-muted); font-size: 0.72rem; }
     #ai-note a { color: var(--accent2); }
     #auto-note { color: var(--accent2); font-size: 0.8rem; line-height: 1.4; }
@@ -787,13 +787,18 @@
     <p class="dialog-sub" id="enhance-target"></p>
     <fieldset id="engine-fields">
       <legend>Engine</legend>
-      <label class="dialog-check"><input type="checkbox" id="use-ai"> <span>🤖 Use AI upscaling<small id="use-ai-sub">Optional Real-ESRGAN models, downloaded once and kept offline.</small></span></label>
+      <label class="dialog-check"><input type="checkbox" id="use-ai"> <span>🤖 Use AI upscaling<small id="use-ai-sub">Optional Real-ESRGAN and Real-CUGAN models, downloaded once and kept offline.</small></span></label>
       <div id="ai-options" hidden>
         <div class="chips">
           <label hidden><input type="radio" name="engine" value="builtin" checked><span>Built-in</span></label>
           <label><input type="radio" name="engine" value="animevideov3" disabled><span>🤖 AI · Fast</span></label>
           <label><input type="radio" name="engine" value="generalv3" disabled><span>🤖 AI · Balanced</span></label>
           <label><input type="radio" name="engine" value="anime6b" disabled><span>🤖 AI · Best</span></label>
+          <label><input type="radio" name="engine" value="cugan" disabled><span>🤖 AI · Anime+</span></label>
+        </div>
+        <div class="chips" id="cugan-row" hidden>
+          <label><input type="radio" name="cuganMode" value="conservative" checked><span>Conservative</span></label>
+          <label><input type="radio" name="cuganMode" value="denoise3x"><span>Denoise</span></label>
         </div>
         <label class="slider-row" id="denoise-row" hidden>Denoise
           <input type="range" id="ai-denoise" min="0" max="100" step="5" value="50">
@@ -1300,7 +1305,8 @@ async function storeFavorite(id, favorite) {
 // Same-size cleanups use label "cleaned" and "name.cleaned.png".
 const UPSCALE_NAME_RE = /^(.+)\.(?:upscaled-(\d+(?:\.\d+)?x|\d+w)|(cleaned))\.(png|jpe?g|webp|gif)$/i;
 const PRESET_NAMES = { soft: 'Soft', balanced: 'Balanced', strong: 'Strong', lumity: 'Lumity', none: 'No cleanup' };
-const ENGINE_NAMES = { builtin: 'Built-in', animevideov3: 'AI Fast', generalv3: 'AI Balanced', anime6b: 'AI Best' };
+const ENGINE_NAMES = { builtin: 'Built-in', animevideov3: 'AI Fast', generalv3: 'AI Balanced', anime6b: 'AI Best', cugan: 'AI Anime+' };
+const CUGAN_MODES = { conservative: 'conservative', denoise3x: 'denoise' };
 
 function stripExt(name) {
   const dot = name.lastIndexOf('.');
@@ -1332,6 +1338,7 @@ function sanitizeUpscale(raw) {
     auto: !!raw.auto,
     engine: ENGINE_NAMES[raw.engine] ? raw.engine : null,
     denoise: raw.engine === 'generalv3' && num(raw.denoise) != null ? Math.max(0, Math.min(100, raw.denoise)) : null,
+    cuganMode: raw.engine === 'cugan' && CUGAN_MODES[raw.cuganMode] ? raw.cuganMode : null,
     device: raw.device === 'gpu' ? 'gpu' : null,
     extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges)
       ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges }
@@ -1749,7 +1756,8 @@ function extrasNames(x) {
 function describeUpscale(u) {
   const parts = [u.label === 'cleaned' ? '✨ Cleaned up' : '✨ Upscaled ' + upscaleLabelText(u.label)];
   const ai = u.engine && u.engine !== 'builtin';
-  if (ai) parts.push('🤖 ' + ENGINE_NAMES[u.engine] + (u.denoise != null ? ' (denoise ' + u.denoise + ')' : '') + (u.preset && u.preset !== 'none' ? ' → ' + PRESET_NAMES[u.preset] +
+  if (ai) parts.push('🤖 ' + ENGINE_NAMES[u.engine] + (u.denoise != null ? ' (denoise ' + u.denoise + ')' : '') +
+    (u.cuganMode ? ' (' + CUGAN_MODES[u.cuganMode] + ')' : '') + (u.preset && u.preset !== 'none' ? ' → ' + PRESET_NAMES[u.preset] +
     (u.tuning ? ' (flatness ' + u.tuning.flatness + ', lines ' + u.tuning.lines + ')' : '') : ''));
   else if (u.preset) parts.push((u.auto ? 'Auto → ' : '') + PRESET_NAMES[u.preset] +
     (u.tuning ? ' (flatness ' + u.tuning.flatness + ', lines ' + u.tuning.lines + ')' : ''));
@@ -3205,7 +3213,8 @@ function resolveSettings(settings, pixels, scale, stats) {
 // "Lumity (flatness 60, lines 50) · flat fills + edge cleanup"
 function describeSettings(st) {
   if (isAiEngine(st)) {
-    return '🤖 ' + ENGINE_NAMES[st.engine] + (st.engine === 'generalv3' ? ' (denoise ' + st.denoise + ')' : '') + (st.preset === 'none' ? '' : ' → ' + PRESET_NAMES[st.preset] +
+    return '🤖 ' + ENGINE_NAMES[st.engine] + (st.engine === 'generalv3' ? ' (denoise ' + st.denoise + ')' : '') +
+      (st.engine === 'cugan' ? ' (' + CUGAN_MODES[st.cuganMode] + ')' : '') + (st.preset === 'none' ? '' : ' → ' + PRESET_NAMES[st.preset] +
       (st.preset === 'lumity' ? ' (flatness ' + st.flatness + ', lines ' + st.lines + ')' : '')) +
       (engineExtras(st) ? ' · ' + extrasNames(engineExtras(st)) : '');
   }
@@ -3372,6 +3381,7 @@ async function enhanceOne(original, settings, onProgress) {
       preset: settings.preset, format: settings.format, tuning: engineTuning(settings), extras: engineExtras(settings),
       auto: !!settings.auto, engine: settings.engine || 'builtin',
       ...(settings.engine === 'generalv3' ? { denoise: settings.denoise } : {}),
+      ...(settings.engine === 'cugan' ? { cuganMode: settings.cuganMode } : {}),
       device: settings.device === 'gpu' && !(isAiEngine(settings) && settings.preset === 'none') ? 'gpu' : 'cpu',
       originalWidth: w, originalHeight: h, width: size.W, height: size.H,
       created: Date.now(),
@@ -3588,6 +3598,7 @@ function readEnhanceForm() {
     preset: f.preset.value,
     format: f.format.value,
     denoise: Number(document.getElementById('ai-denoise').value),
+    cuganMode: f.cuganMode.value,
     flatness: Number(tuneFlatness.value),
     lines: Number(tuneLines.value),
     extras: {
@@ -3607,6 +3618,7 @@ function timeEstimate(st) {
   }
   if (st.engine === 'animevideov3') return st.preset === 'none' ? '2–10' : '4–20';
   if (st.engine === 'generalv3') return st.preset === 'none' ? '4–20' : '6–30';
+  if (st.engine === 'cugan') return st.preset === 'none' ? '8–40' : '10–50';
   if (st.engine === 'anime6b') return st.preset === 'none' ? '20–90' : '25–100';
   if (st.preset === 'auto') return '2–12';
   let lo = st.preset === 'lumity' ? 2 : 1, hi = st.preset === 'lumity' ? 7 : 3;
@@ -3629,6 +3641,7 @@ function updateEnhanceSummary() {
     : 'Download a model below (or load its files) to use AI. Until then the built-in engine is used.';
   const ai = f.engine.value !== 'builtin';
   document.getElementById('denoise-row').hidden = f.engine.value !== 'generalv3';
+  document.getElementById('cugan-row').hidden = f.engine.value !== 'cugan';
   document.getElementById('ai-denoise-out').textContent = document.getElementById('ai-denoise').value;
   // "None" only makes sense after AI; Auto only for the built-in engine.
   document.getElementById('preset-none-chip').hidden = !ai;
@@ -3706,6 +3719,7 @@ function openEnhanceDialog(targets, mode) {
   tuneFlatness.value = Number.isFinite(saved.flatness) ? saved.flatness : 50;
   tuneLines.value = Number.isFinite(saved.lines) ? saved.lines : 50;
   document.getElementById('ai-denoise').value = Number.isFinite(saved.denoise) ? saved.denoise : 50;
+  f.cuganMode.value = CUGAN_MODES[saved.cuganMode] ? saved.cuganMode : 'conservative';
   const savedExtras = saved.extras || {};
   document.getElementById('extra-lines').checked = !!savedExtras.lines;
   document.getElementById('extra-fills').checked = !!savedExtras.fills;
@@ -4008,7 +4022,7 @@ async function runPreview() {
       out = await aiRun(settings.engine, region, rw, rh, RW, RH, f => {
         pct.textContent = Math.round(f * 100) + '%';
         previewEls.status.textContent = 'Rendering AI preview… ' + Math.round(f * 100) + '%';
-      }, stale, settings.denoise);
+      }, stale, { denoise: settings.denoise, cuganMode: settings.cuganMode, seFrom: { rgba, w, h } });
       if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false }, settings.device, stale);
     } else {
       const stale = () => token !== preview.token || preview.dirty || !enhanceDialog.classList.contains('open');
@@ -4113,9 +4127,12 @@ function aiModule() {
       throw new Error('Unsupported weight storage in model file');
     };
     for (const L of layers) {
-      if (L.type === 'Convolution') {
+      if (L.type === 'Convolution' || L.type === 'Deconvolution') {
         L.weight = tagged(L.params[6]);
         if (L.params[5]) L.bias = raw(L.params[0]);
+      } else if (L.type === 'InnerProduct') {
+        L.weight = tagged(L.params[2]);
+        if (L.params[1]) L.bias = raw(L.params[0]);
       } else if (L.type === 'PReLU') {
         L.slope = raw(L.params[0] || 1);
       }
@@ -4132,6 +4149,11 @@ function aiModule() {
       leaky: l.params[9] === 2,                         // LeakyReLU(0.2) fused into the conv
     }));
     const types = new Set(layers.map(l => l.type));
+    // Real-CUGAN (UNet with squeeze-and-excitation): run as a layer graph.
+    if (types.has('Deconvolution') && types.has('InnerProduct') && types.has('Crop')) {
+      const scale = types.has('PixelShuffle') ? 4 : 2;
+      return { arch: 'cugan', layers, scale, pad: scale === 4 ? 19 : 18 };
+    }
     if (types.has('PReLU') && types.has('PixelShuffle')) {
       const prelus = layers.filter(l => l.type === 'PReLU').map(l => l.slope);
       if (convs.length !== prelus.length + 1 || convs[convs.length - 1].outC !== 48) throw new Error('Unexpected compact network');
@@ -4244,6 +4266,79 @@ void main(){
   outColor = vec4(clamp(s / float(uN * uN), 0.0, 1.0), 1.0);
 }`;
 
+  // ── Real-CUGAN layers (tensors are views: texture + origin + size) ──
+  // K×K convolution with stride S and no padding ("valid"); 4 outputs per pass.
+  const FS_CG_CONV = HEAD + `
+uniform sampler2DArray uIn; uniform ivec2 uOrig; uniform int uInL, uK, uS, uWBase, uBiasBase, uOut, uAct; uniform float uSlope;
+void main(){
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec4 acc = W(uBiasBase + uOut);
+  int T = uK * uK, wb = uWBase + uOut * uInL * T * 4;
+  for (int t = 0; t < T; t++) {
+    ivec2 q = uOrig + p * uS + ivec2(t % uK, t / uK);
+    for (int l = 0; l < uInL; l++) {
+      vec4 v = texelFetch(uIn, ivec3(q, l), 0); int k = wb + (l * T + t) * 4;
+      acc += W(k) * v.x + W(k + 1) * v.y + W(k + 2) * v.z + W(k + 3) * v.w;
+    }
+  }
+  if (uAct == 2) acc = max(acc, uSlope * acc);
+  else if (uAct == 1) acc = max(acc, 0.0);
+  outColor = acc;
+}`;
+  // Transposed convolution: out(o) = Σ w[k]·in(i) where i·S + k = o + pad.
+  const FS_CG_DECONV = HEAD + `
+uniform sampler2DArray uIn; uniform ivec2 uOrig; uniform ivec2 uInSize; uniform int uInL, uK, uS, uPad, uWBase, uBiasBase, uOut, uAct; uniform float uSlope;
+void main(){
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec4 acc = W(uBiasBase + uOut);
+  int T = uK * uK, wb = uWBase + uOut * uInL * T * 4;
+  for (int ky = 0; ky < uK; ky++) {
+    int ty = p.y + uPad - ky; if (ty < 0 || ty - (ty / uS) * uS != 0) continue;
+    int iy = ty / uS; if (iy >= uInSize.y) continue;
+    for (int kx = 0; kx < uK; kx++) {
+      int tx = p.x + uPad - kx; if (tx < 0 || tx - (tx / uS) * uS != 0) continue;
+      int ix = tx / uS; if (ix >= uInSize.x) continue;
+      int t = ky * uK + kx;
+      for (int l = 0; l < uInL; l++) {
+        vec4 v = texelFetch(uIn, ivec3(uOrig + ivec2(ix, iy), l), 0); int k = wb + (l * T + t) * 4;
+        acc += W(k) * v.x + W(k + 1) * v.y + W(k + 2) * v.z + W(k + 3) * v.w;
+      }
+    }
+  }
+  if (uAct == 2) acc = max(acc, uSlope * acc);
+  else if (uAct == 1) acc = max(acc, 0.0);
+  outColor = acc;
+}`;
+  const FS_CG_ADD = HEAD + `
+uniform sampler2DArray uA0, uB0; uniform ivec2 uOA, uOB; uniform int uOut;
+void main(){ ivec2 p = ivec2(gl_FragCoord.xy);
+  outColor = texelFetch(uA0, ivec3(p + uOA, uOut), 0) + texelFetch(uB0, ivec3(p + uOB, uOut), 0); }`;
+  // Squeeze-and-excitation: multiply each channel by its weight.
+  const FS_CG_SCALE = HEAD + `
+uniform sampler2DArray uIn; uniform ivec2 uOrig; uniform int uOut; uniform vec4 uScale;
+void main(){ outColor = texelFetch(uIn, ivec3(ivec2(gl_FragCoord.xy) + uOrig, uOut), 0) * uScale; }`;
+  // Channel means for squeeze-and-excitation, in two steps: rows, then the column.
+  const FS_CG_MEAN = HEAD + `
+uniform sampler2DArray uIn; uniform ivec2 uOrig; uniform int uN; uniform int uAxis; uniform int uOut;
+void main(){
+  ivec2 p = ivec2(gl_FragCoord.xy); vec4 s = vec4(0.0);
+  for (int i = 0; i < uN; i++) s += texelFetch(uIn, ivec3(uOrig + (uAxis == 0 ? ivec2(i, p.y) : ivec2(0, i)), uOut), 0);
+  outColor = s / float(uN);
+}`;
+  // Network output → RGB picture (linear-filtered for the resize step):
+  // copy, or pixel-shuffle ×2 plus the nearest-upscaled input (the ×4 model).
+  const FS_CG_FINAL = HEAD + `
+uniform sampler2DArray uIn; uniform ivec2 uOrig; uniform int uPS; uniform sampler2DArray uSrc; uniform ivec2 uSrcOff;
+void main(){
+  ivec2 P = ivec2(gl_FragCoord.xy);
+  vec3 c;
+  if (uPS == 1) {
+    ivec2 p = P / 2, r = P - p * 2; int sub = r.y * 2 + r.x;
+    for (int k = 0; k < 3; k++) { int ch = k * 4 + sub; c[k] = texelFetch(uIn, ivec3(uOrig + p, ch / 4), 0)[ch % 4]; }
+    c += texelFetch(uSrc, ivec3(P / 4 + uSrcOff, 0), 0).rgb;
+  } else c = texelFetch(uIn, ivec3(uOrig + P, 0), 0).rgb;
+  outColor = vec4(c, 1.0);
+}`;
 
   // ── Built-in engine, output-resolution half, on the GPU ──
   // Mirrors finish() in upscalerModule step by step; works on a tile region
@@ -4441,7 +4536,9 @@ void main(){
       for (let i = 0; i < n; i++) { const u = gl.getActiveUniform(p, i); loc[u.name] = gl.getUniformLocation(p, u.name); }
       return { p, loc };
     };
-    const P = { conv: prog(FS_CONV), shuffle: prog(FS_SHUFFLE), up2: prog(FS_UP2), mix: prog(FS_MIX), resize: prog(FS_RESIZE) };
+    const P = { conv: prog(FS_CONV), shuffle: prog(FS_SHUFFLE), up2: prog(FS_UP2), mix: prog(FS_MIX), resize: prog(FS_RESIZE),
+      cgConv: prog(FS_CG_CONV), cgDeconv: prog(FS_CG_DECONV), cgAdd: prog(FS_CG_ADD), cgScale: prog(FS_CG_SCALE),
+      cgMean: prog(FS_CG_MEAN), cgFinal: prog(FS_CG_FINAL) };
     const fbo = gl.createFramebuffer();
     gl.bindVertexArray(gl.createVertexArray());
 
@@ -4461,6 +4558,7 @@ void main(){
 
     // Pack a model's weights into one RGBA32F texture (4096 texels wide).
     function upload(model) {
+      if (model.arch === 'cugan') return uploadCugan(model);
       let n = 0;
       for (const c of model.convs) {
         c.inL = Math.ceil(c.inC / 4); c.outL = Math.ceil(c.outC / 4);
@@ -4479,6 +4577,38 @@ void main(){
         }
         for (let o = 0; o < c.outC; o++) data[(c.bBase + (o >> 2)) * 4 + (o & 3)] = c.bias[o];
         if (c.prelu) for (let o = 0; o < c.outC; o++) data[(c.sBase + (o >> 2)) * 4 + (o & 3)] = c.prelu[o];
+      }
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, 4096, rows);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4096, rows, gl.RGBA, gl.FLOAT, data);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      model.wTex = t;
+    }
+
+    // Real-CUGAN: every (de)convolution's weights as vec4s over 4 output
+    // channels: index ((o·inL + l)·K² + tap)·4 + input component.
+    function uploadCugan(model) {
+      let n = 0;
+      const convs = model.layers.filter(L => L.type === 'Convolution' || L.type === 'Deconvolution');
+      for (const L of convs) {
+        const outC = L.params[0], K = L.params[1], inC = L.params[6] / (outC * K * K);
+        L.g = { outC, inC, K, T: K * K, inL: Math.ceil(inC / 4), outL: Math.ceil(outC / 4) };
+        L.g.wBase = n; n += L.g.outL * L.g.inL * L.g.T * 4;
+        L.g.bBase = n; n += L.g.outL;
+      }
+      const rows = Math.ceil(n / 4096), data = new Float32Array(rows * 4096 * 4);
+      for (const L of convs) {
+        const { outC, inC, T, inL, outL, wBase, bBase } = L.g;
+        for (let o = 0; o < outL; o++) for (let l = 0; l < inL; l++) for (let t = 0; t < T; t++) for (let k = 0; k < 4; k++) {
+          const ti = (wBase + ((o * inL + l) * T + t) * 4 + k) * 4, ic = l * 4 + k;
+          for (let q = 0; q < 4; q++) {
+            const oc = o * 4 + q;
+            data[ti + q] = oc < outC && ic < inC ? L.weight[(oc * inC + ic) * T + t] : 0;
+          }
+        }
+        if (L.bias) for (let o = 0; o < outC; o++) data[(bBase + (o >> 2)) * 4 + (o & 3)] = L.bias[o];
       }
       const t = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, t);
@@ -4663,12 +4793,13 @@ void main(){
 
     // Reads target pixels [tx0,tx1)×[ty0,ty1) of a picture scaled by s from
     // the ×4 result of a region whose top-left source pixel is (rx0, ry0).
-    async function resizeRead(out4, rx0, ry0, rw, rh, s, tx0, ty0, tw, th) {
+    // m: the network's own scale (4 for Real-ESRGAN, 2 or 4 for Real-CUGAN).
+    async function resizeRead(out4, rx0, ry0, rw, rh, s, tx0, ty0, tw, th, m = 4) {
       const pr = P.resize; gl.useProgram(pr.p); bindArr(1, pr.loc.uIn, out4);
-      const step = 4 / s;
-      gl.uniform2i(pr.loc.uOrigin, tx0, ty0); gl.uniform2f(pr.loc.uRegion4, rx0 * 4, ry0 * 4);
+      const step = m / s;
+      gl.uniform2i(pr.loc.uOrigin, tx0, ty0); gl.uniform2f(pr.loc.uRegion4, rx0 * m, ry0 * m);
       gl.uniform1f(pr.loc.uStep, step); gl.uniform1i(pr.loc.uN, Math.max(1, Math.ceil(step - 1e-6)));
-      gl.uniform2f(pr.loc.uTex, out4.w, out4.h); gl.uniform2f(pr.loc.uLimit, rw * 4, rh * 4);
+      gl.uniform2f(pr.loc.uTex, out4.w, out4.h); gl.uniform2f(pr.loc.uLimit, rw * m, rh * m);
       if (!resizeRead.rb || resizeRead.w < tw || resizeRead.h < th) {
         if (resizeRead.rb) gl.deleteTexture(resizeRead.rb);
         resizeRead.rb = gl.createTexture(); resizeRead.w = Math.max(tw, 64); resizeRead.h = Math.max(th, 64);
@@ -4696,12 +4827,13 @@ void main(){
     }
 
     // Whole picture, tile by tile. Returns RGBA (alpha 255) at W×H.
-    async function run(model, rgba, w, h, W, H, onProgress, isCancelled) {
+    async function run(model, rgba, w, h, W, H, onProgress, isCancelled, opts = {}) {
       if (gl.isContextLost()) throw new Error('The GPU was reset — please try again.');
       if (!model.wTex || model.wGl !== gl || model.wVersion !== model.version) {
         if (model.wTex && model.wGl === gl) gl.deleteTexture(model.wTex);
         upload(model); model.wGl = gl; model.wVersion = model.version;
       }
+      if (model.arch === 'cugan') return runCugan(model, rgba, w, h, W, H, onProgress, isCancelled, opts);
       const s = W / w;
       const core = model.arch === 'compact' ? 256 : 96, pad = model.pad;
       const out = new Uint8ClampedArray(W * H * 4);
@@ -4730,6 +4862,254 @@ void main(){
       return out;
     }
 
+
+    // ── Real-CUGAN ──
+    // Tensors: { tex, x, y, w, h, L } — a view into a texture array (crops are
+    // free). Textures come from a pool keyed by size and are reused as soon as
+    // the last layer reading them has been queued.
+    const cgPool = new Map();
+    const cgTake = (w, h, L, linear) => {
+      const key = w + 'x' + h + 'x' + L + (linear ? 'l' : '');
+      const list = cgPool.get(key);
+      return list && list.length ? list.pop() : Object.assign(arr(w, h, L, linear), { key });
+    };
+    const cgGive = tex => { if (!cgPool.has(tex.key)) cgPool.set(tex.key, []); cgPool.get(tex.key).push(tex); };
+    const cgFreeAll = () => { for (const list of cgPool.values()) list.forEach(free); cgPool.clear(); };
+
+    // Reads the channel means of a tensor (for squeeze-and-excitation).
+    async function cgMeans(t, C) {
+      const rows = cgTake(1, t.h, t.L), one = cgTake(1, 1, t.L);
+      for (let o = 0; o < t.L; o++) {
+        step(t.w * t.h, () => { const pr = P.cgMean; gl.useProgram(pr.p); bindArr(1, pr.loc.uIn, t.tex);
+          gl.uniform2i(pr.loc.uOrig, t.x, t.y); gl.uniform1i(pr.loc.uN, t.w); gl.uniform1i(pr.loc.uAxis, 0); gl.uniform1i(pr.loc.uOut, o);
+          target(rows, o, 1, t.h); gl.drawArrays(gl.TRIANGLES, 0, 3); });
+        step(t.h, () => { const pr = P.cgMean; gl.useProgram(pr.p); bindArr(1, pr.loc.uIn, rows);
+          gl.uniform2i(pr.loc.uOrig, 0, 0); gl.uniform1i(pr.loc.uN, t.h); gl.uniform1i(pr.loc.uAxis, 1); gl.uniform1i(pr.loc.uOut, o);
+          target(one, o, 1, 1); gl.drawArrays(gl.TRIANGLES, 0, 3); });
+      }
+      await drain(null, null);
+      const out = new Float32Array(t.L * 4), px = new Float32Array(4);
+      for (let o = 0; o < t.L; o++) {
+        target(one, o, 1, 1);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, px);
+        out.set(px, o * 4);
+      }
+      cgGive(rows); cgGive(one);
+      return out.subarray(0, C);
+    }
+    const fc = (L, x) => {                    // InnerProduct + activation, on the CPU
+      const n = L.params[0], k = x.length, y = new Float32Array(n);
+      for (let j = 0; j < n; j++) {
+        let v = L.bias ? L.bias[j] : 0;
+        for (let i = 0; i < k; i++) v += L.weight[j * k + i] * x[i];
+        y[j] = L.params[9] === 1 ? Math.max(0, v) : L.params[9] === 4 ? 1 / (1 + Math.exp(-v)) : v;
+      }
+      return y;
+    };
+
+    // One network pass on an input texture (w×h, already padded).
+    // se.fixed: channel weights to use (tiles); otherwise they are measured
+    // (and recorded in se.list). Returns the RGB result texture (scale×(w−2·pad)).
+    async function cgForward(model, input, w, h, se, onFrac) {
+      const L = model.layers, blobs = new Map(), uses = new Map();
+      for (const l of L) for (const b of l.inputs) uses.set(b, (uses.get(b) || 0) + 1);
+      const owners = new Map();                             // texture → number of live views
+      const hold = t => owners.set(t.tex, (owners.get(t.tex) || 0) + 1);
+      const put = (name, t) => { blobs.set(name, t); if (t.tex && t.tex !== input) hold(t); };
+      const release = name => {
+        const t = blobs.get(name); if (!t) return;
+        const left = uses.get(name) - 1; uses.set(name, left);
+        if (left > 0) return;
+        blobs.delete(name);
+        if (t.tex === input || !t.tex) return;
+        const n = owners.get(t.tex) - 1; owners.set(t.tex, n);
+        if (n === 0) { owners.delete(t.tex); cgGive(t.tex); }
+      };
+      const se_ = se.fixed ? se.fixed.slice() : null;
+      let seIndex = 0, nSE = L.filter(l => l.type === 'Pooling').length, out = null;
+      put('in0', { tex: input, x: 0, y: 0, w, h, L: 1 });
+      for (const l of L) {
+        const ins = l.inputs.map(b => blobs.get(b));
+        switch (l.type) {
+          case 'Input': break;
+          case 'Split': for (const o of l.outputs) { put(o, { ...ins[0] }); } break;
+          case 'Convolution': case 'Deconvolution': {
+            const g = l.g, src = ins[0], S = l.params[3] || 1, pad = l.params[4] || 0, deconv = l.type === 'Deconvolution';
+            const ow = deconv ? (src.w - 1) * S + g.K - 2 * pad : Math.floor((src.w - g.K) / S) + 1;
+            const oh = deconv ? (src.h - 1) * S + g.K - 2 * pad : Math.floor((src.h - g.K) / S) + 1;
+            const dst = cgTake(ow, oh, g.outL);
+            const act = l.params[9] || 0, slope = act === 2 && l.params[10] ? l.params[10][0] : 0;
+            for (let o = 0; o < g.outL; o++) step(ow * oh * g.inL * g.T, () => {
+              const pr = deconv ? P.cgDeconv : P.cgConv; gl.useProgram(pr.p); useW(pr, model);
+              bindArr(1, pr.loc.uIn, src.tex); gl.uniform2i(pr.loc.uOrig, src.x, src.y);
+              gl.uniform1i(pr.loc.uInL, g.inL); gl.uniform1i(pr.loc.uK, g.K); gl.uniform1i(pr.loc.uS, S);
+              if (deconv) { gl.uniform1i(pr.loc.uPad, pad); gl.uniform2i(pr.loc.uInSize, src.w, src.h); }
+              gl.uniform1i(pr.loc.uWBase, g.wBase); gl.uniform1i(pr.loc.uBiasBase, g.bBase);
+              gl.uniform1i(pr.loc.uAct, act); gl.uniform1f(pr.loc.uSlope, slope); gl.uniform1i(pr.loc.uOut, o);
+              target(dst, o, ow, oh); gl.drawArrays(gl.TRIANGLES, 0, 3);
+            });
+            put(l.outputs[0], { tex: dst, x: 0, y: 0, w: ow, h: oh, L: g.outL, C: g.outC });
+            break;
+          }
+          case 'Pooling':                       // global mean → a vector (read at the first FC)
+            // (the tensor stays alive: the SE multiply after the FCs still reads it)
+            put(l.outputs[0], { vec: null, of: ins[0], tex: null });
+            break;
+          case 'InnerProduct': {
+            let x = ins[0].vec;
+            if (ins[0].of) {                      // first FC after the pooling
+              if (se_) x = null;
+              else {
+                x = await cgMeans(ins[0].of, ins[0].of.C);
+                if (onFrac) onFrac(++seIndex / (nSE + 1));
+              }
+            }
+            const v = se_ ? null : fc(l, x);
+            put(l.outputs[0], { vec: v, tex: null, last: l });
+            break;
+          }
+          case 'BinaryOp': {
+            const op = l.params[0] || 0;
+            if (op === 2) {                       // tensor × channel weights (SE)
+              const t = ins[0].tex ? ins[0] : ins[1], v0 = ins[0].tex ? ins[1] : ins[0];
+              const wv = se_ ? se_.shift() : v0.vec;
+              if (!se_ && se.list) se.list.push(wv);
+              const dst = cgTake(t.w, t.h, t.L);
+              for (let o = 0; o < t.L; o++) {
+                const sc = [0, 1, 2, 3].map(k => wv[o * 4 + k] ?? 0);
+                step(t.w * t.h, () => { const pr = P.cgScale; gl.useProgram(pr.p); bindArr(1, pr.loc.uIn, t.tex);
+                  gl.uniform2i(pr.loc.uOrig, t.x, t.y); gl.uniform1i(pr.loc.uOut, o); gl.uniform4fv(pr.loc.uScale, sc);
+                  target(dst, o, t.w, t.h); gl.drawArrays(gl.TRIANGLES, 0, 3); });
+              }
+              put(l.outputs[0], { tex: dst, x: 0, y: 0, w: t.w, h: t.h, L: t.L, C: t.C });
+            } else {                              // a + b (same size)
+              const [a, b] = ins, dst = cgTake(a.w, a.h, a.L);
+              for (let o = 0; o < a.L; o++) step(a.w * a.h * 2, () => {
+                const pr = P.cgAdd; gl.useProgram(pr.p); bindArr(1, pr.loc.uA0, a.tex); bindArr(2, pr.loc.uB0, b.tex);
+                gl.uniform2i(pr.loc.uOA, a.x, a.y); gl.uniform2i(pr.loc.uOB, b.x, b.y); gl.uniform1i(pr.loc.uOut, o);
+                target(dst, o, a.w, a.h); gl.drawArrays(gl.TRIANGLES, 0, 3);
+              });
+              put(l.outputs[0], { tex: dst, x: 0, y: 0, w: a.w, h: a.h, L: a.L, C: a.C });
+            }
+            break;
+          }
+          case 'Crop': {                          // starts (h, w) and negative ends: a view
+            const t = ins[0], st = l.params[9], en = l.params[10];
+            put(l.outputs[0], { ...t, x: t.x + st[1], y: t.y + st[0], w: t.w - st[1] + en[1], h: t.h - st[0] + en[0] });
+            break;
+          }
+          case 'PixelShuffle': put(l.outputs[0], { ...ins[0], shuffle: true }); break;
+          default: throw new Error('Unsupported layer ' + l.type);
+        }
+        for (const b of l.inputs) release(b);
+        if (l.outputs.includes('out0')) out = blobs.get('out0');
+      }
+      // Final picture (RGB, linear-filtered for resizing).
+      const W2 = out.shuffle ? out.w * 2 : out.w, H2 = out.shuffle ? out.h * 2 : out.h;
+      const res = cgTake(W2, H2, 1, true);
+      step(W2 * H2 * 4, () => { const pr = P.cgFinal; gl.useProgram(pr.p);
+        bindArr(1, pr.loc.uIn, out.tex); bindArr(2, pr.loc.uSrc, input);
+        gl.uniform2i(pr.loc.uOrig, out.x, out.y); gl.uniform1i(pr.loc.uPS, out.shuffle ? 1 : 0);
+        gl.uniform2i(pr.loc.uSrcOff, model.pad, model.pad);
+        target(res, 0, W2, H2); gl.drawArrays(gl.TRIANGLES, 0, 3); });
+      await drain(f => { if (onFrac) onFrac((seIndex + f) / (nSE + 1)); }, se.isCancelled);
+      const ot = out.tex; const n = owners.get(ot) - 1; owners.set(ot, n); if (n === 0) cgGive(ot);
+      return res;
+    }
+
+    // Input texture for image region [x0, x1)×[y0, y1) plus the network's
+    // padding, mirrored at the picture edges (like PyTorch "reflect"); odd
+    // sizes get one more mirrored column/row, as in the reference code.
+    function cgInput(model, rgba, w, h, x0, y0, x1, y1) {
+      const p = model.pad, ew = (x1 - x0) % 2, eh = (y1 - y0) % 2;
+      const iw = x1 - x0 + 2 * p + ew, ih = y1 - y0 + 2 * p + eh;
+      const mir = (i, n) => { if (n === 1) return 0; const per = 2 * (n - 1); i = ((i % per) + per) % per; return i < n ? i : per - i; };
+      // The extra odd column is mirrored about the right edge of the region's
+      // padded image, i.e. the picture is treated as one column wider there.
+      const data = new Float32Array(iw * ih * 4);
+      for (let y = 0; y < ih; y++) {
+        const gy = y0 - p + y, sy = y1 === h && eh && gy >= h + p ? mir(gy - 1, h) : mir(gy, h);
+        for (let x = 0; x < iw; x++) {
+          const gx = x0 - p + x, sx = x1 === w && ew && gx >= w + p ? mir(gx - 1, w) : mir(gx, w);
+          const si = (sy * w + sx) * 4, di = (y * iw + x) * 4;
+          data[di] = rgba[si] / 255; data[di + 1] = rgba[si + 1] / 255; data[di + 2] = rgba[si + 2] / 255;
+        }
+      }
+      const tex = cgTake(iw, ih, 1);
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex.t);
+      gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, iw, ih, 1, gl.RGBA, gl.FLOAT, data);
+      return { tex, iw, ih };
+    }
+
+    // Channel weights for the whole picture, from a copy small enough for one
+    // pass (Real-CUGAN's "rough sync": tiles then all use the same weights).
+    async function cgMeasure(model, rgba, w, h, isCancelled) {
+      const lim = 256, f = Math.min(1, lim / Math.max(w, h));
+      let src = rgba, sw = w, sh = h;
+      if (f < 1) {
+        sw = Math.max(8, Math.round(w * f)); sh = Math.max(8, Math.round(h * f));
+        src = new Uint8ClampedArray(sw * sh * 4);
+        for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {      // box average
+          const ax = Math.floor(x * w / sw), bx = Math.max(ax + 1, Math.floor((x + 1) * w / sw));
+          const ay = Math.floor(y * h / sh), by = Math.max(ay + 1, Math.floor((y + 1) * h / sh));
+          let r = 0, g = 0, b = 0, n = 0;
+          for (let yy = ay; yy < by; yy++) for (let xx = ax; xx < bx; xx++) { const i = (yy * w + xx) * 4; r += rgba[i]; g += rgba[i + 1]; b += rgba[i + 2]; n++; }
+          const o = (y * sw + x) * 4; src[o] = r / n; src[o + 1] = g / n; src[o + 2] = b / n; src[o + 3] = 255;
+        }
+      }
+      const { tex, iw, ih } = cgInput(model, src, sw, sh, 0, 0, sw, sh);
+      const se = { list: [], isCancelled };
+      const res = await cgForward(model, tex, iw, ih, se, null);
+      cgGive(res); cgGive(tex);
+      return se.list;
+    }
+
+    const CG_CORE = 192, CG_MARGIN = 4;
+    async function runCugan(model, rgba, w, h, W, H, onProgress, isCancelled, opts) {
+      const s = W / w, m = model.scale, out = new Uint8ClampedArray(W * H * 4);
+      try {
+        // One pass measures its own channel weights (exact); tiles share weights
+        // measured on the whole picture (or on opts.seFrom, e.g. for previews).
+        const single = !opts.seFrom && w <= CG_CORE + 2 * CG_MARGIN && h <= CG_CORE + 2 * CG_MARGIN;
+        let fixed = null;
+        if (!single) {
+          const src = opts.seFrom || { rgba, w, h };
+          const key = model.version + ':' + src.w + 'x' + src.h;
+          if (src.rgba.__cgSE && src.rgba.__cgSE.model === model && src.rgba.__cgSE.key === key) fixed = src.rgba.__cgSE.list;
+          else {
+            fixed = await cgMeasure(model, src.rgba, src.w, src.h, isCancelled);
+            try { Object.defineProperty(src.rgba, '__cgSE', { value: { model, key, list: fixed }, configurable: true, writable: true }); } catch {}
+          }
+        }
+        const tilesX = single ? 1 : Math.ceil(w / CG_CORE), tilesY = single ? 1 : Math.ceil(h / CG_CORE), total = tilesX * tilesY;
+        let done = 0;
+        for (let ty = 0; ty < tilesY; ty++) for (let tx = 0; tx < tilesX; tx++) {
+          if (isCancelled && isCancelled()) throw new Error('cancelled');
+          const x0 = single ? 0 : tx * CG_CORE, y0 = single ? 0 : ty * CG_CORE;
+          const x1 = single ? w : Math.min(w, x0 + CG_CORE), y1 = single ? h : Math.min(h, y0 + CG_CORE);
+          // Region = tile + margin, starting on an even pixel so the network's
+          // stride-2 layers line up with a whole-picture pass.
+          const rx0 = Math.max(0, x0 - CG_MARGIN) & ~1, ry0 = Math.max(0, y0 - CG_MARGIN) & ~1;
+          const rx1 = Math.min(w, x1 + CG_MARGIN), ry1 = Math.min(h, y1 + CG_MARGIN);
+          const { tex, iw, ih } = cgInput(model, rgba, w, h, rx0, ry0, rx1, ry1);
+          const se = fixed ? { fixed, isCancelled } : { list: [], isCancelled };
+          const res = await cgForward(model, tex, iw, ih, se, f => { if (onProgress) onProgress((done + f * 0.98) / total); });
+          const X0 = Math.round(x0 * s), X1 = x1 === w ? W : Math.round(x1 * s);
+          const Y0 = Math.round(y0 * s), Y1 = y1 === h ? H : Math.round(y1 * s);
+          const px = await resizeRead(res, rx0, ry0, rx1 - rx0, ry1 - ry0, s, X0, Y0, X1 - X0, Y1 - Y0, m);
+          for (let y = 0; y < Y1 - Y0; y++) out.set(px.subarray(y * (X1 - X0) * 4, (y + 1) * (X1 - X0) * 4), ((Y0 + y) * W + X0) * 4);
+          cgGive(res); cgGive(tex);
+          done++;
+          if (onProgress) onProgress(done / total);
+        }
+      } catch (err) {
+        queue = [];
+        throw err;
+      } finally {
+        if (cgPool.size > 24) cgFreeAll();
+      }
+      return out;
+    }
 
     // ── Built-in engine on the GPU (output-resolution half) ──
     const B = {
@@ -4890,6 +5270,9 @@ const AI_MODELS = [
   { id: 'generalv3', title: 'AI · Balanced', detail: 'Real-ESRGAN general (realesr-general-x4v3 + its denoise variant) · 4.9 MB · for photos and art',
     file: 'models/realesr-general-x4v3', wdnFile: 'models/realesr-general-wdn-x4v3', bytes: 2 * 2435272 },
   { id: 'anime6b', title: 'AI · Best', detail: 'Real-ESRGAN anime 6B (realesrgan-x4plus-anime) · 9 MB · slower', file: 'models/realesrgan-x4plus-anime', bytes: 8973790 },
+  { id: 'cugan', title: 'AI · Anime+', detail: 'Real-CUGAN (Bilibili) · 2× and 4×, conservative and denoise · 10.8 MB',
+    parts: ['up2x-conservative', 'up2x-denoise3x', 'up4x-conservative', 'up4x-denoise3x'], partFile: k => 'models/realcugan-' + k,
+    bytes: 2 * 2573648 + 2 * 2818348 },
 ];
 const AI_PREVIEW_PAD = 24;
 const aiState = { stored: new Set(), compiled: new Map(), runner: null, gpuError: null, busy: new Set(), progress: {} };
@@ -4920,7 +5303,18 @@ function aiRunner() {
 // denoise (0–100) only matters for AI · Balanced: its weights are a blend of
 // realesr-general-x4v3 (strong denoise) and the -wdn variant (weak denoise),
 // the same "DNI" blend the official Real-ESRGAN tool uses.
-async function aiGetModel(id, denoise = 50) {
+// opts: { denoise } for AI · Balanced; { part } (e.g. 'up2x-conservative') for AI · Anime+.
+async function aiGetModel(id, opts = {}) {
+  const denoise = opts.denoise ?? 50;
+  if (id === 'cugan') {
+    const key = 'cugan:' + opts.part;
+    if (aiState.compiled.has(key)) return aiState.compiled.get(key).model;
+    const rec = await modelStoreTx('readonly', st => st.get(id));
+    if (!rec || !rec.parts || !rec.parts[opts.part]) throw new Error('The AI model is not downloaded.');
+    const model = aiModule().compile(rec.parts[opts.part].param, rec.parts[opts.part].bin);
+    aiState.compiled.set(key, { model });
+    return model;
+  }
   let entry = aiState.compiled.get(id);
   if (!entry) {
     const rec = await modelStoreTx('readonly', st => st.get(id));
@@ -4964,9 +5358,12 @@ async function withGpu(fn) {
   }
 }
 
-async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled, denoise) {
-  const model = await aiGetModel(id, denoise);
-  return withGpu(r => r.run(model, rgba, w, h, W, H, onProgress, isCancelled));
+// opts: { denoise, cuganMode, seFrom } (seFrom: the whole picture, when rgba is
+// only a part of it — Real-CUGAN measures its channel weights on the whole).
+async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled, opts = {}) {
+  const part = id === 'cugan' ? (W / w > 2.001 ? 'up4x-' : 'up2x-') + (opts.cuganMode === 'denoise3x' ? 'denoise3x' : 'conservative') : null;
+  const model = await aiGetModel(id, { denoise: opts.denoise, part });
+  return withGpu(r => r.run(model, rgba, w, h, W, H, onProgress, isCancelled, { seFrom: opts.seFrom }));
 }
 
 function gpuBuiltinAvailable() { return !aiState.gpuError && !!aiState.runner && aiState.runner.float32; }
@@ -4976,11 +5373,22 @@ function gpuBuiltinAvailable() { return !aiState.gpuError && !!aiState.runner &&
 function aiIdentify(model) {
   if (model.arch === 'compact' && model.convs.length === 18) return 'animevideov3';
   if (model.arch === 'compact' && model.convs.length === 34) return 'generalv3';
+  if (model.arch === 'cugan') return 'cugan';
   if (model.arch === 'rrdb' && model.blocks === 6) return 'anime6b';
   return null;
 }
 
 // extra: { param, bin } of the second (weak-denoise) file pair for AI · Balanced.
+// AI · Anime+: all four Real-CUGAN file pairs in one record.
+async function aiSaveParts(id, parts, source) {
+  const M = aiModule();
+  let bytes = 0;
+  for (const k in parts) { M.compile(parts[k].param, parts[k].bin); bytes += parts[k].param.length + parts[k].bin.byteLength; }
+  await modelStoreTx('readwrite', st => st.put({ id, parts, bytes, source, savedAt: Date.now() }));
+  for (const k of aiState.compiled.keys()) if (k === id || k.startsWith(id + ':')) aiState.compiled.delete(k);
+  aiState.stored.add(id);
+}
+
 async function aiSaveModel(id, param, bin, source, extra = null) {
   const M = aiModule();
   M.compile(param, bin);                                              // validates the files
@@ -4997,7 +5405,7 @@ async function aiDownload(id) {
   if (location.protocol === 'file:') throw new Error('Downloading needs the page opened from the website. Use "Load model files…" instead.');
   aiState.busy.add(id); aiRefreshUi();
   try {
-    const files = m.wdnFile ? [m.file, m.wdnFile] : [m.file];
+    const files = m.parts ? m.parts.map(m.partFile) : m.wdnFile ? [m.file, m.wdnFile] : [m.file];
     let before = 0;
     const pairs = [];
     for (const file of files) {
@@ -5018,7 +5426,8 @@ async function aiDownload(id) {
       let o = 0; for (const c of chunks) { bin.set(c, o); o += c.length; }
       pairs.push({ param, bin: bin.buffer });
     }
-    await aiSaveModel(id, pairs[0].param, pairs[0].bin, 'download', pairs[1] || null);
+    if (m.parts) await aiSaveParts(id, Object.fromEntries(m.parts.map((k, i) => [k, pairs[i]])), 'download');
+    else await aiSaveModel(id, pairs[0].param, pairs[0].bin, 'download', pairs[1] || null);
     showToast(m.title + ' model saved — works offline now ✨');
   } finally {
     aiState.busy.delete(id); delete aiState.progress[id];
@@ -5028,7 +5437,8 @@ async function aiDownload(id) {
 
 async function aiRemove(id) {
   await modelStoreTx('readwrite', st => st.delete(id));
-  aiState.stored.delete(id); aiState.compiled.delete(id);
+  aiState.stored.delete(id);
+  for (const k of [...aiState.compiled.keys()]) if (k === id || k.startsWith(id + ':')) aiState.compiled.delete(k);
   const f = enhanceForm.elements;
   if (f.engine.value === id) { f.engine.value = 'builtin'; updateEnhanceSummary(); }
   aiRefreshUi();
@@ -5043,6 +5453,7 @@ async function aiLoadFiles(files) {
   }
   let added = 0;
   const general = {};                      // AI · Balanced needs both of its file pairs
+  const cugan = {};                        // AI · Anime+ needs all four
   for (const [base, pair] of byBase) {
     if (!pair.param || !pair.bin) { showToast('Pick both ' + base + '.param and ' + base + '.bin.'); continue; }
     try {
@@ -5050,9 +5461,17 @@ async function aiLoadFiles(files) {
       const id = aiIdentify(aiModule().compile(param, bin));
       if (!id) { showToast(base + ' is not one of the supported models.'); continue; }
       if (id === 'generalv3') { general[/wdn/i.test(base) ? 'weak' : 'strong'] = { param, bin }; continue; }
+      if (id === 'cugan') {
+        const k = (/up4x/i.test(base) ? 'up4x-' : /up2x/i.test(base) ? 'up2x-' : '?') + (/conservative/i.test(base) ? 'conservative' : /denoise3x/i.test(base) ? 'denoise3x' : '?');
+        if (k.includes('?')) { showToast(base + ': only the up2x/up4x conservative and denoise3x Real-CUGAN files are used.'); continue; }
+        cugan[k] = { param, bin }; continue;
+      }
       await aiSaveModel(id, param, bin, 'file'); added++;
     } catch (err) { showToast('Could not use ' + base + ': ' + err.message); }
   }
+  const cuganParts = AI_MODELS.find(x => x.id === 'cugan').parts;
+  if (cuganParts.every(k => cugan[k])) { await aiSaveParts('cugan', cugan, 'file'); added++; }
+  else if (Object.keys(cugan).length) showToast('AI · Anime+ needs all four Real-CUGAN files (' + cuganParts.join(', ') + ', .param + .bin) — pick them together.');
   if (general.strong && general.weak) {
     await aiSaveModel('generalv3', general.strong.param, general.strong.bin, 'file', general.weak); added++;
   } else if (general.strong || general.weak) {
@@ -5107,9 +5526,10 @@ async function aiRefreshUi() {
   note.textContent = '';
   if (aiState.gpuError) note.textContent = 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). The built-in engine still works.';
   else {
-    note.append('Optional. Models run on your GPU and are stored in this browser. Real-ESRGAN models by Xintao Wang, ');
-    const a = document.createElement('a'); a.href = 'models/LICENSE-Real-ESRGAN.txt'; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'BSD-3-Clause';
-    note.append(a, '.');
+    const link = (href, text) => { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text; return a; };
+    note.append('Optional. Models run on your GPU and are stored in this browser. Real-ESRGAN models by Xintao Wang, ',
+      link('models/LICENSE-Real-ESRGAN.txt', 'BSD-3-Clause'), '; Real-CUGAN by Bilibili (ncnn files by nihui), ',
+      link('models/LICENSE-Real-CUGAN.txt', 'MIT'), '.');
   }
   // "Use AI" on but no model was ready yet: pick one as soon as it is.
   if (document.getElementById('use-ai').checked && enhanceForm.elements.engine.value === 'builtin' &&
@@ -5132,7 +5552,8 @@ async function aiUpscale(px, W, H, settings, onProgress) {
   try {
     onProgress(0.03, 'Loading AI model…');
     out = await aiRun(settings.engine, rgba, w, h, W, H,
-      f => onProgress(0.05 + f * (post ? 0.55 : 0.85), 'AI upscaling…'), () => cancelled, settings.denoise);
+      f => onProgress(0.05 + f * (post ? 0.55 : 0.85), 'AI upscaling…'), () => cancelled,
+      { denoise: settings.denoise, cuganMode: settings.cuganMode });
   } catch (err) {
     if (cancelled) throw new CancelledError('Cancelled');
     throw err;

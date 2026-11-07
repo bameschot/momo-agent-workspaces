@@ -10,6 +10,7 @@ They can also be loaded from disk with **Load model files…**.
 | AI · Fast | `realesr-animevideov3-x4.param` / `.bin` | 1.2 MB |
 | AI · Balanced | `realesr-general-x4v3.param` / `.bin` and `realesr-general-wdn-x4v3.param` / `.bin` | 4.9 MB |
 | AI · Best | `realesrgan-x4plus-anime.param` / `.bin` | 8.9 MB |
+| AI · Anime+ | `realcugan-up2x-conservative`, `realcugan-up2x-denoise3x`, `realcugan-up4x-conservative`, `realcugan-up4x-denoise3x` (`.param` / `.bin`) | 10.8 MB |
 
 Source: the official Real-ESRGAN ncnn release
 `realesrgan-ncnn-vulkan-20220424` (Real-ESRGAN v0.2.5.0,
@@ -27,6 +28,11 @@ the two models' weights for its Denoise slider, the same way the official
 `inference_realesrgan.py --denoise_strength` does (100 = realesr-general-x4v3,
 0 = the -wdn "weak denoise" variant).
 
+AI · Anime+: Real-CUGAN (https://github.com/bilibili/ailab/tree/main/Real-CUGAN,
+MIT, © 2022 bilibili), ncnn files copied unchanged from the `models-se` folder
+of `realcugan-ncnn-vulkan-20220728` (https://github.com/nihui/realcugan-ncnn-vulkan,
+MIT, © 2019 nihui), renamed with a `realcugan-` prefix. See `LICENSE-Real-CUGAN.txt`.
+
 Real-ESRGAN © 2021 Xintao Wang, BSD 3-Clause License — see
 `LICENSE-Real-ESRGAN.txt`.
 
@@ -41,6 +47,15 @@ ea9b7f812a7b3a8e9059de56a3d747798a9adb83cf877cd6885c46b1730e4d3d  realesr-genera
 01450f4a79b81c0f1f3eeefc31121167886125c25e41a6d4773e8ec8062528a1  realesr-general-x4v3.bin
 ea9b7f812a7b3a8e9059de56a3d747798a9adb83cf877cd6885c46b1730e4d3d  realesr-general-wdn-x4v3.param
 bdd5bdc7da2c83411ced54c37a6646aebfe1b3f780bb7e6f877dd8934fbd3cc5  realesr-general-wdn-x4v3.bin
+```
+
+```
+91c72c136e7ff8556323d4449c5ceeff22d9829bf8463a01137cadb8d59b84a0  realcugan-up2x-conservative.bin
+610ebae63f388fe6f39615cc5f4eaeb038d5aa6ba8b299ba3b989f7f7a1a280a  realcugan-up2x-denoise3x.bin
+1ffde324bf3444adade3e70ff4ff4eac7a4bfbf4c01b5aab4563a89e5cec16da  realcugan-up4x-conservative.bin
+1fe05d6066901d354bbbc0cb53fba6588ef7637e1ec9c3bce7546900484d0b35  realcugan-up4x-denoise3x.bin
+4b3b5c5710ad1d00503c8243417aa75f13fe497723e8b4952e8b1abfc08f9b84  realcugan-up2x-*.param
+ffbcdc7ef979e13f4d0b61542d32e88ec6316e4962535f851a9ddfccc4cad4c1  realcugan-up4x-*.param
 ```
 
 Source `.pth` SHA-256 (from the release):
