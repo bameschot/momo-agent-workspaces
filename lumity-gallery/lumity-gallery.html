@@ -2163,6 +2163,38 @@ function getDimensions(url) {
   });
 }
 
+// Pixel count from the file's header (PNG, JPEG, GIF, WebP, BMP) without
+// decoding the picture; falls back to loading it. Used for time estimates.
+const pixelCache = new Map();
+async function getPixelCount(img) {
+  if (pixelCache.has(img.url)) return pixelCache.get(img.url);
+  let px = 0;
+  try {
+    const blob = await (await fetch(img.url)).blob();
+    const b = new Uint8Array(await blob.slice(0, 256 * 1024).arrayBuffer()), dv = new DataView(b.buffer);
+    if (b[0] === 0x89 && b[1] === 0x50) px = dv.getUint32(16) * dv.getUint32(20);                       // PNG IHDR
+    else if (b[0] === 0x47 && b[1] === 0x49) px = dv.getUint16(6, true) * dv.getUint16(8, true);          // GIF
+    else if (b[0] === 0x42 && b[1] === 0x4D) px = Math.abs(dv.getInt32(18, true) * dv.getInt32(22, true)); // BMP
+    else if (b[0] === 0x52 && b[8] === 0x57) {                                                             // WebP
+      const kind = String.fromCharCode(b[12], b[13], b[14], b[15]);
+      if (kind === 'VP8 ') px = (dv.getUint16(26, true) & 0x3fff) * (dv.getUint16(28, true) & 0x3fff);
+      else if (kind === 'VP8L') { const v = dv.getUint32(21, true); px = ((v & 0x3fff) + 1) * (((v >> 14) & 0x3fff) + 1); }
+      else if (kind === 'VP8X') px = ((b[24] | b[25] << 8 | b[26] << 16) + 1) * ((b[27] | b[28] << 8 | b[29] << 16) + 1);
+    } else if (b[0] === 0xFF && b[1] === 0xD8) {                                                           // JPEG: first SOFn
+      for (let i = 2; i + 9 < b.length;) {
+        if (b[i] !== 0xFF) { i++; continue; }
+        const m = b[i + 1];
+        if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) { px = dv.getUint16(i + 5) * dv.getUint16(i + 7); break; }
+        if (m === 0xD8 || m === 0x01 || (m >= 0xD0 && m <= 0xD7) || m === 0xFF) { i += m === 0xFF ? 1 : 2; continue; }
+        i += 2 + dv.getUint16(i + 2);
+      }
+    }
+  } catch { px = 0; }
+  if (!(px > 0)) px = (await getDimensions(img.url)).px;
+  pixelCache.set(img.url, px);
+  return px;
+}
+
 // Measures every visible image, then sorts by `key` ('px' or 'ratio'),
 // toggling direction on each click. If a new set is loaded while measuring,
 // the result is discarded instead of overwriting the new set.
@@ -3345,7 +3377,8 @@ function targetSize(w, h, settings) {
   if (settings.mode === 'scale' && settings.scale === 1)      // cleanup only, same size
     return { W: w, H: h, scale: 1, label: 'cleaned', capped: false };
   let scale = settings.mode === 'width' ? settings.width / w : settings.scale;
-  if (isAiEngine(settings) && scale > 4) scale = 4;        // the AI models upscale ×4 at most
+  const aiLimited = isAiEngine(settings) && scale > 4;
+  if (aiLimited) scale = 4;                                // the AI models upscale ×4 at most
   if (!(scale > 1.01)) return null;
   const cap = Math.min(Math.sqrt(MAX_OUTPUT_PIXELS / (w * h)), MAX_OUTPUT_SIDE / Math.max(w, h));
   const capped = scale > cap;
@@ -3354,7 +3387,7 @@ function targetSize(w, h, settings) {
   const W = Math.round(w * scale), H = Math.round(h * scale);
   const label = settings.mode === 'width' && !capped ? W + 'w'
     : capped ? Math.round(scale * 10) / 10 + 'x' : settings.scale + 'x';
-  return { W, H, scale: W / w, label, capped };
+  return { W, H, scale: W / w, label, capped, aiLimited: aiLimited && !capped };
 }
 
 async function decodePixels(img) {
@@ -3493,7 +3526,7 @@ function makeEnhanceEta(targets, settings, batch) {
   let learned = num(rates[sig]);                  // seconds per input megapixel
   const px = new Map();
   (async () => {                                 // one at a time, in the background
-    for (const t of pending.slice()) { const d = await getDimensions(t.url); if (d.px) px.set(t, d.px); }
+    for (const t of pending.slice()) { const n = await getPixelCount(t); if (n) px.set(t, n); }
   })();
   const mpOf = t => {
     if (px.has(t)) return px.get(t) / 1e6;
@@ -3657,7 +3690,7 @@ function readEnhanceForm() {
 // settings when earlier runs taught it (see makeEnhanceEta), else a rough figure.
 function batchTimeText(st) {
   const rate = num(loadEtaRates()[etaSignature(st)]);
-  const mps = enhanceTargets.map(t => dimCache.get(t.url)).filter(d => d && d.px).map(d => d.px / 1e6);
+  const mps = enhanceTargets.map(t => pixelCache.get(t.url)).filter(n => n > 0).map(n => n / 1e6);
   if (rate && mps.length) {
     const avg = mps.reduce((a, b) => a + b, 0) / mps.length;
     return formatEta(rate * avg) + ' each (measured on this device)';
@@ -3737,7 +3770,7 @@ function updateEnhanceSummary() {
           (upscaledCopyOf(t) ? ' · replaces the current enhanced copy' : '')
         : size
         ? probe.naturalWidth + '×' + probe.naturalHeight + ' → ' + size.W + '×' + size.H +
-          (size.capped ? ' (limited to the browser maximum)' : '') +
+          (size.capped ? ' (limited to the browser maximum)' : size.aiLimited ? ' (AI goes up to 4×)' : '') +
           (upscaledCopyOf(t) ? ' · replaces the current upscaled copy' : '')
         : 'This picture is already at least that size.';
     };
@@ -3787,7 +3820,7 @@ function openEnhanceDialog(targets, mode) {
     : targets.length + ' original picture' + (targets.length === 1 ? '' : 's') + ' in the current view. Each gets a separate enhanced copy; originals are kept.';
   document.getElementById('skip-row').hidden = mode !== 'batch';
   if (mode === 'batch') (async () => {                 // picture sizes for the time estimate
-    for (const t of targets.slice(0, 40)) await getDimensions(t.url);
+    for (const t of targets.slice(0, 40)) await getPixelCount(t);
     if (enhanceDialog.classList.contains('open') && enhanceTargets === targets) updateEnhanceSummary();
   })();
   enhanceReturnFocus = document.activeElement;
@@ -4733,10 +4766,13 @@ void main(){
       gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, 4096, rows);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      for (let y = 0; y < rows; y += 16) {
+      // Small models (≤ 8 MB, e.g. AI · Balanced while its Denoise slider moves)
+      // go in one go; only big ones are spread over frames.
+      const chunk = rows * 4096 * 16 <= 8e6 ? rows : 16;
+      for (let y = 0; y < rows; y += chunk) {
         if (y) await new Promise(r => setTimeout(r, 16));
         gl.bindTexture(gl.TEXTURE_2D, t);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y, 4096, Math.min(16, rows - y), gl.RGBA, gl.FLOAT, data, y * 4096 * 4);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y, 4096, Math.min(chunk, rows - y), gl.RGBA, gl.FLOAT, data, y * 4096 * 4);
       }
       return t;
     }
