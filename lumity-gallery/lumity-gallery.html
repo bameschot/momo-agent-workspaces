@@ -362,6 +362,70 @@
     }
 
     /* ── TOAST ── */
+    /* ── LOAD PROGRESS ── */
+    #progress-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1500;
+      background: rgba(13,0,16,0.78);
+      backdrop-filter: blur(4px);
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    #progress-overlay.open { display: flex; }
+    .progress-card {
+      width: min(380px, 100%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 0 40px rgba(155,89,182,0.35);
+      padding: 1.4rem 1.5rem 1.2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      text-align: center;
+    }
+    .progress-spinner {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 4px solid var(--surface2);
+      border-top-color: var(--accent2);
+      animation: progress-spin 0.9s linear infinite;
+    }
+    @keyframes progress-spin { to { transform: rotate(360deg); } }
+    #progress-title { color: var(--text); font-weight: 600; font-size: 1rem; }
+    #progress-step { color: var(--text-muted); font-size: 0.82rem; min-height: 1.2em; }
+    .progress-track {
+      width: 100%;
+      height: 8px;
+      background: var(--surface2);
+      border-radius: 999px;
+      overflow: hidden;
+      position: relative;
+    }
+    #progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--glow), var(--accent2));
+      border-radius: 999px;
+      transition: width 0.15s ease;
+    }
+    .progress-track.indeterminate #progress-fill {
+      width: 35% !important;
+      position: absolute;
+      animation: progress-slide 1.1s ease-in-out infinite;
+    }
+    @keyframes progress-slide { from { left: -35%; } to { left: 100%; } }
+    #progress-count { color: var(--accent2); font-size: 0.78rem; min-height: 1.1em; font-variant-numeric: tabular-nums; }
+    @media (prefers-reduced-motion: reduce) {
+      .progress-spinner { animation-duration: 2.5s; }
+      .progress-track.indeterminate #progress-fill { animation: none; left: 0; width: 100% !important; opacity: 0.5; }
+    }
+
     #toast {
       position: fixed;
       bottom: 1.5rem;
@@ -464,6 +528,20 @@
     <button class="lb-btn" id="lb-prev">◀</button>
     <span id="lb-counter"></span>
     <button class="lb-btn" id="lb-next">▶</button>
+  </div>
+</div>
+
+<!-- Load / save progress -->
+<div id="progress-overlay" role="dialog" aria-modal="true" aria-labelledby="progress-title">
+  <div class="progress-card">
+    <div class="progress-spinner" aria-hidden="true"></div>
+    <div id="progress-title">Loading…</div>
+    <div id="progress-step" aria-live="polite"></div>
+    <div class="progress-track indeterminate" id="progress-track"
+         role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-labelledby="progress-step">
+      <div id="progress-fill"></div>
+    </div>
+    <div id="progress-count"></div>
   </div>
 </div>
 
@@ -627,6 +705,80 @@ function formatFileDate(ms) {
   return new Date(ms).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+// ── LOAD PROGRESS ─────────────────────────────────────────────────────────────
+// Modal panel shown while a folder / JSON is read, decoded and written to
+// storage. Long loops yield to the browser every few ms so the bar repaints.
+const progress = {
+  overlay: document.getElementById('progress-overlay'),
+  title:   document.getElementById('progress-title'),
+  step:    document.getElementById('progress-step'),
+  track:   document.getElementById('progress-track'),
+  fill:    document.getElementById('progress-fill'),
+  count:   document.getElementById('progress-count'),
+  showTimer: null,
+};
+
+// delayMs > 0 only reveals the panel if the work is still running by then,
+// so quick operations don't flash it.
+function showProgress(title, delayMs = 0) {
+  progress.title.textContent = title;
+  setProgress('', null);
+  clearTimeout(progress.showTimer);
+  if (delayMs > 0) progress.showTimer = setTimeout(() => progress.overlay.classList.add('open'), delayMs);
+  else progress.overlay.classList.add('open');
+}
+
+// total == null → indeterminate (animated) bar.
+function setProgress(stepLabel, done, total, unit = '') {
+  progress.step.textContent = stepLabel;
+  if (total == null || !total) {
+    progress.track.classList.add('indeterminate');
+    progress.track.removeAttribute('aria-valuenow');
+    progress.count.textContent = '';
+    return;
+  }
+  const pct = Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+  progress.track.classList.remove('indeterminate');
+  progress.fill.style.width = pct + '%';
+  progress.track.setAttribute('aria-valuenow', pct);
+  progress.count.textContent = unit === 'bytes'
+    ? formatBytes(done) + ' / ' + formatBytes(total) + ' · ' + pct + '%'
+    : done + ' / ' + total + ' · ' + pct + '%';
+}
+
+function hideProgress() {
+  clearTimeout(progress.showTimer);
+  progress.overlay.classList.remove('open');
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+const yieldToBrowser = () => new Promise(r => setTimeout(r, 0));
+
+// Map over `list` in time slices (~30ms each), reporting progress between
+// slices so the page stays responsive and the bar actually moves.
+async function mapWithProgress(list, fn, onProgress) {
+  const out = new Array(list.length);
+  let sliceStart = performance.now();
+  for (let i = 0; i < list.length; i++) {
+    out[i] = fn(list[i], i);
+    if (performance.now() - sliceStart > 30) {
+      onProgress(i + 1, list.length);
+      await yieldToBrowser();
+      sliceStart = performance.now();
+    }
+  }
+  onProgress(list.length, list.length);
+  return out;
+}
+
+// Only one folder / JSON load at a time.
+let loadBusy = false;
+
 // ── LOCAL STORAGE (IndexedDB) ─────────────────────────────────────────────────
 // Loaded pictures are persisted in the browser so they survive a page reload.
 // IndexedDB is used rather than window.localStorage: localStorage is capped at
@@ -668,7 +820,7 @@ function runTx(db, mode, fn) {
 }
 
 // items: [{name, blob, modified}], source: {label, kind}. Clears, then repopulates.
-async function replaceStoredImages(items, source) {
+async function replaceStoredImages(items, source, onProgress) {
   const db = await openDb();
   try {
     await runTx(db, 'readwrite', tx => {
@@ -676,7 +828,15 @@ async function replaceStoredImages(items, source) {
       const meta = tx.objectStore(META_STORE);
       imgs.clear();
       meta.clear();
-      items.forEach((item, i) => imgs.put({ id: i, name: item.name, blob: item.blob, modified: item.modified ?? null }));
+      let saved = 0, frame = 0;
+      items.forEach((item, i) => {
+        const req = imgs.put({ id: i, name: item.name, blob: item.blob, modified: item.modified ?? null });
+        if (onProgress) req.onsuccess = () => {
+          saved++;
+          // Batch UI updates to one per animation frame.
+          if (!frame) frame = requestAnimationFrame(() => { frame = 0; onProgress(saved, items.length); });
+        };
+      });
       meta.put({ key: 'source', label: source.label, kind: source.kind, count: items.length, savedAt: Date.now() });
     });
   } catch (err) {
@@ -742,14 +902,20 @@ function setSourceBadge(label) {
 }
 
 // Replace the gallery with `items`, then persist them (clearing the old set).
-async function applyAndStore(items, label, kind, loadedMsg) {
+// The progress panel must already be open (the caller owns showProgress /
+// hideProgress); `stepPrefix` is e.g. "Step 3 of 3".
+async function applyAndStore(items, label, kind, loadedMsg, stepPrefix) {
   setImages(blobsToImages(items));
   setSourceBadge(label);
   resetGallery();
-  showToast(loadedMsg + ' — saving…');
   requestPersistentStorage();
+  const saveLabel = stepPrefix + ' · Saving to local storage…';
+  setProgress(saveLabel, 0, items.length);
   try {
-    await replaceStoredImages(items, { label, kind });
+    await replaceStoredImages(items, { label, kind }, (done, total) => {
+      if (done < total) setProgress(saveLabel, done, total);
+      else setProgress(stepPrefix + ' · Finishing up…', null);
+    });
     showToast(loadedMsg + ' · saved for next time 💾');
   } catch (err) {
     console.error('Saving images to local storage failed', err);
@@ -786,15 +952,33 @@ function showToast(msg) {
 }
 
 // ── SOURCE SWITCH ─────────────────────────────────────────────────────────────
-function loadFromJson(file) {
+function readFileAsText(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded, e.total); };
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+async function loadFromJson(file) {
   if (!file || !file.name.endsWith('.json')) {
     showToast('Please drop a .json file.');
     return;
   }
-  const reader = new FileReader();
-  reader.onload = e => {
+  if (loadBusy) { showToast('Still loading — please wait…'); return; }
+  loadBusy = true;
+  showProgress('Loading ' + file.name);
+  try {
+    setProgress('Step 1 of 3 · Reading file…', 0, file.size, 'bytes');
+    const text = await readFileAsText(file, (loaded, total) =>
+      setProgress('Step 1 of 3 · Reading file…', loaded, total, 'bytes'));
+
+    setProgress('Step 1 of 3 · Parsing JSON…', null);
+    await yieldToBrowser();
     let data;
-    try { data = JSON.parse(e.target.result); }
+    try { data = JSON.parse(text); }
     catch { showToast('Invalid JSON file.'); return; }
 
     if (!data.files || !Array.isArray(data.files)) {
@@ -804,20 +988,26 @@ function loadFromJson(file) {
 
     let items;
     try {
-      items = data.files.map(f => ({
+      items = await mapWithProgress(data.files, f => ({
         name: f.filename,
         blob: base64ToBlob(f.data, extMime(f.filename)),
         modified: parseFileDate(f.modified ?? f.lastModified ?? f.mtime)
-      }));
+      }), (done, total) => setProgress('Step 2 of 3 · Decoding images…', done, total));
     } catch { showToast('JSON contains invalid image data.'); return; }
 
     const folderName = data.folder || file.name.replace('.json','');
-    applyAndStore(items,
+    await applyAndStore(items,
       '📦 ' + folderName + ' — ' + items.length + ' images (JSON)',
       'json',
-      'Loaded ' + items.length + ' images from JSON ✨');
-  };
-  reader.readAsText(file);
+      'Loaded ' + items.length + ' images from JSON ✨',
+      'Step 3 of 3');
+  } catch (err) {
+    console.error('Loading JSON failed', err);
+    showToast('Could not read that file.');
+  } finally {
+    hideProgress();
+    loadBusy = false;
+  }
 }
 
 // ── SIZE CONTROL ──────────────────────────────────────────────────────────────
@@ -1019,24 +1209,36 @@ const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','webp']);
 
 const folderFileInput = document.getElementById('folder-file-input');
 document.getElementById('folder-btn').addEventListener('click', () => folderFileInput.click());
-folderFileInput.addEventListener('change', e => {
+folderFileInput.addEventListener('change', async e => {
   const files = [...e.target.files].filter(f => IMAGE_EXTS.has(f.name.split('.').pop().toLowerCase()));
+  e.target.value = '';
   if (!files.length) { showToast('No images found in folder.'); return; }
-
-  // A File is a Blob, so it can go straight into IndexedDB; re-wrap it so
-  // the stored record is a plain Blob with a correct image MIME type.
-  const items = files.map(f => ({
-    name: f.name,
-    blob: new Blob([f], { type: f.type || extMime(f.name) }),
-    modified: f.lastModified || null
-  }));
+  if (loadBusy) { showToast('Still loading — please wait…'); return; }
+  loadBusy = true;
 
   const folderName = files[0].webkitRelativePath.split('/')[0] || 'Folder';
-  applyAndStore(items,
-    '📁 ' + folderName + ' — ' + items.length + ' images',
-    'folder',
-    'Loaded ' + items.length + ' images from folder ✨');
-  e.target.value = '';
+  showProgress('Loading ' + folderName);
+  try {
+    // A File is a Blob, so it can go straight into IndexedDB; re-wrap it so
+    // the stored record is a plain Blob with a correct image MIME type.
+    const items = await mapWithProgress(files, f => ({
+      name: f.name,
+      blob: new Blob([f], { type: f.type || extMime(f.name) }),
+      modified: f.lastModified || null
+    }), (done, total) => setProgress('Step 1 of 2 · Preparing images…', done, total));
+
+    await applyAndStore(items,
+      '📁 ' + folderName + ' — ' + items.length + ' images',
+      'folder',
+      'Loaded ' + items.length + ' images from folder ✨',
+      'Step 2 of 2');
+  } catch (err) {
+    console.error('Loading folder failed', err);
+    showToast('Could not load that folder.');
+  } finally {
+    hideProgress();
+    loadBusy = false;
+  }
 });
 
 // ── JSON BUTTON ───────────────────────────────────────────────────────────────
@@ -1345,6 +1547,8 @@ document.getElementById('install-btn').addEventListener('click', async () => {
 setupInstallability();
 
 (async function initGallery() {
+  showProgress('Loading saved gallery', 300);
+  setProgress('Reading from local storage…', null);
   try {
     const stored = await readStoredImages();
     if (stored) {
@@ -1356,6 +1560,8 @@ setupInstallability();
     }
   } catch (err) {
     console.warn('Could not read saved images; showing embedded set', err);
+  } finally {
+    hideProgress();
   }
   shuffle(filtered);
   renderBatch();
