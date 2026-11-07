@@ -753,6 +753,7 @@
     <button class="lb-btn" id="lb-enhance">✨ Enhance</button>
     <button class="lb-btn" id="lb-compare" hidden>⇄ Show original</button>
     <button class="lb-btn" id="lb-fav" title="Favourite (F)">♡ Favourite</button>
+    <button class="lb-btn" id="lb-download" title="Download this picture (D)">⬇ Download</button>
   </div>
   <div class="lb-nav">
     <button class="lb-btn" id="lb-prev">◀</button>
@@ -1777,9 +1778,26 @@ lbCompareBtn.addEventListener('click', () => {
   if (!original) return;
   lbShowingOriginal = !lbShowingOriginal;
   lbImg.src = lbShowingOriginal ? original.url : img.url;
-  lbCompareBtn.textContent = lbShowingOriginal ? '⇄ Show upscaled' : '⇄ Show original';
+  lbCompareBtn.textContent = lbShowingOriginal ? (img.upscale.label === 'cleaned' ? '⇄ Show cleaned' : '⇄ Show upscaled') : '⇄ Show original';
   lbCompareBtn.classList.toggle('active', lbShowingOriginal);
 });
+
+// Saves the stored file as-is, under its gallery name — the picture shown,
+// so the original while "Show original" is on.
+async function downloadShown() {
+  const img = filtered[lbIndex];
+  if (!img) return;
+  const shown = lbShowingOriginal && img.upscale ? findImage(img.upscale.of) || img : img;
+  try {
+    const blob = await (await fetch(shown.url)).blob();
+    downloadBlob(blob, shown.name);
+    showToast('Downloaded ' + shown.name);
+  } catch (err) {
+    console.error('Download failed', err);
+    showToast('Download failed — the picture could not be read.');
+  }
+}
+document.getElementById('lb-download').addEventListener('click', downloadShown);
 
 lbEnhanceBtn.addEventListener('click', () => {
   const img = filtered[lbIndex];
@@ -1834,6 +1852,7 @@ document.addEventListener('keydown', e => {
     const img = filtered[lbIndex];
     if (img) toggleFavorite(img);
   }
+  else if ((e.key === 'd' || e.key === 'D') && !e.ctrlKey && !e.metaKey && !e.altKey) downloadShown();
 });
 
 // ── SLIDESHOW ─────────────────────────────────────────────────────────────────
