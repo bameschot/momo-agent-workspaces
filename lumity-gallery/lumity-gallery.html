@@ -3988,7 +3988,9 @@ void main(){
       while (i < steps.length) {
         if (isCancelled && isCancelled()) throw new Error('cancelled');
         const targetMs = Math.min(150, Math.max(12, 3 * overhead));
-        const budget = bestRate > 0 ? bestRate * targetMs : 2.4e7;
+        // Until the GPU's speed is known, start with a small slice so the first
+        // one can't hold up the page (or a cancel) for long on a slow GPU.
+        const budget = bestRate > 0 ? bestRate * targetMs : 3e5;
         let slice = 0;
         const t0 = performance.now();
         while (i < steps.length && (slice === 0 || slice < budget)) { steps[i].fn(); slice += steps[i].cost; i++; }
