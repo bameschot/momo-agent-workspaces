@@ -725,8 +725,9 @@
       <legend>Cleanup</legend>
       <div class="chips">
         <label><input type="radio" name="preset" value="soft"><span>Soft</span></label>
-        <label><input type="radio" name="preset" value="balanced" checked><span>Balanced</span></label>
+        <label><input type="radio" name="preset" value="balanced"><span>Balanced</span></label>
         <label><input type="radio" name="preset" value="strong"><span>Strong</span></label>
+        <label><input type="radio" name="preset" value="lumity" checked><span>✨ Lumity</span></label>
       </div>
       <p class="dialog-sub" id="preset-hint"></p>
     </fieldset>
@@ -1131,7 +1132,7 @@ function blobsToImages(items) {
 // ("name.upscaled-2x.png" / "name.upscaled-1500w.jpg") so ZIP exports and
 // folders keep it too.
 const UPSCALE_NAME_RE = /^(.+)\.upscaled-(\d+(?:\.\d+)?x|\d+w)\.(png|jpe?g|webp|gif)$/i;
-const PRESET_NAMES = { soft: 'Soft', balanced: 'Balanced', strong: 'Strong' };
+const PRESET_NAMES = { soft: 'Soft', balanced: 'Balanced', strong: 'Strong', lumity: 'Lumity' };
 
 function stripExt(name) {
   const dot = name.lastIndexOf('.');
@@ -1940,6 +1941,9 @@ sortDateBtn.addEventListener('click', () => {
 //   1. Deblock   – soften small steps on the 8×8 JPEG block grid
 //   2. Denoise   – self-guided filter on luma: flattens JPEG "mosquito" noise
 //                  inside flat colour areas, stops at real outlines
+//      Flatten   – (Lumity preset) iterated joint bilateral filter on Y/Cb/Cr:
+//                  pulls noisy single-colour areas to one flat colour while
+//                  keeping colour boundaries, shading steps and gradients
 //   3. Chroma    – joint guided filter steered by the cleaned luma, so colour
 //                  edges snap back onto the line art (fixes JPEG colour bleed)
 //   4. Upscale   – edge-adaptive Lanczos-2 (in the spirit of FSR1 "EASU"):
@@ -1953,6 +1957,9 @@ function upscalerModule() {
     soft:     { deblock: 6,  r: 1, eps: 49,  chromaR: 2, chromaEps: 120, shock: 1, dt: 0.20, sharpen: 0.20 },
     balanced: { deblock: 10, r: 2, eps: 110, chromaR: 3, chromaEps: 80,  shock: 2, dt: 0.25, sharpen: 0.35 },
     strong:   { deblock: 16, r: 2, eps: 260, chromaR: 3, chromaEps: 50,  shock: 3, dt: 0.30, sharpen: 0.50 },
+    // Cartoon / cel-shaded art: flattens noisy single-colour areas hard.
+    lumity:   { deblock: 12, r: 1, eps: 60,  chromaR: 3, chromaEps: 60,  shock: 2, dt: 0.25, sharpen: 0.35,
+                flatten: { r: 3, sigma: 9, iterations: 3 }, finalFlatten: 6 },
   };
 
   // Lanczos-2 weights looked up by squared distance (d² in [0, 4)).
@@ -2003,6 +2010,72 @@ function upscalerModule() {
       for (let x = 0; x < w; x++) {
         const i = y * w + x;
         blend(i - 2 * w, i - w, i, i + w);
+      }
+    }
+  }
+
+  // Flatten: iterated joint bilateral filter. Each pixel becomes a weighted
+  // average of neighbours that are close in space AND in colour (Y, Cb, Cr
+  // together), so noise inside a colour area averages away while any colour
+  // step clearly larger than `sigma` is left sharp. Repeating it lets flat
+  // areas converge to a single colour; smooth gradients survive because
+  // neighbours on a gentle slope are still "close in colour".
+  function flatten(Y, Cb, Cr, w, h, r, sigma, iterations) {
+    const n = w * h;
+    const taps = [];
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const d2 = dx * dx + dy * dy;
+      if (d2 > r * r + r) continue;                     // round window
+      taps.push(dx, dy, Math.exp(-d2 / (2 * (r / 1.5) * (r / 1.5))));
+    }
+    const RANGE_LUT_MAX = 1024, rangeStep = (9 * sigma * sigma) / RANGE_LUT_MAX;
+    const rangeLut = new Float32Array(RANGE_LUT_MAX + 1);
+    for (let i = 0; i <= RANGE_LUT_MAX; i++) rangeLut[i] = Math.exp(-(i * rangeStep) / (2 * sigma * sigma));
+    let y0 = Y, b0 = Cb, c0 = Cr;
+    let y1 = new Float32Array(n), b1 = new Float32Array(n), c1 = new Float32Array(n);
+    for (let it = 0; it < iterations; it++) {
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x, yc = y0[i], bc = b0[i], cc = c0[i];
+          let sw = 0, sy = 0, sb = 0, sc = 0;
+          for (let t = 0; t < taps.length; t += 3) {
+            const xx = x + taps[t], yy = y + taps[t + 1];
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+            const j = yy * w + xx;
+            const dyv = y0[j] - yc, dbv = b0[j] - bc, dcv = c0[j] - cc;
+            const k = ((dyv * dyv + 0.5 * (dbv * dbv + dcv * dcv)) / rangeStep) | 0;
+            if (k >= RANGE_LUT_MAX) continue;
+            const wt = taps[t + 2] * rangeLut[k];
+            sw += wt; sy += wt * y0[j]; sb += wt * b0[j]; sc += wt * c0[j];
+          }
+          y1[i] = sy / sw; b1[i] = sb / sw; c1[i] = sc / sw;
+        }
+      }
+      [y0, y1] = [y1, y0]; [b0, b1] = [b1, b0]; [c0, c1] = [c1, c0];
+    }
+    if (y0 !== Y) { Y.set(y0); Cb.set(b0); Cr.set(c0); }
+  }
+
+  // Final flat-area cleanup on the upscaled luma: where the 3×3 range is
+  // tiny (no edge nearby), replace the pixel with its 5×5 mean so leftover
+  // speckle disappears; anything near an edge is untouched.
+  function flattenFlatAreas(Yo, W, H, threshold) {
+    const n = W * H, mean = new Float32Array(n), tmp = new Float32Array(n);
+    boxMean(Yo, W, H, 2, mean, tmp);
+    const src = Yo.slice();
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x;
+        let lo = src[i], hi = src[i];
+        for (let k = -1; k <= 1; k++) {
+          const r = i + k * W;
+          for (let d = -1; d <= 1; d++) { const v = src[r + d]; if (v < lo) lo = v; if (v > hi) hi = v; }
+        }
+        const range = hi - lo;
+        if (range < threshold) {
+          const t = range / threshold;                  // fade in near the threshold
+          Yo[i] = mean[i] * (1 - t) + src[i] * t;
+        }
       }
     }
   }
@@ -2243,6 +2316,10 @@ function upscalerModule() {
       deblock(Cb, w, h, P.deblock * 1.5);
       deblock(Cr, w, h, P.deblock * 1.5);
     }
+    if (P.flatten) {
+      onProgress(0.04, 'Flattening colour areas…');
+      flatten(Y, Cb, Cr, w, h, P.flatten.r, P.flatten.sigma, P.flatten.iterations);
+    }
     const Yc = guidedFilter(Y, Y, w, h, P.r, P.eps);
     onProgress(0.12, 'Snapping colours to the line art…');
     const Cbc = guidedFilter(Yc, Cb, w, h, P.chromaR, P.chromaEps);
@@ -2265,6 +2342,7 @@ function upscalerModule() {
     shockFilter(Yo, W, H, iterations, P.dt, smoothR);
     onProgress(0.9, 'Sharpening lines…');
     sharpen(Yo, W, H, P.sharpen);
+    if (P.finalFlatten) flattenFlatAreas(Yo, W, H, P.finalFlatten);
 
     onProgress(0.95, 'Finishing…');
     const Ao = A ? bilinearAlpha(A, w, h, W, H) : null;
@@ -2303,6 +2381,7 @@ const PRESET_HINTS = {
   soft: 'Light cleanup. Keeps fine texture and thin lines; leaves some JPEG noise.',
   balanced: 'Removes most JPEG noise and colour bleed; crisp lines. Best for most fan art.',
   strong: 'Heavy cleanup for very blocky pictures. Flattens texture; can thicken lines.',
+  lumity: 'For cartoon art: flattens noisy single-colour areas into clean flat colour, keeps outlines and shading steps. Very faint details (e.g. light hatching) may be smoothed. A bit slower.',
 };
 
 let upscaleWorker = null;
@@ -2569,7 +2648,7 @@ function updateEnhanceSummary() {
     const todo = st.skipExisting ? enhanceTargets.length - existing : enhanceTargets.length;
     summary.textContent = todo + ' picture' + (todo === 1 ? '' : 's') + ' to enhance' +
       (existing ? (st.skipExisting ? ' · ' + existing + ' skipped (already upscaled)' : ' · ' + existing + ' upscaled copies will be replaced') : '') +
-      ' · roughly 1–3 s each on a laptop, longer on phones.';
+      ' · roughly ' + (st.preset === 'lumity' ? '2–5' : '1–3') + ' s each on a laptop, longer on phones.';
   }
 }
 
