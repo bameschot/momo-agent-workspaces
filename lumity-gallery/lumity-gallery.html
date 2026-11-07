@@ -3447,7 +3447,8 @@ function openEnhanceDialog(targets, mode) {
   f.engine.value = 'builtin';
   aiRefreshUi().then(() => {
     if (saved.engine && saved.engine !== 'builtin' && aiReady(saved.engine)) { f.engine.value = saved.engine; updateEnhanceSummary(); }
-    if (saved.device === 'gpu' && gpuBuiltinAvailable()) { f.device.value = 'gpu'; updateEnhanceSummary(); }
+    if (saved.device === 'gpu' && gpuBuiltinAvailable()) f.device.value = 'gpu';
+    updateEnhanceSummary();                      // GPU availability is known now
   });
   if (saved.format === 'png' || saved.format === 'jpeg') f.format.value = saved.format;
   tuneFlatness.value = Number.isFinite(saved.flatness) ? saved.flatness : 50;
