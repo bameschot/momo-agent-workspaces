@@ -504,6 +504,18 @@
     .extra span { display: flex; flex-direction: column; gap: 0.1rem; }
     .extra small { color: var(--text-muted); font-size: 0.76rem; line-height: 1.35; }
     #extras-fields:disabled .extra { opacity: 0.45; cursor: default; }
+    .chips input:disabled + span { opacity: 0.4; cursor: not-allowed; }
+    .chips label[hidden] { display: none; }
+    .ai-models { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.35rem; }
+    .ai-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; color: var(--text); }
+    .ai-row .ai-name { flex: 1 1 12rem; min-width: 0; }
+    .ai-row .ai-name small { display: block; color: var(--text-muted); font-size: 0.72rem; }
+    .ai-row .ai-status { color: var(--text-muted); font-size: 0.75rem; }
+    .ai-row .ai-status.ready { color: var(--accent2); }
+    .ai-row button, #ai-load-files { background: var(--surface2); border: 1px solid var(--border); color: var(--accent2); border-radius: 6px; padding: 0.2rem 0.6rem; cursor: pointer; font-size: 0.78rem; }
+    .ai-row button:disabled { opacity: 0.45; cursor: not-allowed; }
+    #ai-note { color: var(--text-muted); font-size: 0.75rem; line-height: 1.4; }
+    #ai-note a { color: var(--accent2); }
     #auto-note { color: var(--accent2); font-size: 0.8rem; line-height: 1.4; }
     #auto-note[hidden] { display: none; }
     .slider-row { display: grid; grid-template-columns: 7.5rem 1fr 2.2rem; align-items: center; gap: 0.6rem; color: var(--text); font-size: 0.85rem; }
@@ -743,6 +755,18 @@
   <form class="dialog-card" id="enhance-form">
     <h2 id="enhance-title">✨ Enhance picture</h2>
     <p class="dialog-sub" id="enhance-target"></p>
+    <fieldset id="engine-fields">
+      <legend>Engine</legend>
+      <div class="chips">
+        <label><input type="radio" name="engine" value="builtin" checked><span>Built-in</span></label>
+        <label><input type="radio" name="engine" value="animevideov3" disabled><span>🤖 AI · Fast</span></label>
+        <label><input type="radio" name="engine" value="anime6b" disabled><span>🤖 AI · Best</span></label>
+      </div>
+      <div class="ai-models" id="ai-models"></div>
+      <div class="ai-row"><button type="button" id="ai-load-files">Load model files…</button>
+        <input type="file" id="ai-file-input" multiple accept=".param,.bin" hidden></div>
+      <p id="ai-note"></p>
+    </fieldset>
     <fieldset>
       <legend>Size</legend>
       <div class="chips">
@@ -756,13 +780,14 @@
       </div>
     </fieldset>
     <fieldset>
-      <legend>Cleanup</legend>
+      <legend id="cleanup-legend">Cleanup</legend>
       <div class="chips">
+        <label id="preset-none-chip" hidden><input type="radio" name="preset" value="none"><span>None (AI as-is)</span></label>
         <label><input type="radio" name="preset" value="soft"><span>Soft</span></label>
         <label><input type="radio" name="preset" value="balanced"><span>Balanced</span></label>
         <label><input type="radio" name="preset" value="strong"><span>Strong</span></label>
         <label><input type="radio" name="preset" value="lumity" checked><span>✨ Lumity</span></label>
-        <label><input type="radio" name="preset" value="auto"><span>🪄 Auto</span></label>
+        <label id="preset-auto-chip"><input type="radio" name="preset" value="auto"><span>🪄 Auto</span></label>
       </div>
       <p class="dialog-sub" id="preset-hint"></p>
       <p id="auto-note" hidden></p>
@@ -1059,9 +1084,10 @@ let loadBusy = false;
 // gets a quota of hundreds of MB. Every "Open Folder" / "Load JSON" wipes the
 // stored set and writes the new one in its place — nothing accumulates.
 const DB_NAME = 'lumity-gallery';
-const DB_VERSION = 1;
+const DB_VERSION = 2;                    // 2: adds the AI model store
 const IMG_STORE = 'images';
 const META_STORE = 'meta';
+const MODEL_STORE = 'models';           // optional AI model weights (never cleared by loading pictures)
 
 let dbPromise = null;
 function openDb() {
@@ -1073,6 +1099,7 @@ function openDb() {
       const db = req.result;
       if (!db.objectStoreNames.contains(IMG_STORE)) db.createObjectStore(IMG_STORE, { keyPath: 'id' });
       if (!db.objectStoreNames.contains(META_STORE)) db.createObjectStore(META_STORE, { keyPath: 'key' });
+      if (!db.objectStoreNames.contains(MODEL_STORE)) db.createObjectStore(MODEL_STORE, { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -1203,7 +1230,8 @@ function blobsToImages(items) {
 // ("name.upscaled-2x.png" / "name.upscaled-1500w.jpg") so ZIP exports and
 // folders keep it too.
 const UPSCALE_NAME_RE = /^(.+)\.upscaled-(\d+(?:\.\d+)?x|\d+w)\.(png|jpe?g|webp|gif)$/i;
-const PRESET_NAMES = { soft: 'Soft', balanced: 'Balanced', strong: 'Strong', lumity: 'Lumity' };
+const PRESET_NAMES = { soft: 'Soft', balanced: 'Balanced', strong: 'Strong', lumity: 'Lumity', none: 'No cleanup' };
+const ENGINE_NAMES = { builtin: 'Built-in', animevideov3: 'AI Fast', anime6b: 'AI Best' };
 
 function stripExt(name) {
   const dot = name.lastIndexOf('.');
@@ -1232,6 +1260,7 @@ function sanitizeUpscale(raw) {
     width: num(raw.width), height: num(raw.height),
     created: num(raw.created),
     auto: !!raw.auto,
+    engine: ENGINE_NAMES[raw.engine] ? raw.engine : null,
     extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges)
       ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges }
       : null,
@@ -1625,7 +1654,10 @@ function extrasNames(x) {
 
 function describeUpscale(u) {
   const parts = ['✨ Upscaled ' + upscaleLabelText(u.label)];
-  if (u.preset) parts.push((u.auto ? 'Auto → ' : '') + PRESET_NAMES[u.preset] +
+  const ai = u.engine && u.engine !== 'builtin';
+  if (ai) parts.push('🤖 ' + ENGINE_NAMES[u.engine] + (u.preset && u.preset !== 'none' ? ' → ' + PRESET_NAMES[u.preset] +
+    (u.tuning ? ' (flatness ' + u.tuning.flatness + ', lines ' + u.tuning.lines + ')' : '') : ''));
+  else if (u.preset) parts.push((u.auto ? 'Auto → ' : '') + PRESET_NAMES[u.preset] +
     (u.tuning ? ' (flatness ' + u.tuning.flatness + ', lines ' + u.tuning.lines + ')' : ''));
   if (u.extras) {
     const names = extrasNames(u.extras);
@@ -2898,6 +2930,7 @@ const PRESET_HINTS = {
   balanced: 'Removes most JPEG noise and colour bleed; crisp lines. Best for most fan art.',
   strong: 'Heavy cleanup for very blocky pictures. Flattens texture; can thicken lines.',
   lumity: 'For cartoon art: flattens noisy single-colour areas into clean flat colour and keeps outlines bold and sharp in colour. Slowest preset.',
+  none: 'Uses the AI result as it is.',
   auto: 'Measures each picture (JPEG blockiness, noise, how cartoon-like it is) and picks the cleanup, Lumity tuning and extras for it. Size and format stay your choice.',
 };
 
@@ -2957,6 +2990,11 @@ function resolveSettings(settings, pixels, scale, stats) {
 
 // "Lumity (flatness 60, lines 50) · flat fills + edge cleanup"
 function describeSettings(st) {
+  if (isAiEngine(st)) {
+    return '🤖 ' + ENGINE_NAMES[st.engine] + (st.preset === 'none' ? '' : ' → ' + PRESET_NAMES[st.preset] +
+      (st.preset === 'lumity' ? ' (flatness ' + st.flatness + ', lines ' + st.lines + ')' : '')) +
+      (engineExtras(st) ? ' · ' + extrasNames(engineExtras(st)) : '');
+  }
   return (st.auto ? 'Auto → ' : '') + PRESET_NAMES[st.preset] +
     (st.preset === 'lumity' ? ' (flatness ' + st.flatness + ', lines ' + st.lines + ')' : '') +
     (engineExtras(st) ? ' · ' + extrasNames(engineExtras(st)) : '');
@@ -2964,6 +3002,7 @@ function describeSettings(st) {
 
 // Extras chosen in the dialog, or null when none.
 function engineExtras(settings) {
+  if (settings.preset === 'none') return null;          // AI as-is: no built-in steps
   const x = settings.extras || {};
   return x.lines || x.fills || x.edges ? { lines: !!x.lines, fills: !!x.fills, edges: !!x.edges } : null;
 }
@@ -3014,6 +3053,7 @@ function runUpscaleJob(rgba, w, h, opts, onProgress) {
 // Returns null when the picture is already at least that big.
 function targetSize(w, h, settings) {
   let scale = settings.mode === 'width' ? settings.width / w : settings.scale;
+  if (isAiEngine(settings) && scale > 4) scale = 4;        // the AI models upscale ×4 at most
   if (!(scale > 1.01)) return null;
   const cap = Math.min(Math.sqrt(MAX_OUTPUT_PIXELS / (w * h)), MAX_OUTPUT_SIDE / Math.max(w, h));
   const capped = scale > cap;
@@ -3057,14 +3097,19 @@ async function enhanceOne(original, settings, onProgress) {
   const { rgba, w, h, jpeg } = await decodePixels(original);
   const size = targetSize(w, h, settings);
   if (!size) return { skipped: 'already at least that size' };
-  if (settings.preset === 'auto') onProgress(0.03, 'Analysing picture…');
-  // Measured before the pixels are handed to the worker.
-  settings = resolveSettings(settings, { rgba, w, h, jpeg }, size.scale);
-
-  const out = await runUpscaleJob(rgba, w, h, {
-    width: size.W, height: size.H, preset: settings.preset, tuning: engineTuning(settings),
-    extras: engineExtras(settings), jpegSource: jpeg, flattenWhite: settings.format === 'jpeg',
-  }, (f, label) => onProgress(0.05 + f * 0.85, label));
+  let out;
+  if (isAiEngine(settings)) {
+    if (settings.preset === 'auto') settings = { ...settings, preset: 'none' };
+    out = await aiUpscale({ rgba, w, h }, size.W, size.H, settings, onProgress);
+  } else {
+    if (settings.preset === 'auto') onProgress(0.03, 'Analysing picture…');
+    // Measured before the pixels are handed to the worker.
+    settings = resolveSettings(settings, { rgba, w, h, jpeg }, size.scale);
+    out = await runUpscaleJob(rgba, w, h, {
+      width: size.W, height: size.H, preset: settings.preset, tuning: engineTuning(settings),
+      extras: engineExtras(settings), jpegSource: jpeg, flattenWhite: settings.format === 'jpeg',
+    }, (f, label) => onProgress(0.05 + f * 0.85, label));
+  }
 
   onProgress(0.92, 'Saving ' + (settings.format === 'png' ? 'PNG' : 'JPEG') + '…');
   const blob = await encodePixels(out, size.W, size.H, settings.format);
@@ -3077,7 +3122,7 @@ async function enhanceOne(original, settings, onProgress) {
     upscale: {
       of: original.id, label: size.label, scale: Math.round(size.scale * 1000) / 1000,
       preset: settings.preset, format: settings.format, tuning: engineTuning(settings), extras: engineExtras(settings),
-      auto: !!settings.auto,
+      auto: !!settings.auto, engine: settings.engine || 'builtin',
       originalWidth: w, originalHeight: h, width: size.W, height: size.H,
       created: Date.now(),
     },
@@ -3187,6 +3232,7 @@ function readEnhanceForm() {
     mode: scaleVal === 'width' ? 'width' : 'scale',
     scale: scaleVal === 'width' ? null : Number(scaleVal),
     width: Math.max(100, Math.min(MAX_OUTPUT_SIDE, Math.round(Number(enhanceWidth.value) || 1500))),
+    engine: f.engine.value,
     preset: f.preset.value,
     format: f.format.value,
     flatness: Number(tuneFlatness.value),
@@ -3202,6 +3248,8 @@ function readEnhanceForm() {
 
 // Rough seconds per picture at 2× on a laptop, for the batch summary.
 function timeEstimate(st) {
+  if (st.engine === 'animevideov3') return st.preset === 'none' ? '2–10' : '4–20';
+  if (st.engine === 'anime6b') return st.preset === 'none' ? '20–90' : '25–100';
   if (st.preset === 'auto') return '2–12';
   let lo = st.preset === 'lumity' ? 2 : 1, hi = st.preset === 'lumity' ? 7 : 3;
   const x = st.extras || {};
@@ -3212,10 +3260,18 @@ function timeEstimate(st) {
 }
 
 function updateEnhanceSummary() {
+  const f = enhanceForm.elements;
+  const ai = f.engine.value !== 'builtin';
+  // "None" only makes sense after AI; Auto only for the built-in engine.
+  document.getElementById('preset-none-chip').hidden = !ai;
+  document.getElementById('preset-auto-chip').hidden = ai;
+  if (ai && f.preset.value === 'auto') f.preset.value = 'none';
+  if (!ai && f.preset.value === 'none') f.preset.value = 'lumity';
+  document.getElementById('cleanup-legend').textContent = ai ? 'Cleanup after AI' : 'Cleanup';
   const st = readEnhanceForm();
   document.getElementById('width-row').hidden = st.mode !== 'width';
   document.getElementById('tuning-fields').hidden = st.preset !== 'lumity';
-  document.getElementById('extras-fields').disabled = st.preset === 'auto';
+  document.getElementById('extras-fields').disabled = st.preset === 'auto' || st.preset === 'none';
   const autoNote = document.getElementById('auto-note');
   autoNote.hidden = st.preset !== 'auto';
   if (st.preset === 'auto' && enhanceMode === 'batch') autoNote.textContent = 'Settings are picked per picture; the preview shows the pick for the picture shown.';
@@ -3253,6 +3309,10 @@ function openEnhanceDialog(targets, mode) {
   if (saved.scale || saved.mode === 'width') f.scale.value = saved.mode === 'width' ? 'width' : String(saved.scale);
   if (saved.width) enhanceWidth.value = saved.width;
   if (PRESET_NAMES[saved.preset] || saved.preset === 'auto') f.preset.value = saved.preset;
+  f.engine.value = 'builtin';
+  aiRefreshUi().then(() => {
+    if (saved.engine && saved.engine !== 'builtin' && aiReady(saved.engine)) { f.engine.value = saved.engine; updateEnhanceSummary(); }
+  });
   if (saved.format === 'png' || saved.format === 'jpeg') f.format.value = saved.format;
   tuneFlatness.value = Number.isFinite(saved.flatness) ? saved.flatness : 50;
   tuneLines.value = Number.isFinite(saved.lines) ? saved.lines : 50;
@@ -3457,16 +3517,31 @@ function schedulePreview(delay = 180) {
 
 // Only one preview render at a time; a change while rendering re-runs once
 // the current render finishes (so dragging a slider never queues up work).
-function runPreview() {
+// Built-in engine on a region (preview worker, or main thread as a fallback).
+function previewEngine(region, rw, rh, opts) {
+  if (!preview.worker) preview.worker = createUpscaleWorker();
+  if (!preview.worker) return yieldToBrowser().then(() => getMainUpscaler().upscale(region, rw, rh, opts));
+  return new Promise((resolve, reject) => {
+    preview.worker.onmessage = e => {
+      if (e.data.done) resolve(new Uint8ClampedArray(e.data.rgba));
+      else if (e.data.error) reject(new Error(e.data.error));
+    };
+    preview.worker.onerror = ev => { ev.preventDefault(); preview.worker.terminate(); preview.worker = null; reject(new Error('worker failed')); };
+    preview.worker.postMessage({ rgba: region.buffer, w: rw, h: rh, opts }, [region.buffer]);
+  });
+}
+
+async function runPreview() {
   if (!preview.pixels || !enhanceDialog.classList.contains('open')) return;
   if (preview.busy) { preview.dirty = true; return; }
   const { rgba, w, h, jpeg } = preview.pixels;
   const chosen = readEnhanceForm();
+  const ai = isAiEngine(chosen);
   const size = targetSize(w, h, chosen);
-  if (size && chosen.preset === 'auto' && !preview.autoStats) {
+  if (size && !ai && chosen.preset === 'auto' && !preview.autoStats) {
     preview.autoStats = getMainUpscaler().analyzePicture(rgba, w, h, jpeg);
   }
-  const settings = size ? resolveSettings(chosen, preview.pixels, size.scale, preview.autoStats) : chosen;
+  const settings = size && !ai ? resolveSettings(chosen, preview.pixels, size.scale, preview.autoStats) : chosen;
   if (settings.auto && enhanceMode === 'single') {
     document.getElementById('auto-note').textContent = 'Auto picked: ' + describeSettings(settings).replace('Auto → ', '');
   }
@@ -3475,11 +3550,16 @@ function runPreview() {
     previewEls.after.classList.remove('stale');
     return;
   }
+  if (ai && !aiReady(settings.engine)) {
+    previewEls.status.textContent = 'Download or load the AI model to preview it.';
+    return;
+  }
   const sc = size.scale, cs = Math.max(8, Math.ceil(PREVIEW_OUT / sc));
-  // Crop (cs×cs around the chosen centre) plus padding, aligned to 8 px.
+  const post = !ai || settings.preset !== 'none';
+  // Crop (cs×cs around the chosen centre) plus context, aligned to 8 px.
   const cx0 = Math.round(Math.max(0, Math.min(w - cs, preview.center.x - cs / 2)));
   const cy0 = Math.round(Math.max(0, Math.min(h - cs, preview.center.y - cs / 2)));
-  const pad = settings.extras && settings.extras.fills ? PREVIEW_PAD_FILLS : PREVIEW_PAD;
+  const pad = (post ? (settings.extras && settings.extras.fills ? PREVIEW_PAD_FILLS : PREVIEW_PAD) : 0) + (ai ? AI_PREVIEW_PAD : 0);
   const rx0 = Math.max(0, Math.floor((cx0 - pad) / 8) * 8);
   const ry0 = Math.max(0, Math.floor((cy0 - pad) / 8) * 8);
   const rx1 = Math.min(w, cx0 + cs + pad), ry1 = Math.min(h, cy0 + cs + pad);
@@ -3496,7 +3576,7 @@ function runPreview() {
     w: Math.min(PREVIEW_OUT, Math.round(Math.min(cs, w) * sc)), h: Math.min(PREVIEW_OUT, Math.round(Math.min(cs, h) * sc)) };
   const token = preview.token;
   preview.busy = true;
-  previewEls.status.textContent = 'Rendering preview…';
+  previewEls.status.textContent = ai ? 'Rendering AI preview…' : 'Rendering preview…';
 
   // "Before": the same area scaled the normal way by the browser.
   const bctx = previewEls.before.getContext('2d');
@@ -3504,41 +3584,31 @@ function runPreview() {
   bctx.imageSmoothingQuality = 'high';
   bctx.drawImage(preview.sourceCanvas, cx0, cy0, crop.w / sc, crop.h / sc, 0, 0, crop.w, crop.h);
 
-  const done = out => {
-    preview.busy = false;
+  try {
+    let out;
+    if (ai) {
+      out = await aiRun(settings.engine, region, rw, rh, RW, RH, null, null);
+      if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false });
+    } else {
+      out = await previewEngine(region, rw, rh, opts);
+    }
     if (token !== preview.token) return;
-    const full = new ImageData(out, RW, RH);
     const tmp = document.createElement('canvas');
     tmp.width = RW; tmp.height = RH;
-    tmp.getContext('2d').putImageData(full, 0, 0);
+    tmp.getContext('2d').putImageData(new ImageData(out, RW, RH), 0, 0);
     previewEls.after.width = crop.w; previewEls.after.height = crop.h;
     previewEls.after.getContext('2d').drawImage(tmp, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
     previewEls.after.classList.remove('stale');
     previewEls.status.textContent = 'Preview at ' + (Math.round(sc * 100) / 100) + '× · ' + describeSettings(settings);
-    if (preview.dirty) { preview.dirty = false; runPreview(); }
-  };
-  const fail = () => {
+  } catch (err) {
+    console.error('Preview failed', err);
+    if (token === preview.token) previewEls.status.textContent = 'Preview failed' + (ai ? ': ' + err.message : '.');
+  } finally {
     preview.busy = false;
-    if (token === preview.token) previewEls.status.textContent = 'Preview failed.';
     if (preview.dirty) { preview.dirty = false; runPreview(); }
-  };
-
-  if (!preview.worker) preview.worker = createUpscaleWorker();
-  if (!preview.worker) {
-    setTimeout(() => {
-      try {
-        done(getMainUpscaler().upscale(region, rw, rh, opts));
-      } catch { fail(); }
-    }, 0);
-    return;
   }
-  preview.worker.onmessage = e => {
-    if (e.data.done) done(new Uint8ClampedArray(e.data.rgba));
-    else if (e.data.error) fail();
-  };
-  preview.worker.onerror = ev => { ev.preventDefault(); preview.worker.terminate(); preview.worker = null; fail(); };
-  preview.worker.postMessage({ rgba: region.buffer, w: rw, h: rh, opts }, [region.buffer]);
 }
+
 document.getElementById('enhance-cancel').addEventListener('click', closeEnhanceDialog);
 enhanceDialog.addEventListener('click', e => { if (e.target === enhanceDialog) closeEnhanceDialog(); });
 enhanceForm.addEventListener('submit', e => {
@@ -3559,6 +3629,641 @@ document.getElementById('enhance-all-btn').addEventListener('click', () => {
   if (!set.size) { showToast('No original pictures in the current view to enhance.'); return; }
   openEnhanceDialog([...set], 'batch');
 });
+
+// ── AI UPSCALER (optional) ────────────────────────────────────────────────────
+// Runs Real-ESRGAN networks (BSD-3-Clause, © Xintao Wang) on the GPU with
+// hand-written WebGL2 shaders — no libraries. Model weights are NOT part of
+// this page: they are downloaded on request from the site's own models/
+// folder (or picked from disk) and kept in the browser's storage.
+//
+// Supported networks (read from the official ncnn .param/.bin files):
+//  • compact (SRVGGNetCompact, realesr-animevideov3): 18 convs + PReLU,
+//    pixel-shuffle ×4 + nearest-upsampled input
+//  • rrdb (RRDBNet, e.g. realesrgan-x4plus-anime with 6 blocks): residual-in-
+//    residual dense blocks, then two nearest ×2 upsamples
+// Both produce ×4; the page resizes to the requested size on the GPU.
+function aiModule() {
+  // ── ncnn model files ──
+  function parseParam(text) {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines[0] !== '7767517') throw new Error('Not an ncnn .param file');
+    const layers = [];
+    for (const line of lines.slice(2)) {
+      const tok = line.split(/\s+/);
+      const [type, name] = tok;
+      const nIn = +tok[2], nOut = +tok[3];
+      const inputs = tok.slice(4, 4 + nIn), outputs = tok.slice(4 + nIn, 4 + nIn + nOut);
+      const params = {};
+      for (const kv of tok.slice(4 + nIn + nOut)) {
+        const [k, v] = kv.split('=');
+        const key = +k;
+        if (key <= -23300) params[-key - 23300] = v.split(',').slice(1).map(Number);
+        else params[key] = Number(v);
+      }
+      layers.push({ type, name, inputs, outputs, params });
+    }
+    return layers;
+  }
+
+  const HALF = new Float32Array(65536);
+  for (let h = 0; h < 65536; h++) {
+    const s = h & 0x8000 ? -1 : 1, e = (h >> 10) & 0x1f, m = h & 0x3ff;
+    HALF[h] = e === 0 ? s * m * Math.pow(2, -24) : e === 31 ? (m ? NaN : s * Infinity) : s * (1 + m / 1024) * Math.pow(2, e - 15);
+  }
+
+  function readWeights(layers, buffer) {
+    const dv = new DataView(buffer);
+    let off = 0;
+    const raw = n => { const a = new Float32Array(n); for (let i = 0; i < n; i++, off += 4) a[i] = dv.getFloat32(off, true); return a; };
+    const tagged = n => {
+      const tag = dv.getUint32(off, true); off += 4;
+      if (tag === 0x01306B47) {
+        const a = new Float32Array(n);
+        for (let i = 0; i < n; i++, off += 2) a[i] = HALF[dv.getUint16(off, true)];
+        off = (off + 3) & ~3;
+        return a;
+      }
+      if (tag === 0) return raw(n);
+      throw new Error('Unsupported weight storage in model file');
+    };
+    for (const L of layers) {
+      if (L.type === 'Convolution') {
+        L.weight = tagged(L.params[6]);
+        if (L.params[5]) L.bias = raw(L.params[0]);
+      } else if (L.type === 'PReLU') {
+        L.slope = raw(L.params[0] || 1);
+      }
+    }
+    if (off !== buffer.byteLength) throw new Error('Model .bin does not match its .param file');
+  }
+
+  // Turn the layer list into one of the two known network shapes.
+  function compile(paramText, binBuffer) {
+    const layers = parseParam(paramText);
+    readWeights(layers, binBuffer);
+    const convs = layers.filter(l => l.type === 'Convolution').map(l => ({
+      inC: l.params[6] / (l.params[0] * 9), outC: l.params[0], weight: l.weight, bias: l.bias || new Float32Array(l.params[0]),
+      leaky: l.params[9] === 2,                         // LeakyReLU(0.2) fused into the conv
+    }));
+    const types = new Set(layers.map(l => l.type));
+    if (types.has('PReLU') && types.has('PixelShuffle')) {
+      const prelus = layers.filter(l => l.type === 'PReLU').map(l => l.slope);
+      if (convs.length !== prelus.length + 1 || convs[convs.length - 1].outC !== 48) throw new Error('Unexpected compact network');
+      convs.forEach((c, i) => { if (i < prelus.length) c.prelu = prelus[i]; });
+      return { arch: 'compact', convs, scale: 4, pad: 16 };
+    }
+    if (types.has('Concat') && types.has('Eltwise')) {
+      const blocks = (convs.length - 6) / 15;
+      if (!Number.isInteger(blocks) || blocks < 1) throw new Error('Unexpected RRDB network');
+      return { arch: 'rrdb', convs, blocks, scale: 4, pad: 32 };
+    }
+    throw new Error('This model type is not supported');
+  }
+
+  // Plain-JS reference (slow; used for checks, not for real pictures).
+  function cpuForward(model, rgb, w, h) {
+    const conv = (x, C, c) => {
+      const out = new Float32Array(c.outC * w * h);
+      for (let o = 0; o < c.outC; o++) {
+        for (let y = 0; y < h; y++) for (let xx = 0; xx < w; xx++) {
+          let s = c.bias[o];
+          for (let i = 0; i < c.inC; i++) for (let ky = 0; ky < 3; ky++) for (let kx = 0; kx < 3; kx++) {
+            const yy = y + ky - 1, xq = xx + kx - 1;
+            if (yy < 0 || yy >= h || xq < 0 || xq >= w) continue;
+            s += c.weight[((o * c.inC + i) * 3 + ky) * 3 + kx] * x[(i * h + yy) * w + xq];
+          }
+          if (c.prelu) s = s > 0 ? s : s * c.prelu[o];
+          out[(o * h + y) * w + xx] = s;
+        }
+      }
+      return out;
+    };
+    if (model.arch !== 'compact') throw new Error('cpuForward: compact only');
+    let x = rgb;
+    for (const c of model.convs) x = conv(x, 0, c);
+    const W = w * 4, H = h * 4, out = new Float32Array(3 * W * H);
+    for (let c = 0; c < 3; c++) for (let Y = 0; Y < H; Y++) for (let X = 0; X < W; X++) {
+      const ch = c * 16 + (Y % 4) * 4 + (X % 4);
+      out[(c * H + Y) * W + X] = x[(ch * h + (Y >> 2)) * w + (X >> 2)] + rgb[(c * h + (Y >> 2)) * w + (X >> 2)];
+    }
+    return out;
+  }
+
+  // ── WebGL2 runner ──
+  const VS = `#version 300 es
+void main(){ vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }`;
+  const HEAD = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D; precision highp sampler2DArray;
+uniform highp sampler2D uW;
+vec4 W(int i){ return texelFetch(uW, ivec2(i & 4095, i >> 12), 0); }
+out vec4 outColor;
+`;
+  // One 3×3 convolution, 4 output channels (one texture layer) per pass.
+  // out = uA * act(conv) + uB * skip   (skip optional)
+  // Input channels may come from up to 5 textures (concatenated in order) —
+  // WebGL can't read and write one texture in the same pass.
+  const FS_CONV = HEAD + `
+uniform sampler2DArray uIn0, uIn1, uIn2, uIn3, uIn4; uniform int uL0, uL1, uL2, uL3, uL4; uniform int uInLayers;
+uniform int uWBase; uniform int uBiasBase; uniform int uSlopeBase; uniform int uOut; uniform int uAct;
+uniform ivec2 uSize;
+uniform sampler2DArray uSkip; uniform int uHasSkip; uniform float uA; uniform float uB;
+#define TAKE(S, N) for (int i = 0; i < N; i++, l++) { vec4 v = texelFetch(S, ivec3(q, i), 0); int k = wb + (l * 9 + t) * 4; \
+  acc += W(k) * v.x + W(k + 1) * v.y + W(k + 2) * v.z + W(k + 3) * v.w; }
+void main(){
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec4 acc = W(uBiasBase + uOut);
+  int wb = uWBase + uOut * uInLayers * 36;
+  for (int t = 0; t < 9; t++) {
+    ivec2 q = p + ivec2(t % 3 - 1, t / 3 - 1);
+    if (q.x < 0 || q.y < 0 || q.x >= uSize.x || q.y >= uSize.y) continue;   // zero padding
+    int l = 0;
+    TAKE(uIn0, uL0) TAKE(uIn1, uL1) TAKE(uIn2, uL2) TAKE(uIn3, uL3) TAKE(uIn4, uL4)
+  }
+  if (uAct == 1) acc = max(acc, 0.2 * acc);
+  else if (uAct == 2) acc = max(acc, 0.0) + W(uSlopeBase + uOut) * min(acc, 0.0);
+  if (uHasSkip == 1) acc = uA * acc + uB * texelFetch(uSkip, ivec3(p, uOut), 0);
+  outColor = acc;
+}`;
+  // Compact tail: pixel-shuffle ×4 of 48 channels + nearest-upsampled input.
+  const FS_SHUFFLE = HEAD + `
+uniform sampler2DArray uIn; uniform sampler2DArray uSrc;
+void main(){
+  ivec2 P = ivec2(gl_FragCoord.xy), p = P / 4, r = P - p * 4;
+  int sub = r.y * 4 + r.x;
+  vec3 c;
+  for (int k = 0; k < 3; k++) { int ch = k * 16 + sub; c[k] = texelFetch(uIn, ivec3(p, ch / 4), 0)[ch % 4]; }
+  outColor = vec4(c + texelFetch(uSrc, ivec3(p, 0), 0).rgb, 1.0);
+}`;
+  const FS_UP2 = HEAD + `
+uniform sampler2DArray uIn; uniform int uOut;
+void main(){ outColor = texelFetch(uIn, ivec3(ivec2(gl_FragCoord.xy) / 2, uOut), 0); }`;
+  // out = uA * a + uB * b (per layer); uB = 0 → copy.
+  const FS_MIX = HEAD + `
+uniform sampler2DArray uA0; uniform int uABase; uniform sampler2DArray uB0; uniform int uBBase;
+uniform float uA; uniform float uB; uniform int uOut;
+void main(){ ivec2 p = ivec2(gl_FragCoord.xy);
+  outColor = uA * texelFetch(uA0, ivec3(p, uABase + uOut), 0) + uB * texelFetch(uB0, ivec3(p, uBBase + uOut), 0); }`;
+  // ×4 result → requested size. Each target pixel averages its footprint
+  // (uN×uN bilinear samples), so downscaling is anti-aliased; at ×4 it is exact.
+  const FS_RESIZE = HEAD + `
+uniform sampler2DArray uIn; uniform ivec2 uOrigin; uniform vec2 uRegion4; uniform float uStep; uniform int uN; uniform vec2 uTex; uniform vec2 uLimit;
+void main(){
+  vec2 T = vec2(ivec2(gl_FragCoord.xy) + uOrigin) + 0.5;
+  vec2 c = T * uStep - uRegion4;
+  vec3 s = vec3(0.0);
+  for (int j = 0; j < uN; j++) for (int i = 0; i < uN; i++) {
+    vec2 q = clamp(c + ((vec2(i, j) + 0.5) / float(uN) - 0.5) * uStep, vec2(0.5), uLimit - 0.5);
+    s += texture(uIn, vec3(q / uTex, 0.0)).rgb;
+  }
+  outColor = vec4(clamp(s / float(uN * uN), 0.0, 1.0), 1.0);
+}`;
+
+  function createRunner() {
+    const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
+    const gl = canvas.getContext('webgl2', { antialias: false, depth: false, stencil: false, premultipliedAlpha: false, powerPreference: 'high-performance' });
+    if (!gl) throw new Error('WebGL2 is not available');
+    if (!gl.getExtension('EXT_color_buffer_float') && !gl.getExtension('EXT_color_buffer_half_float')) throw new Error('This GPU cannot render to float textures');
+    const maxLayers = gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS), maxSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+
+    const prog = fs => {
+      const mk = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+      const p = gl.createProgram();
+      gl.attachShader(p, mk(gl.VERTEX_SHADER, VS)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+      const loc = {}; const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < n; i++) { const u = gl.getActiveUniform(p, i); loc[u.name] = gl.getUniformLocation(p, u.name); }
+      return { p, loc };
+    };
+    const P = { conv: prog(FS_CONV), shuffle: prog(FS_SHUFFLE), up2: prog(FS_UP2), mix: prog(FS_MIX), resize: prog(FS_RESIZE) };
+    const fbo = gl.createFramebuffer();
+    gl.bindVertexArray(gl.createVertexArray());
+
+    const arr = (w, h, layers, linear) => {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, t);
+      gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA16F, w, h, layers);
+      const f = linear ? gl.LINEAR : gl.NEAREST;
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, f);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, f);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      return { t, w, h, layers };
+    };
+    const free = x => { if (x) gl.deleteTexture(x.t); };
+    const dummy = arr(1, 1, 1);
+
+    // Pack a model's weights into one RGBA32F texture (4096 texels wide).
+    function upload(model) {
+      let n = 0;
+      for (const c of model.convs) {
+        c.inL = Math.ceil(c.inC / 4); c.outL = Math.ceil(c.outC / 4);
+        c.wBase = n; n += c.outL * c.inL * 36;
+        c.bBase = n; n += c.outL;
+        if (c.prelu) { c.sBase = n; n += c.outL; }
+      }
+      const rows = Math.ceil(n / 4096), data = new Float32Array(rows * 4096 * 4);
+      for (const c of model.convs) {
+        for (let o = 0; o < c.outL; o++) for (let l = 0; l < c.inL; l++) for (let t = 0; t < 9; t++) for (let k = 0; k < 4; k++) {
+          const ti = ((c.wBase + (o * c.inL + l) * 36) + t * 4 + k) * 4, ic = l * 4 + k;
+          for (let q = 0; q < 4; q++) {
+            const oc = o * 4 + q;
+            data[ti + q] = oc < c.outC && ic < c.inC ? c.weight[(oc * c.inC + ic) * 9 + t] : 0;
+          }
+        }
+        for (let o = 0; o < c.outC; o++) data[(c.bBase + (o >> 2)) * 4 + (o & 3)] = c.bias[o];
+        if (c.prelu) for (let o = 0; o < c.outC; o++) data[(c.sBase + (o >> 2)) * 4 + (o & 3)] = c.prelu[o];
+      }
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, 4096, rows);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4096, rows, gl.RGBA, gl.FLOAT, data);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      model.wTex = t;
+    }
+
+    const target = (tex, layer, w, h) => {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, tex.t, 0, layer);
+      gl.viewport(0, 0, w, h);
+    };
+    const bindArr = (unit, loc, tex) => { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex.t); gl.uniform1i(loc, unit); };
+    const useW = (pr, model) => { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, model.wTex); gl.uniform1i(pr.loc.uW, 0); };
+
+    // conv: inputs = [[texture, layers], …] (concatenated) → dst layers [0, c.outL)
+    function conv(model, c, inputs, dst, w, h, act, skip, a, b) {
+      const pr = P.conv; gl.useProgram(pr.p); useW(pr, model);
+      let total = 0;
+      for (let i = 0; i < 5; i++) {
+        const [tex, n] = inputs[i] || [dummy, 0];
+        bindArr(1 + i, pr.loc['uIn' + i], tex); gl.uniform1i(pr.loc['uL' + i], n); total += n;
+      }
+      if (total !== c.inL) throw new Error('conv input mismatch');
+      bindArr(6, pr.loc.uSkip, skip || dummy);
+      gl.uniform1i(pr.loc.uInLayers, c.inL);
+      gl.uniform1i(pr.loc.uWBase, c.wBase); gl.uniform1i(pr.loc.uBiasBase, c.bBase); gl.uniform1i(pr.loc.uSlopeBase, c.sBase || 0);
+      gl.uniform1i(pr.loc.uAct, act); gl.uniform2i(pr.loc.uSize, w, h);
+      gl.uniform1i(pr.loc.uHasSkip, skip ? 1 : 0);
+      gl.uniform1f(pr.loc.uA, a ?? 1); gl.uniform1f(pr.loc.uB, b ?? 1);
+      for (let o = 0; o < c.outL; o++) {
+        target(dst, o, w, h);
+        gl.uniform1i(pr.loc.uOut, o);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      }
+    }
+    function mix(A, aBase, B, bBase, dst, dstBase, layers, w, h, a, b) {
+      const pr = P.mix; gl.useProgram(pr.p);
+      bindArr(1, pr.loc.uA0, A); bindArr(2, pr.loc.uB0, B);
+      gl.uniform1i(pr.loc.uABase, aBase); gl.uniform1i(pr.loc.uBBase, bBase); gl.uniform1f(pr.loc.uA, a); gl.uniform1f(pr.loc.uB, b);
+      for (let o = 0; o < layers; o++) { target(dst, dstBase + o, w, h); gl.uniform1i(pr.loc.uOut, o); gl.drawArrays(gl.TRIANGLES, 0, 3); }
+    }
+    function up2(src, dst, layers, w2, h2) {
+      const pr = P.up2; gl.useProgram(pr.p); bindArr(1, pr.loc.uIn, src);
+      for (let o = 0; o < layers; o++) { target(dst, o, w2, h2); gl.uniform1i(pr.loc.uOut, o); gl.drawArrays(gl.TRIANGLES, 0, 3); }
+    }
+
+    // Texture set for one tile size, reused across tiles.
+    let pool = null;
+    function texturesFor(model, w, h) {
+      const key = model.arch + ':' + w + 'x' + h;
+      if (pool && pool.key === key) return pool;
+      if (pool) Object.values(pool.t).flat().forEach(free);
+      const t = { input: arr(w, h, 1), out4: arr(w * 4, h * 4, 1, true) };
+      if (model.arch === 'compact') { t.a = arr(w, h, 16); t.b = arr(w, h, 16); }
+      else {
+        t.fea = arr(w, h, 16); t.rin = arr(w, h, 16); t.xa = arr(w, h, 16); t.xb = arr(w, h, 16);
+        t.g = [arr(w, h, 8), arr(w, h, 8), arr(w, h, 8), arr(w, h, 8)];
+        t.u1 = arr(w * 2, h * 2, 16); t.u1b = arr(w * 2, h * 2, 16);
+        t.u2 = arr(w * 4, h * 4, 16); t.u2b = arr(w * 4, h * 4, 16);
+      }
+      pool = { key, t };
+      return pool;
+    }
+
+    // Runs the network on one region: textures are TW×TH, the active area is
+    // w×h (the rest is ignored; convs zero-pad at the active border).
+    function forward(model, region, TW, TH, w, h) {
+      const { t } = texturesFor(model, TW, TH);
+      const data = new Float32Array(TW * TH * 4);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const si = (y * w + x) * 4, di = (y * TW + x) * 4;
+        data[di] = region[si] / 255; data[di + 1] = region[si + 1] / 255; data[di + 2] = region[si + 2] / 255;
+      }
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, t.input.t);
+      gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, TW, TH, 1, gl.RGBA, gl.FLOAT, data);
+      const C = model.convs;
+      if (model.arch === 'compact') {
+        let src = t.input, dst = t.a;
+        for (let i = 0; i < C.length - 1; i++) {
+          conv(model, C[i], [[src, C[i].inL]], dst, w, h, 2);
+          src = dst; dst = dst === t.a ? t.b : t.a;
+        }
+        conv(model, C[C.length - 1], [[src, 16]], dst, w, h, 0);
+        const pr = P.shuffle; gl.useProgram(pr.p);
+        bindArr(1, pr.loc.uIn, dst); bindArr(2, pr.loc.uSrc, t.input);
+        target(t.out4, 0, w * 4, h * 4); gl.drawArrays(gl.TRIANGLES, 0, 3);
+      } else {
+        let k = 0;
+        conv(model, C[k++], [[t.input, 1]], t.fea, w, h, 0);
+        let cur = t.fea, other = t.xa;
+        for (let b = 0; b < model.blocks; b++) {
+          const blockIn = cur;
+          for (let r = 0; r < 3; r++) {
+            const g = t.g;
+            for (let j = 0; j < 4; j++) {
+              const ins = [[cur, 16]]; for (let q = 0; q < j; q++) ins.push([g[q], 8]);
+              conv(model, C[k++], ins, g[j], w, h, 1);
+            }
+            const out = (cur === t.xa) ? t.xb : t.xa;
+            const tgt = out === blockIn ? t.rin : out;                       // never overwrite the block input
+            conv(model, C[k++], [[cur, 16], [g[0], 8], [g[1], 8], [g[2], 8], [g[3], 8]], tgt, w, h, 0, cur, 0.2, 1);
+            cur = tgt;
+          }
+          const res = [t.xa, t.xb, t.rin].find(x => x !== cur && x !== blockIn);
+          mix(cur, 0, blockIn, 0, res, 0, 16, w, h, 0.2, 1);                // 0.2·rdb + block input
+          cur = res;
+        }
+        const trunk = [t.xa, t.xb, t.rin].find(x => x !== cur);
+        conv(model, C[k++], [[cur, 16]], trunk, w, h, 0, t.fea, 1, 1);     // trunk + fea
+        up2(trunk, t.u1, 16, w * 2, h * 2);
+        conv(model, C[k++], [[t.u1, 16]], t.u1b, w * 2, h * 2, 1);
+        up2(t.u1b, t.u2, 16, w * 4, h * 4);
+        conv(model, C[k++], [[t.u2, 16]], t.u2b, w * 4, h * 4, 1);
+        conv(model, C[k++], [[t.u2b, 16]], t.u2, w * 4, h * 4, 1);
+        conv(model, C[k++], [[t.u2, 16]], t.out4, w * 4, h * 4, 0);
+      }
+      return t.out4;
+    }
+
+    // Reads target pixels [tx0,tx1)×[ty0,ty1) of a picture scaled by s from
+    // the ×4 result of a region whose top-left source pixel is (rx0, ry0).
+    function resizeRead(out4, rx0, ry0, rw, rh, s, tx0, ty0, tw, th) {
+      const pr = P.resize; gl.useProgram(pr.p); bindArr(1, pr.loc.uIn, out4);
+      const step = 4 / s;
+      gl.uniform2i(pr.loc.uOrigin, tx0, ty0); gl.uniform2f(pr.loc.uRegion4, rx0 * 4, ry0 * 4);
+      gl.uniform1f(pr.loc.uStep, step); gl.uniform1i(pr.loc.uN, Math.max(1, Math.ceil(step - 1e-6)));
+      gl.uniform2f(pr.loc.uTex, out4.w, out4.h); gl.uniform2f(pr.loc.uLimit, rw * 4, rh * 4);
+      if (!resizeRead.rb || resizeRead.w < tw || resizeRead.h < th) {
+        if (resizeRead.rb) gl.deleteTexture(resizeRead.rb);
+        resizeRead.rb = gl.createTexture(); resizeRead.w = Math.max(tw, 64); resizeRead.h = Math.max(th, 64);
+        gl.bindTexture(gl.TEXTURE_2D, resizeRead.rb);
+        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, resizeRead.w, resizeRead.h);
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, resizeRead.rb, 0);
+      gl.viewport(0, 0, tw, th);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      const px = new Uint8Array(tw * th * 4);
+      gl.readPixels(0, 0, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      return px;
+    }
+
+    // Whole picture, tile by tile. Returns RGBA (alpha 255) at W×H.
+    async function run(model, rgba, w, h, W, H, onProgress, isCancelled) {
+      if (!model.wTex) upload(model);
+      const s = W / w;
+      const core = model.arch === 'compact' ? 256 : 96, pad = model.pad;
+      const out = new Uint8ClampedArray(W * H * 4);
+      const tilesX = Math.ceil(w / core), tilesY = Math.ceil(h / core), total = tilesX * tilesY;
+      let done = 0;
+      for (let ty = 0; ty < tilesY; ty++) {
+        for (let tx = 0; tx < tilesX; tx++) {
+          if (isCancelled && isCancelled()) throw new Error('cancelled');
+          const x0 = tx * core, y0 = ty * core, x1 = Math.min(w, x0 + core), y1 = Math.min(h, y0 + core);
+          const rx0 = Math.max(0, x0 - pad), ry0 = Math.max(0, y0 - pad), rx1 = Math.min(w, x1 + pad), ry1 = Math.min(h, y1 + pad);
+          const rw = rx1 - rx0, rh = ry1 - ry0;
+          // Same texture size for every tile (reused); smaller edge tiles use part of it.
+          const TW = Math.min(w, core + 2 * pad), TH = Math.min(h, core + 2 * pad);
+          const region = new Uint8ClampedArray(rw * rh * 4);
+          for (let y = 0; y < rh; y++) region.set(rgba.subarray(((ry0 + y) * w + rx0) * 4, ((ry0 + y) * w + rx1) * 4), y * rw * 4);
+          const out4 = forward(model, region, TW, TH, rw, rh);
+          const X0 = Math.round(x0 * s), X1 = x1 === w ? W : Math.round(x1 * s);
+          const Y0 = Math.round(y0 * s), Y1 = y1 === h ? H : Math.round(y1 * s);
+          const px = resizeRead(out4, rx0, ry0, rw, rh, s, X0, Y0, X1 - X0, Y1 - Y0);
+          for (let y = 0; y < Y1 - Y0; y++) out.set(px.subarray(y * (X1 - X0) * 4, (y + 1) * (X1 - X0) * 4), ((Y0 + y) * W + X0) * 4);
+          done++;
+          if (onProgress) onProgress(done / total);
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+      return out;
+    }
+
+    return { run, forward, gl, maxLayers, maxSize, info: gl.getParameter(gl.VERSION) };
+  }
+
+  return { parseParam, compile, cpuForward, createRunner };
+}
+
+// ── AI ENGINE (optional) ──────────────────────────────────────────────────────
+// Model files live next to this page in models/ (published with the site) and
+// are only fetched when the user clicks Download; they are then kept in
+// IndexedDB so everything works offline. They can also be picked from disk.
+const AI_MODELS = [
+  { id: 'animevideov3', title: 'AI · Fast', detail: 'Real-ESRGAN anime (realesr-animevideov3) · 1.2 MB', file: 'models/realesr-animevideov3-x4', bytes: 1250445 },
+  { id: 'anime6b', title: 'AI · Best', detail: 'Real-ESRGAN anime 6B (realesrgan-x4plus-anime) · 9 MB · slower', file: 'models/realesrgan-x4plus-anime', bytes: 8973790 },
+];
+const AI_PREVIEW_PAD = 24;
+const aiState = { stored: new Set(), compiled: new Map(), runner: null, gpuError: null, busy: new Set(), progress: {} };
+
+function isAiEngine(st) { return !!st && !!st.engine && st.engine !== 'builtin'; }
+function aiReady(id) { return aiState.stored.has(id) && !aiState.gpuError; }
+
+function modelStoreTx(mode, fn) {
+  return openDb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(MODEL_STORE, mode);
+    let result;
+    const req = fn(tx.objectStore(MODEL_STORE));
+    if (req) req.onsuccess = () => { result = req.result; };
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('aborted'));
+  }));
+}
+
+function aiRunner() {
+  if (aiState.runner) return aiState.runner;
+  if (aiState.gpuError) throw new Error(aiState.gpuError);
+  try { aiState.runner = aiModule().createRunner(); }
+  catch (err) { aiState.gpuError = err.message || String(err); throw err; }
+  return aiState.runner;
+}
+
+async function aiGetModel(id) {
+  if (aiState.compiled.has(id)) return aiState.compiled.get(id);
+  const rec = await modelStoreTx('readonly', st => st.get(id));
+  if (!rec) throw new Error('The AI model is not downloaded.');
+  const model = aiModule().compile(rec.param, rec.bin);
+  aiState.compiled.set(id, model);
+  return model;
+}
+
+async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled) {
+  const model = await aiGetModel(id);
+  return aiRunner().run(model, rgba, w, h, W, H, onProgress, isCancelled);
+}
+
+// Which supported model a parsed file pair is.
+function aiIdentify(model) {
+  if (model.arch === 'compact') return 'animevideov3';
+  if (model.arch === 'rrdb' && model.blocks === 6) return 'anime6b';
+  return null;
+}
+
+async function aiSaveModel(id, param, bin, source) {
+  aiModule().compile(param, bin);                                     // validates the files
+  await modelStoreTx('readwrite', st => st.put({ id, param, bin, bytes: param.length + bin.byteLength, source, savedAt: Date.now() }));
+  aiState.compiled.delete(id);
+  aiState.stored.add(id);
+}
+
+async function aiDownload(id) {
+  const m = AI_MODELS.find(x => x.id === id);
+  if (location.protocol === 'file:') throw new Error('Downloading needs the page opened from the website. Use "Load model files…" instead.');
+  aiState.busy.add(id); aiRefreshUi();
+  try {
+    const param = await fetch(m.file + '.param').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); });
+    const res = await fetch(m.file + '.bin');
+    if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+    const total = +res.headers.get('content-length') || m.bytes;
+    const reader = res.body.getReader(), chunks = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value); got += value.length;
+      aiState.progress[id] = Math.min(99, Math.round(got / total * 100));
+      aiRefreshRow(id);
+    }
+    const bin = new Uint8Array(got);
+    let o = 0; for (const c of chunks) { bin.set(c, o); o += c.length; }
+    await aiSaveModel(id, param, bin.buffer, 'download');
+    showToast(m.title + ' model saved — works offline now ✨');
+  } finally {
+    aiState.busy.delete(id); delete aiState.progress[id];
+    aiRefreshUi();
+  }
+}
+
+async function aiRemove(id) {
+  await modelStoreTx('readwrite', st => st.delete(id));
+  aiState.stored.delete(id); aiState.compiled.delete(id);
+  const f = enhanceForm.elements;
+  if (f.engine.value === id) { f.engine.value = 'builtin'; updateEnhanceSummary(); }
+  aiRefreshUi();
+}
+
+async function aiLoadFiles(files) {
+  const byBase = new Map();
+  for (const file of files) {
+    const m = /^(.*)\.(param|bin)$/i.exec(file.name);
+    if (!m) continue;
+    const e = byBase.get(m[1]) || {}; e[m[2].toLowerCase()] = file; byBase.set(m[1], e);
+  }
+  let added = 0;
+  for (const [base, pair] of byBase) {
+    if (!pair.param || !pair.bin) { showToast('Pick both ' + base + '.param and ' + base + '.bin.'); continue; }
+    try {
+      const param = await pair.param.text(), bin = await pair.bin.arrayBuffer();
+      const id = aiIdentify(aiModule().compile(param, bin));
+      if (!id) { showToast(base + ' is not one of the supported models.'); continue; }
+      await aiSaveModel(id, param, bin, 'file'); added++;
+    } catch (err) { showToast('Could not use ' + base + ': ' + err.message); }
+  }
+  if (added) showToast('Loaded ' + added + ' AI model' + (added === 1 ? '' : 's') + ' ✨');
+  aiRefreshUi();
+}
+
+function aiRefreshRow(id) {
+  const row = document.querySelector('.ai-row[data-id="' + id + '"]');
+  if (!row) return;
+  const status = row.querySelector('.ai-status');
+  const ready = aiState.stored.has(id), busy = aiState.busy.has(id);
+  status.textContent = busy ? 'Downloading ' + (aiState.progress[id] || 0) + '%…' : ready ? 'Ready · offline' : 'Not downloaded';
+  status.classList.toggle('ready', ready && !busy);
+  row.querySelector('.ai-dl').hidden = ready;
+  row.querySelector('.ai-dl').disabled = busy || !!aiState.gpuError;
+  row.querySelector('.ai-rm').hidden = !ready;
+}
+
+async function aiRefreshUi() {
+  try {
+    const keys = await modelStoreTx('readonly', st => st.getAllKeys());
+    aiState.stored = new Set(keys || []);
+  } catch { /* storage unavailable: no models */ }
+  if (!aiState.runner && !aiState.gpuError) { try { aiRunner(); } catch { /* gpuError set */ } }
+  const box = document.getElementById('ai-models');
+  if (!box.children.length) {
+    for (const m of AI_MODELS) {
+      const row = document.createElement('div');
+      row.className = 'ai-row'; row.dataset.id = m.id;
+      row.innerHTML = '<span class="ai-name"></span><span class="ai-status"></span>' +
+        '<button type="button" class="ai-dl">Download</button><button type="button" class="ai-rm">Remove</button>';
+      row.querySelector('.ai-name').innerHTML = '<b></b><small></small>';
+      row.querySelector('.ai-name b').textContent = m.title;
+      row.querySelector('.ai-name small').textContent = m.detail;
+      row.querySelector('.ai-dl').addEventListener('click', () => aiDownload(m.id).catch(err => showToast('Download failed: ' + err.message)));
+      row.querySelector('.ai-rm').addEventListener('click', () => aiRemove(m.id));
+      box.appendChild(row);
+    }
+  }
+  AI_MODELS.forEach(m => aiRefreshRow(m.id));
+  for (const m of AI_MODELS) {
+    const radio = enhanceForm.querySelector('input[name=engine][value="' + m.id + '"]');
+    radio.disabled = !aiReady(m.id);
+  }
+  document.getElementById('ai-load-files').disabled = !!aiState.gpuError;
+  const note = document.getElementById('ai-note');
+  note.textContent = '';
+  if (aiState.gpuError) note.textContent = 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). The built-in engine still works.';
+  else {
+    note.append('Optional. Models run on your GPU and are stored in this browser. Real-ESRGAN models by Xintao Wang, ');
+    const a = document.createElement('a'); a.href = 'models/LICENSE-Real-ESRGAN.txt'; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'BSD-3-Clause';
+    note.append(a, '.');
+  }
+}
+
+document.getElementById('ai-load-files').addEventListener('click', () => document.getElementById('ai-file-input').click());
+document.getElementById('ai-file-input').addEventListener('change', e => { aiLoadFiles([...e.target.files]); e.target.value = ''; });
+
+// Picture → AI ×4 → requested size (GPU), then optional built-in cleanup.
+async function aiUpscale(px, W, H, settings, onProgress) {
+  const { rgba, w, h } = px;
+  const post = settings.preset !== 'none';
+  let cancelled = false;
+  currentJob = { cancel() { cancelled = true; } };
+  let out;
+  try {
+    onProgress(0.03, 'Loading AI model…');
+    out = await aiRun(settings.engine, rgba, w, h, W, H,
+      f => onProgress(0.05 + f * (post ? 0.55 : 0.85), 'AI upscaling…'), () => cancelled);
+  } catch (err) {
+    if (cancelled) throw new CancelledError('Cancelled');
+    throw err;
+  } finally { currentJob = null; }
+  // Transparency: the networks are RGB-only, so alpha is scaled separately.
+  let hasAlpha = false;
+  for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) { hasAlpha = true; break; }
+  if (hasAlpha) {
+    for (let y = 0; y < H; y++) {
+      const sy = Math.min(h - 1, Math.max(0, (y + 0.5) * h / H - 0.5)), y0 = Math.floor(sy), y1 = Math.min(h - 1, y0 + 1), fy = sy - y0;
+      for (let x = 0; x < W; x++) {
+        const sx = Math.min(w - 1, Math.max(0, (x + 0.5) * w / W - 0.5)), x0 = Math.floor(sx), x1 = Math.min(w - 1, x0 + 1), fx = sx - x0;
+        const a = (rgba[(y0 * w + x0) * 4 + 3] * (1 - fx) + rgba[(y0 * w + x1) * 4 + 3] * fx) * (1 - fy) +
+                  (rgba[(y1 * w + x0) * 4 + 3] * (1 - fx) + rgba[(y1 * w + x1) * 4 + 3] * fx) * fy;
+        const i = (y * W + x) * 4;
+        if (settings.format === 'jpeg') { const t = a / 255; for (let c = 0; c < 3; c++) out[i + c] = out[i + c] * t + 255 * (1 - t); }
+        else out[i + 3] = a;
+      }
+    }
+  }
+  if (!post) return out;
+  return runUpscaleJob(out, W, H, {
+    width: W, height: H, preset: settings.preset, tuning: engineTuning(settings),
+    extras: engineExtras(settings), jpegSource: false, flattenWhite: settings.format === 'jpeg',
+  }, (f, label) => onProgress(0.62 + f * 0.28, 'After AI: ' + label));
+}
 
 // ── COLLAPSIBLE MENU ──────────────────────────────────────────────────────────
 document.getElementById('controls-toggle').addEventListener('click', () => {
