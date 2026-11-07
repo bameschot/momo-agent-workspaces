@@ -1943,7 +1943,8 @@ sortDateBtn.addEventListener('click', () => {
 //                  inside flat colour areas, stops at real outlines
 //      Flatten   – (Lumity preset) iterated joint bilateral filter on Y/Cb/Cr:
 //                  pulls noisy single-colour areas to one flat colour while
-//                  keeping colour boundaries, shading steps and gradients
+//                  keeping colour boundaries, shading steps and gradients;
+//                  pixels on/next to lines are left alone so lines stay intact
 //   3. Chroma    – joint guided filter steered by the cleaned luma, so colour
 //                  edges snap back onto the line art (fixes JPEG colour bleed)
 //   4. Upscale   – edge-adaptive Lanczos-2 (in the spirit of FSR1 "EASU"):
@@ -1951,6 +1952,9 @@ sortDateBtn.addEventListener('click', () => {
 //                  clamped to the nearest source pixels (no ringing)
 //   5. Refine    – coherence shock filter: steepens soft upscaled edges back
 //                  into crisp lines, then a halo-free contrast-adaptive sharpen
+//      Lines     – (Lumity preset) darkens thin dark strokes a little, snaps
+//                  colour to the luma edges and boosts line colour saturation,
+//                  so outlines stay accentuated and sharp in colour
 //   6. Finish    – back to RGB with ±½-level dither so gradients don't band
 function upscalerModule() {
   const PRESETS = {
@@ -1959,7 +1963,8 @@ function upscalerModule() {
     strong:   { deblock: 16, r: 2, eps: 260, chromaR: 3, chromaEps: 50,  shock: 3, dt: 0.30, sharpen: 0.50 },
     // Cartoon / cel-shaded art: flattens noisy single-colour areas hard.
     lumity:   { deblock: 12, r: 1, eps: 60,  chromaR: 3, chromaEps: 60,  shock: 2, dt: 0.25, sharpen: 0.35,
-                flatten: { r: 3, sigma: 9, iterations: 3 }, finalFlatten: 6 },
+                flatten: { r: 3, sigma: 9, iterations: 3, keepEdges: 22 }, finalFlatten: 6,
+                lines: { darken: 0.35, saturate: 0.3, snap: 18 } },
   };
 
   // Lanczos-2 weights looked up by squared distance (d² in [0, 4)).
@@ -2020,8 +2025,29 @@ function upscalerModule() {
   // step clearly larger than `sigma` is left sharp. Repeating it lets flat
   // areas converge to a single colour; smooth gradients survive because
   // neighbours on a gentle slope are still "close in colour".
-  function flatten(Y, Cb, Cr, w, h, r, sigma, iterations) {
+  function flatten(Y, Cb, Cr, w, h, r, sigma, iterations, keepEdges) {
     const n = w * h;
+    // Line guard: anything on or right next to a strong luma/colour step (in
+    // the 3×3 range) keeps its value, so thin lines and their anti-aliased
+    // edges are never averaged into the fill around them.
+    const guard = new Uint8Array(n);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let ylo = 1e9, yhi = -1e9, blo = 1e9, bhi = -1e9, clo = 1e9, chi = -1e9;
+        for (let dy = -1; dy <= 1; dy++) {
+          const yy = y + dy < 0 ? 0 : y + dy >= h ? h - 1 : y + dy;
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx < 0 ? 0 : x + dx >= w ? w - 1 : x + dx;
+            const j = yy * w + xx;
+            const a = Y[j], b = Cb[j], c = Cr[j];
+            if (a < ylo) ylo = a; if (a > yhi) yhi = a;
+            if (b < blo) blo = b; if (b > bhi) bhi = b;
+            if (c < clo) clo = c; if (c > chi) chi = c;
+          }
+        }
+        if (yhi - ylo > keepEdges || bhi - blo > keepEdges * 0.8 || chi - clo > keepEdges * 0.8) guard[y * w + x] = 1;
+      }
+    }
     const taps = [];
     for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
       const d2 = dx * dx + dy * dy;
@@ -2037,23 +2063,102 @@ function upscalerModule() {
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
           const i = y * w + x, yc = y0[i], bc = b0[i], cc = c0[i];
+          if (guard[i]) { y1[i] = yc; b1[i] = bc; c1[i] = cc; continue; }
           let sw = 0, sy = 0, sb = 0, sc = 0;
           for (let t = 0; t < taps.length; t += 3) {
             const xx = x + taps[t], yy = y + taps[t + 1];
             if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
             const j = yy * w + xx;
+            if (guard[j]) continue;                       // don't pull line colour into fills
             const dyv = y0[j] - yc, dbv = b0[j] - bc, dcv = c0[j] - cc;
             const k = ((dyv * dyv + 0.5 * (dbv * dbv + dcv * dcv)) / rangeStep) | 0;
             if (k >= RANGE_LUT_MAX) continue;
             const wt = taps[t + 2] * rangeLut[k];
             sw += wt; sy += wt * y0[j]; sb += wt * b0[j]; sc += wt * c0[j];
           }
-          y1[i] = sy / sw; b1[i] = sb / sw; c1[i] = sc / sw;
+          if (sw > 0) { y1[i] = sy / sw; b1[i] = sb / sw; c1[i] = sc / sw; }
+          else { y1[i] = yc; b1[i] = bc; c1[i] = cc; }
         }
       }
       [y0, y1] = [y1, y0]; [b0, b1] = [b1, b0]; [c0, c1] = [c1, c0];
     }
     if (y0 !== Y) { Y.set(y0); Cb.set(b0); Cr.set(c0); }
+  }
+
+  // Separable running max / min with radius r (for morphology).
+  function maxMin(src, W, H, r, isMax) {
+    const tmp = new Float32Array(W * H), out = new Float32Array(W * H);
+    const pick = isMax ? Math.max : Math.min;
+    for (let y = 0; y < H; y++) {
+      const row = y * W;
+      for (let x = 0; x < W; x++) {
+        let v = src[row + x];
+        for (let d = 1; d <= r; d++) {
+          if (x - d >= 0) v = pick(v, src[row + x - d]);
+          if (x + d < W) v = pick(v, src[row + x + d]);
+        }
+        tmp[row + x] = v;
+      }
+    }
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        let v = tmp[y * W + x];
+        for (let d = 1; d <= r; d++) {
+          if (y - d >= 0) v = pick(v, tmp[(y - d) * W + x]);
+          if (y + d < H) v = pick(v, tmp[(y + d) * W + x]);
+        }
+        out[y * W + x] = v;
+      }
+    }
+    return out;
+  }
+
+  // Line accentuation on the upscaled result.
+  //  • Darken: black top-hat (closing − Y) is large exactly on thin dark
+  //    strokes; subtracting part of it makes outlines and hatching bolder
+  //    without touching fills.
+  //  • Saturate: line pixels get a bit more colour, so coloured outlines
+  //    (e.g. mauve on pink) don't wash out to grey.
+  //  • Snap: near an edge, each pixel takes the colour of the dark or the light
+  //    side of the edge according to where its (sharp) luma sits between them,
+  //    so colour transitions are as crisp as the luma lines.
+  function accentuateLines(Yo, Cbo, Cro, W, H, scale, L) {
+    const r = Math.max(2, Math.round(scale));
+    const closing = maxMin(maxMin(Yo, W, H, r, true), W, H, r, false);
+    const N = W * H, hat = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const t = closing[i] - Yo[i];
+      hat[i] = t > 0 ? t : 0;
+      const v = Yo[i] - L.darken * hat[i];
+      Yo[i] = v < 0 ? 0 : v;
+    }
+    const cb = Cbo.slice(), cr = Cro.slice(), R = 2;
+    for (let y = R; y < H - R; y++) {
+      for (let x = R; x < W - R; x++) {
+        const i = y * W + x;
+        let iLo = i, iHi = i;
+        for (let dy = -R; dy <= R; dy++) {
+          const row = i + dy * W;
+          for (let dx = -R; dx <= R; dx++) {
+            const j = row + dx;
+            if (Yo[j] < Yo[iLo]) iLo = j;
+            if (Yo[j] > Yo[iHi]) iHi = j;
+          }
+        }
+        const range = Yo[iHi] - Yo[iLo];
+        let b = cb[i], c = cr[i];
+        if (range > L.snap) {
+          let t = (Yo[i] - Yo[iLo]) / range;
+          t = (t - 0.5) * 2.2 + 0.5;                    // steepen toward one side
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          b = cb[iLo] * (1 - t) + cb[iHi] * t;
+          c = cr[iLo] * (1 - t) + cr[iHi] * t;
+        }
+        const boost = 1 + L.saturate * Math.min(1, hat[i] / 30);
+        Cbo[i] = 128 + (b - 128) * boost;
+        Cro[i] = 128 + (c - 128) * boost;
+      }
+    }
   }
 
   // Final flat-area cleanup on the upscaled luma: where the 3×3 range is
@@ -2318,7 +2423,7 @@ function upscalerModule() {
     }
     if (P.flatten) {
       onProgress(0.04, 'Flattening colour areas…');
-      flatten(Y, Cb, Cr, w, h, P.flatten.r, P.flatten.sigma, P.flatten.iterations);
+      flatten(Y, Cb, Cr, w, h, P.flatten.r, P.flatten.sigma, P.flatten.iterations, P.flatten.keepEdges);
     }
     const Yc = guidedFilter(Y, Y, w, h, P.r, P.eps);
     onProgress(0.12, 'Snapping colours to the line art…');
@@ -2343,6 +2448,10 @@ function upscalerModule() {
     onProgress(0.9, 'Sharpening lines…');
     sharpen(Yo, W, H, P.sharpen);
     if (P.finalFlatten) flattenFlatAreas(Yo, W, H, P.finalFlatten);
+    if (P.lines) {
+      onProgress(0.93, 'Accentuating lines…');
+      accentuateLines(Yo, Cbo, Cro, W, H, scale, P.lines);
+    }
 
     onProgress(0.95, 'Finishing…');
     const Ao = A ? bilinearAlpha(A, w, h, W, H) : null;
@@ -2381,7 +2490,7 @@ const PRESET_HINTS = {
   soft: 'Light cleanup. Keeps fine texture and thin lines; leaves some JPEG noise.',
   balanced: 'Removes most JPEG noise and colour bleed; crisp lines. Best for most fan art.',
   strong: 'Heavy cleanup for very blocky pictures. Flattens texture; can thicken lines.',
-  lumity: 'For cartoon art: flattens noisy single-colour areas into clean flat colour, keeps outlines and shading steps. Very faint details (e.g. light hatching) may be smoothed. A bit slower.',
+  lumity: 'For cartoon art: flattens noisy single-colour areas into clean flat colour and keeps outlines bold and sharp in colour. Slowest preset.',
 };
 
 let upscaleWorker = null;
@@ -2648,7 +2757,7 @@ function updateEnhanceSummary() {
     const todo = st.skipExisting ? enhanceTargets.length - existing : enhanceTargets.length;
     summary.textContent = todo + ' picture' + (todo === 1 ? '' : 's') + ' to enhance' +
       (existing ? (st.skipExisting ? ' · ' + existing + ' skipped (already upscaled)' : ' · ' + existing + ' upscaled copies will be replaced') : '') +
-      ' · roughly ' + (st.preset === 'lumity' ? '2–5' : '1–3') + ' s each on a laptop, longer on phones.';
+      ' · roughly ' + (st.preset === 'lumity' ? '2–7' : '1–3') + ' s each on a laptop, longer on phones.';
   }
 }
 
