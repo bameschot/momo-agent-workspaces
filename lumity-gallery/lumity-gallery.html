@@ -279,6 +279,7 @@
     .fav-btn.on { color: #ff6fa8; }
     .fav-btn:hover { transform: scale(1.12); }
     @media (hover: none) { .fav-btn { opacity: 0.75; } }
+    .kind-btn[aria-pressed="true"],
     #fav-filter-btn[aria-pressed="true"] { background: var(--glow); color: #fff; border-color: var(--accent); }
     #lb-fav.on { color: #ff6fa8; }
 
@@ -693,14 +694,6 @@
     </select>
   </label>
   <label>
-    Show
-    <select id="kind-select">
-      <option value="all" selected>All</option>
-      <option value="original">Originals</option>
-      <option value="upscaled">Upscaled ✨</option>
-    </select>
-  </label>
-  <label>
     Fit
     <select id="fit-select">
       <option value="cover">Cropped</option>
@@ -723,6 +716,8 @@
   <button id="shuffle-btn" class="ss-btn">🔀 Shuffle</button>
   <button id="enhance-all-btn" class="ss-btn">✨ Enhance all</button>
   <button id="fav-filter-btn" class="ss-btn" aria-pressed="false" title="Show only favourites">♡ Favourites</button>
+  <button id="upscaled-filter-btn" class="ss-btn kind-btn" data-kind="upscaled" aria-pressed="false" title="Show only upscaled copies">✨ Upscaled</button>
+  <button id="original-filter-btn" class="ss-btn kind-btn" data-kind="original" aria-pressed="false" title="Show only originals">🖼 Originals</button>
   <button id="folder-btn">📁 Open Folder</button>
   <input type="file" id="folder-file-input" webkitdirectory multiple />
   <button id="json-btn">📥 Load JSON</button>
@@ -1504,7 +1499,10 @@ const searchInput = document.getElementById('search');
 
 // Images that failed to decode are flagged `broken` and left out of every
 // later filter, so they don't keep reappearing and failing again.
-const kindSelect = document.getElementById('kind-select');
+// Kind filter: 'all', 'upscaled' or 'original' — set by the ✨ Upscaled and
+// 🖼 Originals toggle buttons (at most one is on; both off = everything).
+let kindFilter = 'all';
+const kindButtons = [...document.querySelectorAll('.kind-btn')];
 
 const favFilterBtn = document.getElementById('fav-filter-btn');
 let favOnly = false;
@@ -1512,7 +1510,7 @@ let favOnly = false;
 function passesFilter(img) {
   if (img.broken) return false;
   if (favOnly && !img.favorite) return false;
-  const kind = kindSelect.value;
+  const kind = kindFilter;
   if (kind === 'original' && img.upscale) return false;
   if (kind === 'upscaled' && !img.upscale) return false;
   return img.name.toLowerCase().includes(searchInput.value.toLowerCase());
@@ -1522,10 +1520,12 @@ function applyFilter() {
   filtered = ALL_IMAGES.filter(passesFilter);
 }
 
-kindSelect.addEventListener('change', () => {
+kindButtons.forEach(btn => btn.addEventListener('click', () => {
+  kindFilter = kindFilter === btn.dataset.kind ? 'all' : btn.dataset.kind;
+  kindButtons.forEach(b => b.setAttribute('aria-pressed', b.dataset.kind === kindFilter ? 'true' : 'false'));
   applyFilter();
   rerender();
-});
+}));
 
 searchInput.addEventListener('input', () => {
   applyFilter();
@@ -1567,11 +1567,11 @@ function updateEmptyState() {
     emptyTitle.textContent = 'No favourites yet';
     emptyText.textContent = 'Tap ♡ on a picture (or press F in the full-screen view) to add it to your favourites.';
     emptyActions.hidden = true;
-  } else if (usable && (searchInput.value || kindSelect.value !== 'all' || favOnly)) {
+  } else if (usable && (searchInput.value || kindFilter !== 'all' || favOnly)) {
     emptyTitle.textContent = 'No matches';
-    emptyText.textContent = kindSelect.value === 'upscaled' && !searchInput.value && !favOnly
+    emptyText.textContent = kindFilter === 'upscaled' && !searchInput.value && !favOnly
       ? 'No upscaled pictures yet. Open a picture and press ✨ Enhance, or use ✨ Enhance all.'
-      : 'No images match the current search or "Show" filter.';
+      : 'No images match the current search or filters.';
     emptyActions.hidden = true;
   } else if (ALL_IMAGES.length && !usable) {
     emptyTitle.textContent = 'Nothing could be displayed';
