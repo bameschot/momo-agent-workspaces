@@ -540,6 +540,11 @@
       background: rgba(13,0,16,0.45); border-radius: 6px; color: var(--accent2); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
     .tile-spinner[hidden] { display: none; }
     .tile-spinner .progress-spinner { width: 28px; height: 28px; border-width: 3px; }
+    /* While the AI engine works, avoid anything that makes the browser redraw
+       continuously (spinning animations, backdrop blur): every redraw competes
+       with the AI for the GPU. The percentage text still shows progress. */
+    body.gpu-busy .progress-spinner { animation: none; }
+    body.gpu-busy #progress-overlay, body.gpu-busy #enhance-dialog, body.gpu-busy #lightbox { backdrop-filter: none; }
     #preview-status { color: var(--text-muted); font-size: 0.75rem; min-height: 1em; }
     @media (max-width: 420px) {
       .preview-body { grid-template-columns: 1fr 1fr; }
@@ -4187,14 +4192,18 @@ async function aiGetModel(id) {
   return model;
 }
 
+let aiActive = 0;
 async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled) {
   const model = await aiGetModel(id);
   const runner = aiRunner();
+  aiActive++; document.body.classList.add('gpu-busy');
   try {
     return await runner.run(model, rgba, w, h, W, H, onProgress, isCancelled);
   } catch (err) {
     if (runner.lost()) aiState.runner = null;      // GPU reset: start fresh next time
     throw err;
+  } finally {
+    if (--aiActive === 0) document.body.classList.remove('gpu-busy');
   }
 }
 
