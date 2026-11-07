@@ -535,6 +535,11 @@
     .preview-body canvas { width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); display: block; }
     #preview-overview { cursor: crosshair; touch-action: none; }
     #preview-after.stale { opacity: 0.55; }
+    .tile-wrap { position: relative; }
+    .tile-spinner { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 0.35rem; align-items: center; justify-content: center;
+      background: rgba(13,0,16,0.45); border-radius: 6px; color: var(--accent2); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+    .tile-spinner[hidden] { display: none; }
+    .tile-spinner .progress-spinner { width: 28px; height: 28px; border-width: 3px; }
     #preview-status { color: var(--text-muted); font-size: 0.75rem; min-height: 1em; }
     @media (max-width: 420px) {
       .preview-body { grid-template-columns: 1fr 1fr; }
@@ -833,7 +838,8 @@
       <div class="preview-body">
         <figure class="overview"><canvas id="preview-overview" width="160" height="160" aria-label="Tap to choose the preview area"></canvas><figcaption>Tap to choose area</figcaption></figure>
         <figure><canvas id="preview-before" width="200" height="200"></canvas><figcaption>Before</figcaption></figure>
-        <figure><canvas id="preview-after" width="200" height="200"></canvas><figcaption>After</figcaption></figure>
+        <figure><div class="tile-wrap"><canvas id="preview-after" width="200" height="200"></canvas>
+          <div class="tile-spinner" id="preview-spinner" hidden><div class="progress-spinner"></div><span id="preview-pct"></span></div></div><figcaption>After</figcaption></figure>
       </div>
       <div id="preview-status" aria-live="polite"></div>
     </div>
@@ -3507,8 +3513,9 @@ previewEls.next.addEventListener('click', () => {
   loadPreviewTarget();
 });
 
-function schedulePreview(delay = 180) {
+function schedulePreview(delay) {
   if (!enhanceDialog.classList.contains('open') || !preview.pixels) return;
+  if (delay == null) delay = isAiEngine(readEnhanceForm()) ? 450 : 180;   // AI previews are heavier
   drawOverviewFrame();
   previewEls.after.classList.add('stale');
   clearTimeout(preview.timer);
@@ -3577,6 +3584,8 @@ async function runPreview() {
   const token = preview.token;
   preview.busy = true;
   previewEls.status.textContent = ai ? 'Rendering AI preview…' : 'Rendering preview…';
+  const spinner = document.getElementById('preview-spinner'), pct = document.getElementById('preview-pct');
+  spinner.hidden = false; pct.textContent = '';
 
   // "Before": the same area scaled the normal way by the browser.
   const bctx = previewEls.before.getContext('2d');
@@ -3587,7 +3596,13 @@ async function runPreview() {
   try {
     let out;
     if (ai) {
-      out = await aiRun(settings.engine, region, rw, rh, RW, RH, null, null);
+      // Stops as soon as a setting changes or the dialog closes, so a slow
+      // "AI · Best" preview never holds things up.
+      const stale = () => token !== preview.token || preview.dirty || !enhanceDialog.classList.contains('open');
+      out = await aiRun(settings.engine, region, rw, rh, RW, RH, f => {
+        pct.textContent = Math.round(f * 100) + '%';
+        previewEls.status.textContent = 'Rendering AI preview… ' + Math.round(f * 100) + '%';
+      }, stale);
       if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false });
     } else {
       out = await previewEngine(region, rw, rh, opts);
@@ -3601,10 +3616,14 @@ async function runPreview() {
     previewEls.after.classList.remove('stale');
     previewEls.status.textContent = 'Preview at ' + (Math.round(sc * 100) / 100) + '× · ' + describeSettings(settings);
   } catch (err) {
-    console.error('Preview failed', err);
-    if (token === preview.token) previewEls.status.textContent = 'Preview failed' + (ai ? ': ' + err.message : '.');
+    if (err && err.message === 'cancelled') { /* superseded by a newer preview */ }
+    else {
+      console.error('Preview failed', err);
+      if (token === preview.token) previewEls.status.textContent = 'Preview failed' + (ai ? ': ' + err.message : '.');
+    }
   } finally {
     preview.busy = false;
+    spinner.hidden = true;
     if (preview.dirty) { preview.dirty = false; runPreview(); }
   }
 }
@@ -3891,36 +3910,82 @@ void main(){
     const bindArr = (unit, loc, tex) => { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex.t); gl.uniform1i(loc, unit); };
     const useW = (pr, model) => { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, model.wTex); gl.uniform1i(pr.loc.uW, 0); };
 
+    // The network is not drawn at once: every draw becomes a queued step with
+    // an estimated cost, and run() submits the queue in small, fence-paced
+    // slices so the page (and the browser's own drawing) stays responsive.
+    let queue = [];
+    const step = (cost, fn) => queue.push({ cost, fn });
+
     // conv: inputs = [[texture, layers], …] (concatenated) → dst layers [0, c.outL)
     function conv(model, c, inputs, dst, w, h, act, skip, a, b) {
-      const pr = P.conv; gl.useProgram(pr.p); useW(pr, model);
       let total = 0;
-      for (let i = 0; i < 5; i++) {
-        const [tex, n] = inputs[i] || [dummy, 0];
-        bindArr(1 + i, pr.loc['uIn' + i], tex); gl.uniform1i(pr.loc['uL' + i], n); total += n;
-      }
+      for (let i = 0; i < 5; i++) total += (inputs[i] || [null, 0])[1];
       if (total !== c.inL) throw new Error('conv input mismatch');
-      bindArr(6, pr.loc.uSkip, skip || dummy);
-      gl.uniform1i(pr.loc.uInLayers, c.inL);
-      gl.uniform1i(pr.loc.uWBase, c.wBase); gl.uniform1i(pr.loc.uBiasBase, c.bBase); gl.uniform1i(pr.loc.uSlopeBase, c.sBase || 0);
-      gl.uniform1i(pr.loc.uAct, act); gl.uniform2i(pr.loc.uSize, w, h);
-      gl.uniform1i(pr.loc.uHasSkip, skip ? 1 : 0);
-      gl.uniform1f(pr.loc.uA, a ?? 1); gl.uniform1f(pr.loc.uB, b ?? 1);
+      const setup = () => {
+        const pr = P.conv; gl.useProgram(pr.p); useW(pr, model);
+        for (let i = 0; i < 5; i++) {
+          const [tex, n] = inputs[i] || [dummy, 0];
+          bindArr(1 + i, pr.loc['uIn' + i], tex); gl.uniform1i(pr.loc['uL' + i], n);
+        }
+        bindArr(6, pr.loc.uSkip, skip || dummy);
+        gl.uniform1i(pr.loc.uInLayers, c.inL);
+        gl.uniform1i(pr.loc.uWBase, c.wBase); gl.uniform1i(pr.loc.uBiasBase, c.bBase); gl.uniform1i(pr.loc.uSlopeBase, c.sBase || 0);
+        gl.uniform1i(pr.loc.uAct, act); gl.uniform2i(pr.loc.uSize, w, h);
+        gl.uniform1i(pr.loc.uHasSkip, skip ? 1 : 0);
+        gl.uniform1f(pr.loc.uA, a ?? 1); gl.uniform1f(pr.loc.uB, b ?? 1);
+        return pr;
+      };
       for (let o = 0; o < c.outL; o++) {
-        target(dst, o, w, h);
-        gl.uniform1i(pr.loc.uOut, o);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        step(w * h * c.inL * 9, () => { const pr = setup(); target(dst, o, w, h); gl.uniform1i(pr.loc.uOut, o); gl.drawArrays(gl.TRIANGLES, 0, 3); });
       }
     }
     function mix(A, aBase, B, bBase, dst, dstBase, layers, w, h, a, b) {
-      const pr = P.mix; gl.useProgram(pr.p);
-      bindArr(1, pr.loc.uA0, A); bindArr(2, pr.loc.uB0, B);
-      gl.uniform1i(pr.loc.uABase, aBase); gl.uniform1i(pr.loc.uBBase, bBase); gl.uniform1f(pr.loc.uA, a); gl.uniform1f(pr.loc.uB, b);
-      for (let o = 0; o < layers; o++) { target(dst, dstBase + o, w, h); gl.uniform1i(pr.loc.uOut, o); gl.drawArrays(gl.TRIANGLES, 0, 3); }
+      for (let o = 0; o < layers; o++) step(w * h * 2, () => {
+        const pr = P.mix; gl.useProgram(pr.p);
+        bindArr(1, pr.loc.uA0, A); bindArr(2, pr.loc.uB0, B);
+        gl.uniform1i(pr.loc.uABase, aBase); gl.uniform1i(pr.loc.uBBase, bBase); gl.uniform1f(pr.loc.uA, a); gl.uniform1f(pr.loc.uB, b);
+        target(dst, dstBase + o, w, h); gl.uniform1i(pr.loc.uOut, o); gl.drawArrays(gl.TRIANGLES, 0, 3);
+      });
     }
     function up2(src, dst, layers, w2, h2) {
-      const pr = P.up2; gl.useProgram(pr.p); bindArr(1, pr.loc.uIn, src);
-      for (let o = 0; o < layers; o++) { target(dst, o, w2, h2); gl.uniform1i(pr.loc.uOut, o); gl.drawArrays(gl.TRIANGLES, 0, 3); }
+      for (let o = 0; o < layers; o++) step(w2 * h2, () => {
+        const pr = P.up2; gl.useProgram(pr.p); bindArr(1, pr.loc.uIn, src);
+        target(dst, o, w2, h2); gl.uniform1i(pr.loc.uOut, o); gl.drawArrays(gl.TRIANGLES, 0, 3);
+      });
+    }
+
+    // Non-blocking wait for the GPU to finish everything submitted so far.
+    const waitGpu = () => new Promise((resolve, reject) => {
+      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      gl.flush();
+      const check = () => {
+        if (gl.isContextLost()) { reject(new Error('The GPU was reset — please try again.')); return; }
+        const st = gl.clientWaitSync(sync, 0, 0);
+        if (st === gl.TIMEOUT_EXPIRED) setTimeout(check, 1);
+        else { gl.deleteSync(sync); resolve(); }
+      };
+      check();
+    });
+
+    // Submit queued steps ~SLICE_MS of GPU work at a time, learning how much
+    // work fits in a slice on this GPU, and giving the browser a turn between.
+    const SLICE_MS = 12;
+    let costPerMs = 2e6;
+    async function drain(onFrac, isCancelled) {
+      const steps = queue; queue = [];
+      const total = steps.reduce((n, st) => n + st.cost, 0) || 1;
+      let done = 0, i = 0;
+      while (i < steps.length) {
+        if (isCancelled && isCancelled()) throw new Error('cancelled');
+        let slice = 0;
+        const t0 = performance.now();
+        while (i < steps.length && (slice === 0 || slice < costPerMs * SLICE_MS)) { steps[i].fn(); slice += steps[i].cost; i++; }
+        await waitGpu();
+        const ms = Math.max(1, performance.now() - t0);
+        costPerMs = Math.min(1e10, Math.max(1e4, 0.7 * costPerMs + 0.3 * (slice / ms)));
+        done += slice;
+        if (onFrac) onFrac(done / total);
+      }
     }
 
     // Texture set for one tile size, reused across tiles.
@@ -3960,9 +4025,12 @@ void main(){
           src = dst; dst = dst === t.a ? t.b : t.a;
         }
         conv(model, C[C.length - 1], [[src, 16]], dst, w, h, 0);
-        const pr = P.shuffle; gl.useProgram(pr.p);
-        bindArr(1, pr.loc.uIn, dst); bindArr(2, pr.loc.uSrc, t.input);
-        target(t.out4, 0, w * 4, h * 4); gl.drawArrays(gl.TRIANGLES, 0, 3);
+        const last = dst;
+        step(w * h * 16, () => {
+          const pr = P.shuffle; gl.useProgram(pr.p);
+          bindArr(1, pr.loc.uIn, last); bindArr(2, pr.loc.uSrc, t.input);
+          target(t.out4, 0, w * 4, h * 4); gl.drawArrays(gl.TRIANGLES, 0, 3);
+        });
       } else {
         let k = 0;
         conv(model, C[k++], [[t.input, 1]], t.fea, w, h, 0);
@@ -3998,7 +4066,7 @@ void main(){
 
     // Reads target pixels [tx0,tx1)×[ty0,ty1) of a picture scaled by s from
     // the ×4 result of a region whose top-left source pixel is (rx0, ry0).
-    function resizeRead(out4, rx0, ry0, rw, rh, s, tx0, ty0, tw, th) {
+    async function resizeRead(out4, rx0, ry0, rw, rh, s, tx0, ty0, tw, th) {
       const pr = P.resize; gl.useProgram(pr.p); bindArr(1, pr.loc.uIn, out4);
       const step = 4 / s;
       gl.uniform2i(pr.loc.uOrigin, tx0, ty0); gl.uniform2f(pr.loc.uRegion4, rx0 * 4, ry0 * 4);
@@ -4014,14 +4082,26 @@ void main(){
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, resizeRead.rb, 0);
       gl.viewport(0, 0, tw, th);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
+      // Read back through a pixel-pack buffer: the copy is queued on the GPU and
+      // fetched once a fence says it's done, so the page never blocks on it.
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);
+      gl.bufferData(gl.PIXEL_PACK_BUFFER, tw * th * 4, gl.STREAM_READ);
+      gl.readPixels(0, 0, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      await waitGpu();
       const px = new Uint8Array(tw * th * 4);
-      gl.readPixels(0, 0, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);
+      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, px);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      gl.deleteBuffer(buf);
       return px;
     }
 
     // Whole picture, tile by tile. Returns RGBA (alpha 255) at W×H.
     async function run(model, rgba, w, h, W, H, onProgress, isCancelled) {
-      if (!model.wTex) upload(model);
+      if (gl.isContextLost()) throw new Error('The GPU was reset — please try again.');
+      if (!model.wTex || model.wGl !== gl) { upload(model); model.wGl = gl; }
       const s = W / w;
       const core = model.arch === 'compact' ? 256 : 96, pad = model.pad;
       const out = new Uint8ClampedArray(W * H * 4);
@@ -4038,19 +4118,19 @@ void main(){
           const region = new Uint8ClampedArray(rw * rh * 4);
           for (let y = 0; y < rh; y++) region.set(rgba.subarray(((ry0 + y) * w + rx0) * 4, ((ry0 + y) * w + rx1) * 4), y * rw * 4);
           const out4 = forward(model, region, TW, TH, rw, rh);
+          await drain(f => { if (onProgress) onProgress((done + f * 0.98) / total); }, isCancelled);
           const X0 = Math.round(x0 * s), X1 = x1 === w ? W : Math.round(x1 * s);
           const Y0 = Math.round(y0 * s), Y1 = y1 === h ? H : Math.round(y1 * s);
-          const px = resizeRead(out4, rx0, ry0, rw, rh, s, X0, Y0, X1 - X0, Y1 - Y0);
+          const px = await resizeRead(out4, rx0, ry0, rw, rh, s, X0, Y0, X1 - X0, Y1 - Y0);
           for (let y = 0; y < Y1 - Y0; y++) out.set(px.subarray(y * (X1 - X0) * 4, (y + 1) * (X1 - X0) * 4), ((Y0 + y) * W + X0) * 4);
           done++;
           if (onProgress) onProgress(done / total);
-          await new Promise(r => setTimeout(r, 0));
         }
       }
       return out;
     }
 
-    return { run, forward, gl, maxLayers, maxSize, info: gl.getParameter(gl.VERSION) };
+    return { run, gl, lost: () => gl.isContextLost(), maxLayers, maxSize, info: gl.getParameter(gl.VERSION) };
   }
 
   return { parseParam, compile, cpuForward, createRunner };
@@ -4101,7 +4181,13 @@ async function aiGetModel(id) {
 
 async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled) {
   const model = await aiGetModel(id);
-  return aiRunner().run(model, rgba, w, h, W, H, onProgress, isCancelled);
+  const runner = aiRunner();
+  try {
+    return await runner.run(model, rgba, w, h, W, H, onProgress, isCancelled);
+  } catch (err) {
+    if (runner.lost()) aiState.runner = null;      // GPU reset: start fresh next time
+    throw err;
+  }
 }
 
 // Which supported model a parsed file pair is.
