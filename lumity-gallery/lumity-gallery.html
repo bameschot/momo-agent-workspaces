@@ -3329,8 +3329,8 @@ async function gpuFinish(prep, onProgress, isCancelled, asJob) {
   let cancelled = false;
   if (asJob) currentJob = { cancel() { cancelled = true; } };
   try {
-    return await withGpu(r => r.runBuiltin(prep, getMainUpscaler().LANCZOS2, onProgress,
-      () => cancelled || (isCancelled ? isCancelled() : false)));
+    const stop = () => cancelled || (isCancelled ? isCancelled() : false);
+    return await withGpu(r => r.runBuiltin(prep, getMainUpscaler().LANCZOS2, onProgress, stop), stop);
   } catch (err) {
     if (cancelled) throw new CancelledError('Cancelled');
     throw err;
@@ -3554,6 +3554,7 @@ async function runEnhance(targets, settings, mode) {
     setProgressEta(null);
   });
   let done = 0, skipped = 0, failed = 0, notSaved = 0, capped = 0, last = null;
+  aiState.batching = mode === 'batch';
   const eta = makeEnhanceEta(targets, settings, mode !== 'single');
   setProgressEta('Estimating time left…');
   try {
@@ -3588,6 +3589,10 @@ async function runEnhance(targets, settings, mode) {
   } finally {
     hideProgress();
     loadBusy = false;
+    if (aiState.batching) {
+      aiState.batching = false;
+      if (aiState.runner) withGpu(r => r.releaseAll()).catch(() => {});
+    }
   }
   if (mode === 'single' && last && lb.classList.contains('open')) {
     const idx = filtered.indexOf(last);
@@ -3648,6 +3653,18 @@ function readEnhanceForm() {
 }
 
 // Rough seconds per picture at 2× on a laptop, for the batch summary.
+// Per-picture time for the batch summary: measured on this device for these
+// settings when earlier runs taught it (see makeEnhanceEta), else a rough figure.
+function batchTimeText(st) {
+  const rate = num(loadEtaRates()[etaSignature(st)]);
+  const mps = enhanceTargets.map(t => dimCache.get(t.url)).filter(d => d && d.px).map(d => d.px / 1e6);
+  if (rate && mps.length) {
+    const avg = mps.reduce((a, b) => a + b, 0) / mps.length;
+    return formatEta(rate * avg) + ' each (measured on this device)';
+  }
+  return 'roughly ' + timeEstimate(st) + ' s each on a laptop, longer on phones';
+}
+
 function timeEstimate(st) {
   if (st.mode === 'scale' && st.scale === 1 && !isAiEngine(st)) {       // ¼ of the output pixels
     const t = timeEstimate({ ...st, scale: 2 }).split('–').map(v => v === '<1' ? 0.5 : Number(v));
@@ -3663,6 +3680,7 @@ function timeEstimate(st) {
   if (x.lines) { lo += 1; hi += 4; }
   if (x.fills) { lo += 0.5; hi += 1; }
   if (x.edges) { lo += 0.5; hi += 1.5; }
+  if (st.mode === 'scale' && st.scale > 2) { const k = (st.scale / 2) ** 2; lo *= k; hi *= k; }   // ∝ output pixels
   if (st.device === 'gpu') { lo = Math.max(0.5, lo * 0.3); hi = Math.max(1, hi * 0.35); }   // output stages on the GPU
   return (lo < 1 ? '<1' : Math.round(lo)) + '–' + Math.round(hi);
 }
@@ -3729,7 +3747,7 @@ function updateEnhanceSummary() {
     const todo = st.skipExisting ? enhanceTargets.length - existing : enhanceTargets.length;
     summary.textContent = todo + ' picture' + (todo === 1 ? '' : 's') + ' to enhance' +
       (existing ? (st.skipExisting ? ' · ' + existing + ' skipped (already upscaled)' : ' · ' + existing + ' upscaled copies will be replaced') : '') +
-      ' · roughly ' + timeEstimate(st) + ' s each on a laptop, longer on phones.';
+      ' · ' + batchTimeText(st) + '.';
   }
 }
 
@@ -3768,6 +3786,10 @@ function openEnhanceDialog(targets, mode) {
     ? targets[0].name + ' — creates a separate enhanced copy; the original is kept.'
     : targets.length + ' original picture' + (targets.length === 1 ? '' : 's') + ' in the current view. Each gets a separate enhanced copy; originals are kept.';
   document.getElementById('skip-row').hidden = mode !== 'batch';
+  if (mode === 'batch') (async () => {                 // picture sizes for the time estimate
+    for (const t of targets.slice(0, 40)) await getDimensions(t.url);
+    if (enhanceDialog.classList.contains('open') && enhanceTargets === targets) updateEnhanceSummary();
+  })();
   enhanceReturnFocus = document.activeElement;
   enhanceDialog.classList.add('open');
   openPreview(targets);
@@ -3969,6 +3991,7 @@ function schedulePreview(delay) {
   drawOverviewFrame();
   previewEls.after.classList.add('stale');
   clearTimeout(preview.timer);
+  preview.pending = true;                     // a newer render is on its way
   preview.timer = setTimeout(runPreview, delay);
 }
 
@@ -3997,7 +4020,35 @@ async function previewEngine(region, rw, rh, opts, device, isCancelled) {
   return gpuFinish(prep, null, isCancelled, false);
 }
 
+// Preview area for some settings: the crop (cs×cs around the chosen centre)
+// plus context, aligned to 8 px. With AI the context doesn't depend on the
+// cleanup preset, so the AI result can be reused when only the cleanup changes.
+function previewGeometry(settings, size) {
+  const { w, h } = preview.pixels;
+  const ai = isAiEngine(settings), sc = size.scale, cs = Math.max(8, Math.ceil(PREVIEW_OUT / sc));
+  const post = !ai || settings.preset !== 'none';
+  const cleanupPad = settings.extras && settings.extras.fills ? PREVIEW_PAD_FILLS : PREVIEW_PAD;
+  const pad = ai ? AI_PREVIEW_PAD + cleanupPad : post ? cleanupPad : 0;
+  const cx0 = Math.round(Math.max(0, Math.min(w - cs, preview.center.x - cs / 2)));
+  const cy0 = Math.round(Math.max(0, Math.min(h - cs, preview.center.y - cs / 2)));
+  const rx0 = Math.max(0, Math.floor((cx0 - pad) / 8) * 8);
+  const ry0 = Math.max(0, Math.floor((cy0 - pad) / 8) * 8);
+  const rx1 = Math.min(w, cx0 + cs + pad), ry1 = Math.min(h, cy0 + cs + pad);
+  const rw = rx1 - rx0, rh = ry1 - ry0;
+  const aiKey = ai ? [settings.engine, settings.engine === 'generalv3' ? settings.denoise : '', settings.engine === 'cugan' ? settings.cuganMode : '',
+    rx0, ry0, rw, rh, Math.round(rw * sc), Math.round(rh * sc)].join('|') : null;
+  return { cs, cx0, cy0, rx0, ry0, rw, rh, aiKey };
+}
+function currentAiKey() {
+  if (!preview.pixels) return null;
+  const st = readEnhanceForm();
+  if (!isAiEngine(st)) return null;
+  const size = targetSize(preview.pixels.w, preview.pixels.h, st);
+  return size ? previewGeometry(st, size).aiKey : null;
+}
+
 async function runPreview() {
+  preview.pending = false;
   if (!preview.pixels || !enhanceDialog.classList.contains('open')) return;
   if (preview.busy) { preview.dirty = true; return; }
   const { rgba, w, h, jpeg } = preview.pixels;
@@ -4020,16 +4071,8 @@ async function runPreview() {
     previewEls.status.textContent = 'Download or load the AI model to preview it.';
     return;
   }
-  const sc = size.scale, cs = Math.max(8, Math.ceil(PREVIEW_OUT / sc));
-  const post = !ai || settings.preset !== 'none';
-  // Crop (cs×cs around the chosen centre) plus context, aligned to 8 px.
-  const cx0 = Math.round(Math.max(0, Math.min(w - cs, preview.center.x - cs / 2)));
-  const cy0 = Math.round(Math.max(0, Math.min(h - cs, preview.center.y - cs / 2)));
-  const pad = (post ? (settings.extras && settings.extras.fills ? PREVIEW_PAD_FILLS : PREVIEW_PAD) : 0) + (ai ? AI_PREVIEW_PAD : 0);
-  const rx0 = Math.max(0, Math.floor((cx0 - pad) / 8) * 8);
-  const ry0 = Math.max(0, Math.floor((cy0 - pad) / 8) * 8);
-  const rx1 = Math.min(w, cx0 + cs + pad), ry1 = Math.min(h, cy0 + cs + pad);
-  const rw = rx1 - rx0, rh = ry1 - ry0;
+  const sc = size.scale, post = !ai || settings.preset !== 'none';
+  const { cs, cx0, cy0, rx0, ry0, rw, rh, aiKey } = previewGeometry(settings, size);
   const region = new Uint8ClampedArray(rw * rh * 4);
   for (let y = 0; y < rh; y++) {
     const from = ((ry0 + y) * w + rx0) * 4;
@@ -4057,11 +4100,22 @@ async function runPreview() {
     if (ai) {
       // Stops as soon as a setting changes or the dialog closes, so a slow
       // "AI · Best" preview never holds things up.
-      const stale = () => token !== preview.token || preview.dirty || !enhanceDialog.classList.contains('open');
-      out = await aiRun(settings.engine, region, rw, rh, RW, RH, f => {
-        pct.textContent = Math.round(f * 100) + '%';
-        previewEls.status.textContent = 'Rendering AI preview… ' + Math.round(f * 100) + '%';
-      }, stale, { denoise: settings.denoise, cuganMode: settings.cuganMode, seFrom: { rgba, w, h } });
+      // The AI result for this area is kept, so changing only the cleanup
+      // (sliders, extras, format…) re-runs just the cleanup. A change that
+      // doesn't affect the AI step lets a running AI render finish.
+      const closed = () => token !== preview.token || !enhanceDialog.classList.contains('open');
+      const aiStale = () => closed() || (preview.dirty && currentAiKey() !== aiKey);
+      if (preview.aiCache && preview.aiCache.key === aiKey && preview.aiCache.pixels === preview.pixels) {
+        out = preview.aiCache.out.slice();
+      } else {
+        out = await aiRun(settings.engine, region, rw, rh, RW, RH, f => {
+          pct.textContent = Math.round(f * 100) + '%';
+          previewEls.status.textContent = 'Rendering AI preview… ' + Math.round(f * 100) + '%';
+        }, aiStale, { denoise: settings.denoise, cuganMode: settings.cuganMode, seFrom: { rgba, w, h } });
+        preview.aiCache = { key: aiKey, pixels: preview.pixels, out: out.slice() };
+      }
+      const stale = () => closed() || preview.dirty;
+      if (preview.dirty) throw new Error('cancelled');
       if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false }, settings.device, stale);
     } else {
       const stale = () => token !== preview.token || preview.dirty || !enhanceDialog.classList.contains('open');
@@ -4073,7 +4127,7 @@ async function runPreview() {
     tmp.getContext('2d').putImageData(new ImageData(out, RW, RH), 0, 0);
     previewEls.after.width = crop.w; previewEls.after.height = crop.h;
     previewEls.after.getContext('2d').drawImage(tmp, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
-    previewEls.after.classList.remove('stale');
+    if (!preview.pending && !preview.dirty) previewEls.after.classList.remove('stale');
     previewEls.status.textContent = 'Preview at ' + (Math.round(sc * 100) / 100) + '× · ' + describeSettings(settings);
   } catch (err) {
     if (err && err.message === 'cancelled') { /* superseded by a newer preview */ }
@@ -4561,6 +4615,9 @@ void main(){
   // GPU work then waits, so scrolling stays smooth.
   function createRunner(opts = {}) {
     const isUserBusy = opts.isUserBusy || (() => false);
+    // During a batch, working textures are kept between pictures (except on
+    // phones, where memory is tight) instead of being re-created each time.
+    const batching = opts.batching || (() => false);
     const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
     const gl = canvas.getContext('webgl2', { antialias: false, depth: false, stencil: false, premultipliedAlpha: false, powerPreference: 'high-performance' });
     if (!gl) throw new Error('WebGL2 is not available');
@@ -4972,7 +5029,7 @@ void main(){
     const cgFreeAll = () => { cgAll.forEach(free); cgAll = []; cgFree = []; };
 
     // Reads the channel means of a tensor (for squeeze-and-excitation).
-    async function cgMeans(t, C) {
+    async function cgMeans(t, C, isCancelled) {
       const rows = cgTake(1, t.h, t.L), one = cgTake(1, 1, t.L);
       for (let o = 0; o < t.L; o++) {
         step(t.w * t.h, () => { const pr = P.cgMean; gl.useProgram(pr.p); bindArr(1, pr.loc.uIn, t.tex);
@@ -4982,15 +5039,29 @@ void main(){
           gl.uniform2i(pr.loc.uOrig, 0, 0); gl.uniform1i(pr.loc.uN, t.h); gl.uniform1i(pr.loc.uAxis, 1); gl.uniform1i(pr.loc.uOut, o);
           target(one, o, 1, 1); gl.drawArrays(gl.TRIANGLES, 0, 3); });
       }
-      await drain(null, null);
-      const out = new Float32Array(t.L * 4), px = new Float32Array(4);
+      await drain(null, isCancelled);
+      const out = new Float32Array(t.L * 4);
       for (let o = 0; o < t.L; o++) {
         target(one, o, 1, 1);
-        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, px);
-        out.set(px, o * 4);
+        out.set(readTexel(), o * 4);
       }
       cgGive(rows); cgGive(one);
       return out.subarray(0, C);
+    }
+    // One RGBA texel from the bound float framebuffer. GPUs without
+    // EXT_color_buffer_float may only allow reading 16-bit floats.
+    let readHalf = !float32;
+    function readTexel() {
+      if (!readHalf) {
+        const px = new Float32Array(4);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, px);
+        if (gl.getError() === gl.NO_ERROR) return px;
+        readHalf = true;
+      }
+      const hx = new Uint16Array(4);
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.HALF_FLOAT, hx);
+      if (gl.getError() !== gl.NO_ERROR) throw new Error('This GPU cannot read back AI · Anime+ values');
+      return Float32Array.from(hx, v => HALF[v]);
     }
     const fc = (L, x) => {                    // InnerProduct + activation, on the CPU
       const n = L.params[0], k = x.length, y = new Float32Array(n);
@@ -5055,7 +5126,7 @@ void main(){
             if (ins[0].of) {                      // first FC after the pooling
               if (se_) x = null;
               else {
-                x = await cgMeans(ins[0].of, ins[0].of.C);
+                x = await cgMeans(ins[0].of, ins[0].of.C, se.isCancelled);
                 if (onFrac) onFrac(++seIndex / (nSE + 1));
               }
             }
@@ -5155,7 +5226,7 @@ void main(){
       const { tex, iw, ih } = cgInput(model, src, sw, sh, 0, 0, sw, sh);
       const se = { list: [], isCancelled };
       const res = await cgForward(model, tex, iw, ih, se, null);
-      cgFreeAll();                         // its (larger) textures aren't needed by the tiles
+      if (!(batching() && !CG_SMALL)) cgFreeAll();   // its (larger) textures aren't needed by the tiles
       return se.list;
     }
 
@@ -5209,7 +5280,7 @@ void main(){
         queue = [];
         throw err;
       } finally {
-        cgFreeAll();
+        if (!(batching() && !CG_SMALL)) cgFreeAll();
       }
       return out;
     }
@@ -5236,6 +5307,7 @@ void main(){
     // Only one engine's working textures are kept at a time (phones have
     // little GPU memory): free the others' before a run.
     function releaseExcept(kind) {
+      if (kind !== 'all' && batching() && !CG_SMALL) return;
       if (kind !== 'esrgan' && pool) { Object.values(pool.t).flat().forEach(free); pool = null; }
       if (kind !== 'cugan') cgFreeAll();
       if (kind !== 'builtin' && bpool) { [...bpool.m, ...bpool.s, bpool.o].forEach(x => gl.deleteTexture(x.t)); bpool = null; }
@@ -5367,7 +5439,7 @@ void main(){
       return out;
     }
 
-    return { run, runBuiltin, float32, gl, lost: () => gl.isContextLost(), maxLayers, maxSize, info: gl.getParameter(gl.VERSION) };
+    return { run, runBuiltin, releaseAll: () => releaseExcept('all'), float32, gl, lost: () => gl.isContextLost(), maxLayers, maxSize, info: gl.getParameter(gl.VERSION) };
   }
 
   return { parseParam, compile, cpuForward, createRunner };
@@ -5407,7 +5479,7 @@ function modelStoreTx(mode, fn) {
 function aiRunner() {
   if (aiState.runner) return aiState.runner;
   if (aiState.gpuError) throw new Error(aiState.gpuError);
-  try { aiState.runner = aiModule().createRunner({ isUserBusy: ms => performance.now() - userScrollAt < ms }); }
+  try { aiState.runner = aiModule().createRunner({ isUserBusy: ms => performance.now() - userScrollAt < ms, batching: () => aiState.batching }); }
   catch (err) { aiState.gpuError = err.message || String(err); throw err; }
   return aiState.runner;
 }
@@ -5457,16 +5529,28 @@ async function aiGetModel(id, opts = {}) {
 
 let aiActive = 0;
 // Any GPU work (AI or built-in): quiet page while it runs, recover from resets.
-async function withGpu(fn) {
-  const runner = aiRunner();
-  aiActive++; document.body.classList.add('gpu-busy');
+// GPU jobs run one at a time (they share the runner's work queue and
+// textures). A job that is cancelled while waiting for its turn just ends.
+let gpuTurn = Promise.resolve();
+async function withGpu(fn, isCancelled) {
+  const before = gpuTurn;
+  let done;
+  gpuTurn = new Promise(r => { done = r; });
   try {
-    return await fn(runner);
-  } catch (err) {
-    if (runner.lost()) aiState.runner = null;      // GPU reset: start fresh next time
-    throw err;
+    await before;
+    if (isCancelled && isCancelled()) throw new Error('cancelled');
+    const runner = aiRunner();
+    aiActive++; document.body.classList.add('gpu-busy');
+    try {
+      return await fn(runner);
+    } catch (err) {
+      if (runner.lost()) aiState.runner = null;      // GPU reset: start fresh next time
+      throw err;
+    } finally {
+      if (--aiActive === 0) document.body.classList.remove('gpu-busy');
+    }
   } finally {
-    if (--aiActive === 0) document.body.classList.remove('gpu-busy');
+    done();
   }
 }
 
@@ -5480,7 +5564,7 @@ for (const type of ['scroll', 'wheel', 'touchstart', 'touchmove'])
 async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled, opts = {}) {
   const part = id === 'cugan' ? (W / w > 2.001 ? 'up4x-' : 'up2x-') + (opts.cuganMode === 'denoise3x' ? 'denoise3x' : 'conservative') : null;
   const model = await aiGetModel(id, { denoise: opts.denoise, part });
-  return withGpu(r => r.run(model, rgba, w, h, W, H, onProgress, isCancelled, { seFrom: opts.seFrom }));
+  return withGpu(r => r.run(model, rgba, w, h, W, H, onProgress, isCancelled, { seFrom: opts.seFrom }), isCancelled);
 }
 
 function gpuBuiltinAvailable() { return !aiState.gpuError && !!aiState.runner && aiState.runner.float32; }
