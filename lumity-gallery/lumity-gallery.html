@@ -4834,6 +4834,7 @@ void main(){
         upload(model); model.wGl = gl; model.wVersion = model.version;
       }
       if (model.arch === 'cugan') return runCugan(model, rgba, w, h, W, H, onProgress, isCancelled, opts);
+      releaseExcept('esrgan');
       const s = W / w;
       const core = model.arch === 'compact' ? 256 : 96, pad = model.pad;
       const out = new Uint8ClampedArray(W * H * 4);
@@ -4867,14 +4868,20 @@ void main(){
     // Tensors: { tex, x, y, w, h, L } — a view into a texture array (crops are
     // free). Textures come from a pool keyed by size and are reused as soon as
     // the last layer reading them has been queued.
-    const cgPool = new Map();
+    // Almost every layer has its own size, so a free texture is reused when it
+    // is at least as large (smallest such one). Everything is freed after a run.
+    let cgFree = [], cgAll = [];
     const cgTake = (w, h, L, linear) => {
-      const key = w + 'x' + h + 'x' + L + (linear ? 'l' : '');
-      const list = cgPool.get(key);
-      return list && list.length ? list.pop() : Object.assign(arr(w, h, L, linear), { key });
+      let best = -1;
+      cgFree.forEach((t, i) => { if (t.w >= w && t.h >= h && t.layers >= L && !!t.linear === !!linear &&
+        (best < 0 || t.w * t.h * t.layers < cgFree[best].w * cgFree[best].h * cgFree[best].layers)) best = i; });
+      if (best >= 0) return cgFree.splice(best, 1)[0];
+      const t = Object.assign(arr(w, h, L, linear), { linear: !!linear });
+      cgAll.push(t);
+      return t;
     };
-    const cgGive = tex => { if (!cgPool.has(tex.key)) cgPool.set(tex.key, []); cgPool.get(tex.key).push(tex); };
-    const cgFreeAll = () => { for (const list of cgPool.values()) list.forEach(free); cgPool.clear(); };
+    const cgGive = tex => { cgFree.push(tex); };
+    const cgFreeAll = () => { cgAll.forEach(free); cgAll = []; cgFree = []; };
 
     // Reads the channel means of a tensor (for squeeze-and-excitation).
     async function cgMeans(t, C) {
@@ -5043,8 +5050,8 @@ void main(){
 
     // Channel weights for the whole picture, from a copy small enough for one
     // pass (Real-CUGAN's "rough sync": tiles then all use the same weights).
-    async function cgMeasure(model, rgba, w, h, isCancelled) {
-      const lim = 256, f = Math.min(1, lim / Math.max(w, h));
+    async function cgMeasure(model, rgba, w, h, isCancelled, lim) {
+      const f = Math.min(1, lim / Math.max(w, h));
       let src = rgba, sw = w, sh = h;
       if (f < 1) {
         sw = Math.max(8, Math.round(w * f)); sh = Math.max(8, Math.round(h * f));
@@ -5060,13 +5067,20 @@ void main(){
       const { tex, iw, ih } = cgInput(model, src, sw, sh, 0, 0, sw, sh);
       const se = { list: [], isCancelled };
       const res = await cgForward(model, tex, iw, ih, se, null);
-      cgGive(res); cgGive(tex);
+      cgFreeAll();                         // its (larger) textures aren't needed by the tiles
       return se.list;
     }
 
-    const CG_CORE = 192, CG_MARGIN = 4;
+    // Smaller tiles on phones: GPU memory there is shared and limited
+    // (≈75–90 MB per run at 128, ≈150–175 MB at 192).
+    const CG_SMALL = (navigator.deviceMemory && navigator.deviceMemory <= 4) ||
+      (navigator.userAgentData ? navigator.userAgentData.mobile : /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent));
+    const CG_CORE = CG_SMALL ? 128 : 192, CG_MARGIN = 4;
+    // Size of the copy the channel weights are measured on (memory ∝ its square).
+    const CG_MEASURE = CG_SMALL ? 160 : 256;
     async function runCugan(model, rgba, w, h, W, H, onProgress, isCancelled, opts) {
       const s = W / w, m = model.scale, out = new Uint8ClampedArray(W * H * 4);
+      releaseExcept('cugan');
       try {
         // One pass measures its own channel weights (exact); tiles share weights
         // measured on the whole picture (or on opts.seFrom, e.g. for previews).
@@ -5074,10 +5088,11 @@ void main(){
         let fixed = null;
         if (!single) {
           const src = opts.seFrom || { rgba, w, h };
-          const key = model.version + ':' + src.w + 'x' + src.h;
+          const lim = opts.measureLimit || CG_MEASURE;
+          const key = model.version + ':' + src.w + 'x' + src.h + ':' + lim;
           if (src.rgba.__cgSE && src.rgba.__cgSE.model === model && src.rgba.__cgSE.key === key) fixed = src.rgba.__cgSE.list;
           else {
-            fixed = await cgMeasure(model, src.rgba, src.w, src.h, isCancelled);
+            fixed = await cgMeasure(model, src.rgba, src.w, src.h, isCancelled, lim);
             try { Object.defineProperty(src.rgba, '__cgSE', { value: { model, key, list: fixed }, configurable: true, writable: true }); } catch {}
           }
         }
@@ -5106,7 +5121,7 @@ void main(){
         queue = [];
         throw err;
       } finally {
-        if (cgPool.size > 24) cgFreeAll();
+        cgFreeAll();
       }
       return out;
     }
@@ -5130,6 +5145,13 @@ void main(){
       return { t, w, h };
     };
     let bpool = null;
+    // Only one engine's working textures are kept at a time (phones have
+    // little GPU memory): free the others' before a run.
+    function releaseExcept(kind) {
+      if (kind !== 'esrgan' && pool) { Object.values(pool.t).flat().forEach(free); pool = null; }
+      if (kind !== 'cugan') cgFreeAll();
+      if (kind !== 'builtin' && bpool) { [...bpool.m, ...bpool.s, bpool.o].forEach(x => gl.deleteTexture(x.t)); bpool = null; }
+    }
     function bTextures(rw, rh) {
       if (bpool && bpool.w >= rw && bpool.h >= rh) return bpool;
       if (bpool) [...bpool.m, ...bpool.s, bpool.o].forEach(x => gl.deleteTexture(x.t));
@@ -5140,6 +5162,7 @@ void main(){
 
     async function runBuiltin(prep, LUT, onProgress, isCancelled) {
       if (gl.isContextLost()) throw new Error('The GPU was reset — please try again.');
+      releaseExcept('builtin');
       const { w, h, W, H, P, extras, scale } = prep;
       // Inputs: planes (Y, Cb, Cr, alpha) and edge field at input resolution.
       const planes = new Float32Array(w * h * 4), field = new Float32Array(w * h * 2);
