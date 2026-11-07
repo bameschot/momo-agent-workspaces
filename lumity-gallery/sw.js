@@ -28,6 +28,7 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // never intercept cross-origin requests
+  if (url.pathname.includes('/models/')) return;   // AI model files: the page stores them itself (IndexedDB)
 
   event.respondWith(
     fetch(req)
