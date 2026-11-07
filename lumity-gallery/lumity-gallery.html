@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Lumity Gallery ✨</title>
   <meta name="theme-color" content="#9b59b6">
   <meta name="mobile-web-app-capable" content="yes">
@@ -657,6 +657,29 @@
       border-top: 1px solid var(--border);
       margin-top: 1rem;
     }
+
+    /* ── SYSTEM BARS ── Installed on Android (and on notched phones) the page
+       can run edge-to-edge, under the status bar and the navigation bar: keep
+       everything clear of them. env() is 0 where there are no such bars. */
+    :root {
+      --sa-t: env(safe-area-inset-top, 0px); --sa-b: env(safe-area-inset-bottom, 0px);
+      --sa-l: env(safe-area-inset-left, 0px); --sa-r: env(safe-area-inset-right, 0px);
+    }
+    .topbar { padding-top: calc(0.5rem + var(--sa-t)); padding-left: calc(1rem + var(--sa-l)); padding-right: calc(1rem + var(--sa-r)); }
+    @media (max-width: 720px) {
+      .topbar { padding-top: calc(0.45rem + var(--sa-t)); padding-left: calc(0.6rem + var(--sa-l)); padding-right: calc(0.6rem + var(--sa-r)); }
+      .menu-panel { left: calc(0.5rem + var(--sa-l)); right: calc(0.5rem + var(--sa-r)); max-height: calc(100vh - var(--menu-top, 6rem) - var(--sa-b) - 0.5rem); overflow-y: auto; }
+    }
+    #gallery, #empty-state, #load-more { margin-left: var(--sa-l); margin-right: var(--sa-r); }
+    footer { padding-bottom: calc(1.5rem + var(--sa-b)); }
+    #lightbox { padding: var(--sa-t) var(--sa-r) var(--sa-b) var(--sa-l); }
+    #lightbox img { max-height: min(82vh, calc(100vh - 14rem - var(--sa-t) - var(--sa-b))); }
+    #lb-close { top: calc(1rem + var(--sa-t)); right: calc(1.25rem + var(--sa-r)); }
+    #enhance-dialog, .modal, #progress-overlay {
+      padding: max(1rem, var(--sa-t)) max(1rem, var(--sa-r)) max(1rem, var(--sa-b)) max(1rem, var(--sa-l));
+    }
+    #toast { bottom: calc(1.5rem + var(--sa-b)); }
+    .dialog-foot { bottom: min(0px, calc(var(--sa-b) - 1.2rem)); }   /* stays above the navigation bar */
   </style>
 </head>
 <body>
