@@ -34,146 +34,88 @@
       min-height: 100vh;
     }
 
-    header {
-      text-align: center;
-      padding: 2rem 1rem 1rem;
-      background: linear-gradient(180deg, #1a0028 0%, transparent 100%);
+    /* ── TOP BAR ── one slim, sticky row (two on phones) */
+    .topbar {
+      position: sticky; top: 0; z-index: 20;
+      display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+      padding: 0.5rem 1rem;
+      background: linear-gradient(180deg, #1a0028 0%, var(--surface) 100%);
       border-bottom: 1px solid var(--border);
     }
-
-    header h1 {
-      font-size: clamp(1.8rem, 5vw, 3rem);
+    .brand {
+      font-size: 1.15rem; white-space: nowrap; margin-right: 0.25rem;
       background: linear-gradient(135deg, #c39bd3, #9b59b6, #7d3c98);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      letter-spacing: 0.05em;
-      margin-bottom: 0.4rem;
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+      letter-spacing: 0.03em;
     }
-
-    header p {
-      color: var(--text-muted);
-      font-size: 0.9rem;
+    .brand span { -webkit-text-fill-color: initial; }
+    #search {
+      flex: 1 1 10rem; min-width: 0; max-width: 18rem;
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 0.4rem 0.85rem; border-radius: 20px; font-size: 0.85rem; outline: none; transition: border-color 0.2s;
     }
-
-    /* ── SOURCE BADGE ── */
-    #source-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      margin-top: 0.5rem;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--text-muted);
-      padding: 0.25rem 0.75rem;
-      border-radius: 20px;
-      font-size: 0.78rem;
+    #search:focus { border-color: var(--accent); }
+    .tb-group { display: flex; gap: 0.3rem; }
+    .tb-btn {
+      display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap;
+      background: var(--surface2); border: 1px solid var(--border); color: var(--accent2);
+      padding: 0.38rem 0.7rem; border-radius: 8px; cursor: pointer; font-size: 0.8rem; line-height: 1.2;
+      transition: background 0.15s, border-color 0.15s;
     }
-    #source-badge.json-mode {
-      border-color: var(--accent);
-      color: var(--accent2);
-    }
-
-    /* ── CONTROLS ── */
-    .controls {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 10;
-    }
-    .controls-toggle {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-      padding: 0.45rem 1rem;
-      cursor: pointer;
-      color: var(--text-muted);
-      font-size: 0.8rem;
-      user-select: none;
-      transition: color 0.15s;
-    }
-    .controls-toggle:hover { color: var(--accent2); }
-    .controls-toggle .chevron {
-      display: inline-block;
-      transition: transform 0.25s ease;
-    }
-    .controls.collapsed .chevron { transform: rotate(-180deg); }
-    .controls-body {
-      display: flex;
-      gap: 0.75rem;
-      align-items: center;
-      justify-content: center;
-      flex-wrap: wrap;
-      padding: 0.75rem 1rem 1rem;
-      overflow: hidden;
-      max-height: 300px;
-      transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.25s ease;
-      opacity: 1;
-    }
-    .controls.collapsed .controls-body {
-      max-height: 0;
-      padding-top: 0;
-      padding-bottom: 0;
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    .controls input[type="text"] {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 0.45rem 0.85rem;
-      border-radius: 20px;
-      font-size: 0.85rem;
-      width: 220px;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-    .controls input[type="text"]:focus { border-color: var(--accent); }
-
-    .controls label {
-      color: var(--text-muted);
-      font-size: 0.82rem;
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-    }
-
-    .controls select {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 0.4rem 0.6rem;
-      border-radius: 8px;
-      font-size: 0.83rem;
-      outline: none;
-    }
-
+    .tb-btn:hover, .tb-btn[aria-expanded="true"] { background: var(--glow); color: #fff; border-color: var(--accent); }
+    .tb-btn.accent { border-color: var(--accent); }
+    .tb-btn .ic { font-size: 0.95em; }
+    .tb-menus { display: flex; gap: 0.3rem; margin-left: auto; }
     .count-badge {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--accent2);
-      padding: 0.3rem 0.75rem;
-      border-radius: 20px;
-      font-size: 0.8rem;
+      background: var(--surface2); border: 1px solid var(--border); color: var(--accent2);
+      padding: 0.25rem 0.65rem; border-radius: 20px; font-size: 0.76rem; white-space: nowrap;
+    }
+    /* Menus */
+    .menu { position: relative; }
+    .menu-panel {
+      position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 16rem;
+      display: flex; flex-direction: column; gap: 0.15rem; padding: 0.4rem;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.5), 0 0 20px rgba(155,89,182,0.2);
+    }
+    .menu-panel[hidden] { display: none; }
+    .menu-panel hr { border: none; border-top: 1px solid var(--border); margin: 0.25rem 0; }
+    .menu-item {
+      display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent; color: var(--text);
+      padding: 0.45rem 0.6rem; border-radius: 7px; cursor: pointer; font-size: 0.84rem; white-space: nowrap;
+    }
+    .menu-item small { display: block; color: var(--text-muted); font-size: 0.72rem; margin-top: 0.1rem; white-space: normal; }
+    .menu-item:hover:not(:disabled) { background: var(--surface2); border-color: var(--border); }
+    .menu-item:disabled { opacity: 0.45; cursor: default; }
+    #source-badge {
+      color: var(--text-muted); font-size: 0.74rem; padding: 0.3rem 0.6rem 0.45rem;
+      border-bottom: 1px solid var(--border); margin-bottom: 0.2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #source-badge.json-mode { color: var(--accent2); }
+    .menu-view { min-width: 19rem; gap: 0.5rem; padding: 0.7rem; }
+    .menu-row { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); align-items: center; gap: 0.5rem; color: var(--text-muted); font-size: 0.8rem; }
+    .menu-row select, .menu-chips select {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 0.35rem 0.5rem; border-radius: 7px; font-size: 0.82rem; outline: none;
+    }
+    .menu-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+    .menu-chips .ss-btn { padding: 0.3rem 0.6rem; font-size: 0.78rem; }
+    @media (max-width: 1100px) { .tb-group .lbl, .tb-menus .lbl { display: none; } }
+    @media (max-width: 720px) {
+      .topbar { padding: 0.45rem 0.6rem; row-gap: 0.4rem; }
+      .brand { font-size: 1rem; order: 0; }
+      .count-badge { order: 1; }
+      .tb-menus { order: 2; }
+      #search { order: 3; flex: 1 1 8rem; max-width: none; }
+      .tb-group { order: 4; }
+      #enhance-all-btn { order: 5; }
+      .tb-btn .lbl { display: none; }
+      #enhance-all-btn .lbl { display: inline; }        /* ✨ alone would look like the Upscaled filter */
+      .tb-btn { padding: 0.42rem 0.6rem; font-size: 0.85rem; }
+      .menu-panel { position: fixed; left: 0.5rem; right: 0.5rem; top: var(--menu-top, 6rem); min-width: 0; }
     }
 
     /* ── TOOLBAR BUTTONS ── */
-    #install-btn, #download-btn, #download-json-btn, #folder-btn, #json-btn {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--accent2);
-      padding: 0.4rem 0.9rem;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 0.82rem;
-      transition: background 0.15s, border-color 0.15s;
-      white-space: nowrap;
-    }
-    #install-btn:hover, #download-btn:hover, #download-json-btn:hover, #folder-btn:hover, #json-btn:hover { background: var(--glow); border-color: var(--accent); color: #fff; }
-    #download-btn:disabled, #download-json-btn:disabled { opacity: 0.5; cursor: default; }
     #folder-file-input, #json-file-input { display: none; }
 
     /* ── DRAG-OVER OVERLAY ── */
@@ -454,6 +396,26 @@
       overflow-y: auto;
     }
     #enhance-dialog.open { display: flex; }
+    .modal {
+      display: none; position: fixed; inset: 0; z-index: 1450;
+      background: rgba(13,0,16,0.78); backdrop-filter: blur(4px);
+      align-items: center; justify-content: center; padding: 1rem; overflow-y: auto;
+    }
+    .modal.open { display: flex; }
+    #storage-dialog .dialog-card { width: min(440px, 100%); gap: 0.75rem; }
+    #storage-dialog .dialog-sub { margin-top: -0.4rem; }
+    #storage-dialog #storage-quota { margin-top: -0.35rem; }
+    .st-rows { display: flex; flex-direction: column; }
+    .st-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.15rem 0.75rem; padding: 0.5rem 0; border-top: 1px solid var(--border); font-size: 0.85rem; color: var(--text); }
+    .st-row:first-child { border-top: none; }
+    .st-row small { grid-column: 1; color: var(--text-muted); font-size: 0.74rem; }
+    .st-row b { grid-row: 1 / span 2; grid-column: 2; align-self: center; color: var(--accent2); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .st-bar { height: 8px; border-radius: 4px; background: var(--surface2); border: 1px solid var(--border); overflow: hidden; }
+    #storage-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+    .st-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .st-actions button { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 0.4rem 0.75rem; cursor: pointer; font-size: 0.8rem; }
+    .st-actions button:hover:not(:disabled) { border-color: #e74c3c; color: #ff8a80; }
+    .st-actions button:disabled { opacity: 0.45; cursor: default; }
     .dialog-card {
       width: min(440px, 100%);
       background: var(--surface);
@@ -514,7 +476,7 @@
     #progress-cancel[hidden] { display: none; }
     .dialog-card { width: min(560px, 100%); }
     /* Sections: one left edge, even spacing, a thin line between them */
-    .dialog-card { gap: 0; }
+    #enhance-form.dialog-card { gap: 0; }
     .dialog-card > h2 { margin-bottom: 0.3rem; }
     .dialog-card > fieldset, .dialog-card > .preview, .dialog-card > #skip-row { padding: 0.9rem 0; border-top: 1px solid var(--border); }
     .dialog-card > #enhance-target { margin-bottom: 0.9rem; }
@@ -706,61 +668,79 @@
   <small>Generated by folder_to_base64.py</small>
 </div>
 
-<header>
-  <h1>✨ Lumity Gallery ✨</h1>
-  <p>Luz &amp; Amity — The Owl House fan art collection</p>
-  <div id="source-badge">No images loaded</div>
-</header>
-
-<div class="controls" id="controls">
-  <div class="controls-toggle" id="controls-toggle">
-    <span>Menu</span><span class="chevron">▲</span>
+<!-- Top bar: title, search, filters, Enhance all and three menus (sticky) -->
+<header class="topbar" id="controls">
+  <h1 class="brand" title="Luz &amp; Amity — The Owl House fan art collection"><span aria-hidden="true">✨</span> Lumity Gallery</h1>
+  <input type="text" id="search" placeholder="Search…" aria-label="Search images" />
+  <div class="tb-group" role="group" aria-label="Filters">
+    <button id="fav-filter-btn" class="tb-btn" aria-pressed="false" title="Show only favourites"><span class="ic">♡</span><span class="lbl">Favourites</span></button>
+    <button id="upscaled-filter-btn" class="tb-btn kind-btn" data-kind="upscaled" aria-pressed="false" title="Show only enhanced copies (upscaled or cleaned)"><span class="ic">✨</span><span class="lbl">Upscaled</span></button>
+    <button id="original-filter-btn" class="tb-btn kind-btn" data-kind="original" aria-pressed="false" title="Show only originals"><span class="ic">🖼</span><span class="lbl">Originals</span></button>
   </div>
-  <div class="controls-body">
-  <button id="install-btn" title="Install as an app" style="display:none;">⬇ Install</button>
-  <input type="text" id="search" placeholder="Search images…" />
-  <label>
-    Size
-    <select id="size-select">
+  <span class="count-badge" id="count-badge">— images</span>
+  <button id="enhance-all-btn" class="tb-btn accent" title="Enhance all original pictures in view"><span class="ic">✨</span><span class="lbl">Enhance all</span></button>
+  <nav class="tb-menus" aria-label="Menus">
+    <div class="menu">
+      <button type="button" class="tb-btn menu-btn" aria-haspopup="true" aria-expanded="false" title="Open pictures"><span class="ic">📂</span><span class="lbl">Open</span></button>
+      <div class="menu-panel" hidden>
+        <div id="source-badge">No images loaded</div>
+        <button id="folder-btn" class="menu-item">📁 Open folder…</button>
+        <input type="file" id="folder-file-input" webkitdirectory multiple />
+        <button id="json-btn" class="menu-item">📥 Load JSON…</button>
+        <input type="file" id="json-file-input" accept=".json,application/json" />
+        <button id="install-btn" class="menu-item" title="Install as an app" style="display:none;">⬇ Install as app</button>
+      </div>
+    </div>
+    <div class="menu">
+      <button type="button" class="tb-btn menu-btn" aria-haspopup="true" aria-expanded="false" title="Download and storage"><span class="ic">⬇</span><span class="lbl">Save</span></button>
+      <div class="menu-panel" hidden>
+        <button id="download-btn" class="menu-item">🗜 Download ZIP<small>Pictures in view</small></button>
+        <button id="download-enhanced-btn" class="menu-item">✨ Download ZIP · enhanced only<small>Enhanced copies in view</small></button>
+        <button id="download-json-btn" class="menu-item">📄 Download JSON<small>Pictures in view, can be loaded again</small></button>
+        <hr>
+        <button id="storage-btn" class="menu-item">💾 Storage…<small>Space used in this browser</small></button>
+      </div>
+    </div>
+    <div class="menu">
+      <button type="button" class="tb-btn menu-btn" aria-haspopup="true" aria-expanded="false" title="Thumbnails, sorting and slideshow"><span class="ic">⚙</span><span class="lbl">View</span></button>
+      <div class="menu-panel menu-view" hidden>
+        <label class="menu-row"><span>Size</span>
+          <select id="size-select">
       <option value="80">X-Small</option>
       <option value="140">Small</option>
       <option value="180" selected>Medium</option>
       <option value="240">Large</option>
       <option value="320">X-Large</option>
     </select>
-  </label>
-  <label>
-    Fit
-    <select id="fit-select">
+        </label>
+        <label class="menu-row"><span>Fit</span>
+          <select id="fit-select">
       <option value="cover">Cropped</option>
       <option value="contain" selected>Full (no crop)</option>
     </select>
-  </label>
-  <div style="display:flex;gap:0.5rem;align-items:center;">
-    <button class="ss-btn" id="ss-toggle">▶ Slideshow</button>
-    <select id="ss-speed" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:0.3rem 0.5rem;border-radius:6px;font-size:0.78rem;">
+        </label>
+        <div class="menu-row"><span>Sort</span>
+          <div class="menu-chips">
+            <button id="sort-dim-btn" class="ss-btn">⇅ Dimensions</button>
+            <button id="sort-ratio-btn" class="ss-btn">⇅ Aspect Ratio</button>
+            <button id="sort-date-btn" class="ss-btn">⇅ File Date</button>
+            <button id="shuffle-btn" class="ss-btn">🔀 Shuffle</button>
+          </div>
+        </div>
+        <div class="menu-row"><span>Slideshow</span>
+          <div class="menu-chips">
+            <button class="ss-btn" id="ss-toggle">▶ Slideshow</button>
+            <select id="ss-speed">
       <option value="2000">2s</option>
       <option value="3500" selected>3.5s</option>
       <option value="6000">6s</option>
     </select>
-  </div>
-  <button id="download-btn">⬇ Download ZIP</button>
-  <button id="download-json-btn">⬇ Download JSON</button>
-<button id="sort-dim-btn" class="ss-btn">⇅ Dimensions</button>
-  <button id="sort-ratio-btn" class="ss-btn">⇅ Aspect Ratio</button>
-  <button id="sort-date-btn" class="ss-btn">⇅ File Date</button>
-  <button id="shuffle-btn" class="ss-btn">🔀 Shuffle</button>
-  <button id="enhance-all-btn" class="ss-btn">✨ Enhance all</button>
-  <button id="fav-filter-btn" class="ss-btn" aria-pressed="false" title="Show only favourites">♡ Favourites</button>
-  <button id="upscaled-filter-btn" class="ss-btn kind-btn" data-kind="upscaled" aria-pressed="false" title="Show only enhanced copies (upscaled or cleaned)">✨ Upscaled</button>
-  <button id="original-filter-btn" class="ss-btn kind-btn" data-kind="original" aria-pressed="false" title="Show only originals">🖼 Originals</button>
-  <button id="folder-btn">📁 Open Folder</button>
-  <input type="file" id="folder-file-input" webkitdirectory multiple />
-  <button id="json-btn">📥 Load JSON</button>
-  <input type="file" id="json-file-input" accept=".json,application/json" />
-  <span class="count-badge" id="count-badge">— images</span>
-  </div>
-</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </nav>
+</header>
 
 <div id="gallery" class="contain-mode"></div>
 <div id="empty-state" hidden>
@@ -935,6 +915,22 @@
       </div>
     </div>
   </form>
+</div>
+
+<!-- Storage -->
+<div id="storage-dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="storage-title">
+  <div class="dialog-card">
+    <h2 id="storage-title">💾 Storage</h2>
+    <p class="dialog-sub">Pictures and AI models are kept in this browser only, so they work offline.</p>
+    <div class="st-rows" id="storage-rows"><p class="dialog-sub">Measuring…</p></div>
+    <div class="st-bar" aria-hidden="true"><div id="storage-fill"></div></div>
+    <p class="dialog-sub" id="storage-quota"></p>
+    <div class="st-actions">
+      <button type="button" id="st-remove-enhanced">Remove all enhanced copies</button>
+      <button type="button" id="st-remove-models">Remove AI models</button>
+    </div>
+    <div class="dialog-actions"><button type="button" class="primary" id="storage-close">Close</button></div>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -2048,24 +2044,34 @@ async function fetchImageBytes(img) {
 // Runs an export with its button disabled and showing progress, and always
 // restores the button — even if a read fails (e.g. a new set was loaded
 // mid-export, which releases the old images).
-async function runExport(btn, idleLabel, work) {
-  const list = filtered.slice();
+async function runExport(btn, title, list, work) {
   if (!list.length) { showToast('No images to download.'); return; }
+  if (loadBusy) { showToast('Still busy — please wait…'); return; }
+  loadBusy = true;
   btn.disabled = true;
+  showProgress(title, 300);
   try {
-    await work(list, (i, total) => { btn.textContent = `⏳ ${i} / ${total}`; });
+    await work(list, (i, total) => setProgress('Reading picture ' + i + ' of ' + total, i, total));
   } catch (err) {
     console.error('Export failed', err);
     showToast('Download failed — the images changed or could not be read.');
   } finally {
+    hideProgress();
+    loadBusy = false;
     btn.disabled = false;
-    btn.textContent = idleLabel;
   }
 }
 
 // ── DOWNLOAD ZIP ──────────────────────────────────────────────────────────────
 const downloadZipBtn = document.getElementById('download-btn');
-downloadZipBtn.addEventListener('click', () => runExport(downloadZipBtn, '⬇ Download ZIP', async (list, onProgress) => {
+const downloadEnhancedBtn = document.getElementById('download-enhanced-btn');
+downloadZipBtn.addEventListener('click', () => runExport(downloadZipBtn, 'Building ZIP', filtered.slice(), (list, onProgress) => zipExport(list, onProgress, 'lumity-gallery.zip')));
+downloadEnhancedBtn.addEventListener('click', () => {
+  const list = filtered.filter(img => img.upscale);
+  if (!list.length) { showToast('No enhanced copies in view.'); return; }
+  runExport(downloadEnhancedBtn, 'Building ZIP of enhanced copies', list, (l, onProgress) => zipExport(l, onProgress, 'lumity-gallery-enhanced.zip'));
+});
+async function zipExport(list, onProgress, fileName) {
   const entries = [];
   const seen = new Map();
   for (let i = 0; i < list.length; i++) {
@@ -2085,10 +2091,11 @@ downloadZipBtn.addEventListener('click', () => runExport(downloadZipBtn, '⬇ Do
     entries.push({ name, data, date: img.modified != null ? new Date(img.modified) : null });
   }
 
-  downloadZipBtn.textContent = '⏳ Building ZIP…';
-  downloadBlob(buildZip(entries), 'lumity-gallery.zip');
+  setProgress('Building ZIP…', null);
+  await yieldToBrowser();
+  downloadBlob(buildZip(entries), fileName);
   showToast('Downloaded ' + entries.length + ' images ✨');
-}));
+}
 
 // Spreading a large typed array straight into String.fromCharCode(...bytes)
 // blows the call stack once a single image is much past ~100KB (a real
@@ -2116,7 +2123,7 @@ function hashBase64(b64) {
 
 // ── DOWNLOAD JSON ─────────────────────────────────────────────────────────────
 const downloadJsonBtn = document.getElementById('download-json-btn');
-downloadJsonBtn.addEventListener('click', () => runExport(downloadJsonBtn, '⬇ Download JSON', async (list, onProgress) => {
+downloadJsonBtn.addEventListener('click', () => runExport(downloadJsonBtn, 'Building JSON', filtered.slice(), async (list, onProgress) => {
   const files = [];
   const seenHashes = new Set();
   let duplicates = 0;
@@ -5853,15 +5860,116 @@ lbFavBtn.addEventListener('click', () => {
 favFilterBtn.addEventListener('click', () => {
   favOnly = !favOnly;
   favFilterBtn.setAttribute('aria-pressed', favOnly ? 'true' : 'false');
-  favFilterBtn.textContent = favOnly ? '♥ Favourites' : '♡ Favourites';
+  favFilterBtn.querySelector('.ic').textContent = favOnly ? '♥' : '♡';
   applyFilter();
   rerender();
 });
 
-// ── COLLAPSIBLE MENU ──────────────────────────────────────────────────────────
-document.getElementById('controls-toggle').addEventListener('click', () => {
-  document.getElementById('controls').classList.toggle('collapsed');
+// ── STORAGE ───────────────────────────────────────────────────────────────────
+// What this page keeps in the browser: pictures (originals / enhanced copies)
+// and AI models, plus the browser's own total for the site and its quota.
+const storageDialog = document.getElementById('storage-dialog');
+function imageStoreTx(mode, fn) {
+  return openDb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(IMG_STORE, mode);
+    let result;
+    const req = fn(tx.objectStore(IMG_STORE));
+    if (req) req.onsuccess = () => { result = req.result; };
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('aborted'));
+  }));
+}
+async function refreshStorage() {
+  const orig = { n: 0, b: 0 }, enh = { n: 0, b: 0 };
+  let models = [], est = null;
+  try {
+    for (const r of (await imageStoreTx('readonly', st => st.getAll())) || []) {
+      const t = r.upscale ? enh : orig; t.n++; t.b += r.blob ? r.blob.size : 0;
+    }
+  } catch { /* storage unavailable */ }
+  try { models = (await modelStoreTx('readonly', st => st.getAll())) || []; } catch {}
+  try { if (navigator.storage && navigator.storage.estimate) est = await navigator.storage.estimate(); } catch {}
+  const mb = models.reduce((n, m) => n + (m.bytes || 0), 0);
+  const row = (title, detail, size) => '<div class="st-row"><span>' + title + '</span><small>' + detail + '</small><b>' + size + '</b></div>';
+  const names = models.map(m => (AI_MODELS.find(x => x.id === m.id) || { title: m.id }).title.replace('AI · ', ''));
+  document.getElementById('storage-rows').innerHTML =
+    row('🖼 Original pictures', orig.n + ' picture' + (orig.n === 1 ? '' : 's'), formatBytes(orig.b)) +
+    row('✨ Enhanced copies', enh.n + ' cop' + (enh.n === 1 ? 'y' : 'ies'), formatBytes(enh.b)) +
+    row('🤖 AI models', models.length ? names.join(', ') : 'none downloaded', formatBytes(mb));
+  const fill = document.getElementById('storage-fill'), quota = document.getElementById('storage-quota');
+  if (est && est.quota) {
+    fill.style.width = Math.min(100, est.usage / est.quota * 100).toFixed(1) + '%';
+    quota.textContent = 'This site uses ' + formatBytes(est.usage) + ' of the ' + formatBytes(est.quota) +
+      ' the browser allows (' + formatBytes(Math.max(0, est.quota - est.usage)) + ' free). The total includes the app’s own files.';
+  } else {
+    fill.style.width = '0'; quota.textContent = 'This browser doesn’t report how much space is available.';
+  }
+  document.getElementById('st-remove-enhanced').disabled = !enh.n && !ALL_IMAGES.some(img => img.upscale);
+  document.getElementById('st-remove-models').disabled = !models.length;
+}
+function openStorage() {
+  storageDialog.classList.add('open');
+  document.getElementById('storage-rows').innerHTML = '<p class="dialog-sub">Measuring…</p>';
+  refreshStorage();
+  document.getElementById('storage-close').focus();
+}
+function closeStorage() { storageDialog.classList.remove('open'); }
+document.getElementById('storage-btn').addEventListener('click', openStorage);
+document.getElementById('storage-close').addEventListener('click', closeStorage);
+storageDialog.addEventListener('click', e => { if (e.target === storageDialog) closeStorage(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && storageDialog.classList.contains('open')) closeStorage(); });
+document.getElementById('st-remove-enhanced').addEventListener('click', async () => {
+  const copies = ALL_IMAGES.filter(img => img.upscale);
+  if (!confirm('Remove all ' + copies.length + ' enhanced copies? The originals are kept.')) return;
+  try { await imageStoreTx('readwrite', st => { st.openCursor().onsuccess = e => { const c = e.target.result; if (c) { if (c.value.upscale) c.delete(); c.continue(); } }; }); }
+  catch (err) { console.error('Removing enhanced copies failed', err); }
+  for (const img of copies) {
+    removeFromView(img);
+    ALL_IMAGES.splice(ALL_IMAGES.indexOf(img), 1);
+    URL.revokeObjectURL(img.url);
+  }
+  syncLightbox();
+  updateCount();
+  showToast('Removed ' + copies.length + ' enhanced cop' + (copies.length === 1 ? 'y' : 'ies'));
+  refreshStorage();
 });
+document.getElementById('st-remove-models').addEventListener('click', async () => {
+  if (!confirm('Remove all downloaded AI models? They can be downloaded again later.')) return;
+  try { await modelStoreTx('readwrite', st => st.clear()); } catch (err) { console.error('Removing AI models failed', err); }
+  aiState.stored.clear(); aiState.compiled.clear();
+  aiRefreshUi();
+  showToast('AI models removed');
+  refreshStorage();
+});
+
+// ── TOP BAR MENUS ─────────────────────────────────────────────────────────────
+// Open / Save / View drop down from the top bar. A click outside or Escape
+// closes them; picking an action closes them too (View's controls don't, so
+// several view settings can be changed in one go).
+const topbar = document.getElementById('controls');
+const menus = [...document.querySelectorAll('.topbar .menu')];
+function closeMenus() {
+  menus.forEach(m => { m.querySelector('.menu-panel').hidden = true; m.querySelector('.menu-btn').setAttribute('aria-expanded', 'false'); });
+}
+menus.forEach(m => {
+  const btn = m.querySelector('.menu-btn'), panel = m.querySelector('.menu-panel');
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const open = panel.hidden;
+    closeMenus();
+    if (open) {
+      topbar.style.setProperty('--menu-top', Math.round(topbar.getBoundingClientRect().bottom + 4) + 'px');
+      panel.hidden = false; btn.setAttribute('aria-expanded', 'true');
+    }
+  });
+  panel.addEventListener('click', e => {
+    if (e.target.closest('.menu-item') || e.target.closest('#ss-toggle')) closeMenus();
+    e.stopPropagation();
+  });
+});
+document.addEventListener('click', closeMenus);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenus(); });
 
 // ── INSTALLABILITY ────────────────────────────────────────────────────────────
 function buildIconDataUrl(size) {
