@@ -3991,6 +3991,7 @@ function schedulePreview(delay) {
   drawOverviewFrame();
   previewEls.after.classList.add('stale');
   clearTimeout(preview.timer);
+  preview.pending = true;                     // a newer render is on its way
   preview.timer = setTimeout(runPreview, delay);
 }
 
@@ -4047,6 +4048,7 @@ function currentAiKey() {
 }
 
 async function runPreview() {
+  preview.pending = false;
   if (!preview.pixels || !enhanceDialog.classList.contains('open')) return;
   if (preview.busy) { preview.dirty = true; return; }
   const { rgba, w, h, jpeg } = preview.pixels;
@@ -4125,7 +4127,7 @@ async function runPreview() {
     tmp.getContext('2d').putImageData(new ImageData(out, RW, RH), 0, 0);
     previewEls.after.width = crop.w; previewEls.after.height = crop.h;
     previewEls.after.getContext('2d').drawImage(tmp, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
-    previewEls.after.classList.remove('stale');
+    if (!preview.pending && !preview.dirty) previewEls.after.classList.remove('stale');
     previewEls.status.textContent = 'Preview at ' + (Math.round(sc * 100) / 100) + '× · ' + describeSettings(settings);
   } catch (err) {
     if (err && err.message === 'cancelled') { /* superseded by a newer preview */ }
