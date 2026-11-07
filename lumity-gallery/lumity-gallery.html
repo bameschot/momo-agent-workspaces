@@ -525,7 +525,7 @@
     /* Label + control rows share one label column */
     .opt-row { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); align-items: center; gap: 0.6rem; color: var(--text); font-size: 0.85rem; }
     .opt-row[hidden] { display: none; }
-    #ai-options[hidden], #ai-pick-hint[hidden], #scale-hint[hidden], #denoise-row[hidden], #cugan-row[hidden] { display: none; }
+    #ai-options[hidden], #ai-pick-hint[hidden], #scale-hint[hidden], #denoise-row[hidden], #cugan-row[hidden], #aa-row[hidden] { display: none; }
     #use-ai + span small { display: block; color: var(--text-muted); font-size: 0.72rem; }
     #ai-note a { color: var(--accent2); }
     #auto-note { color: var(--accent2); font-size: 0.8rem; line-height: 1.4; }
@@ -881,6 +881,12 @@
         <span>Flat colour fills<small>Sets flat painted areas to one clean colour. Gradients and soft shading are left alone.</small></span></label>
       <label class="dialog-check extra"><input type="checkbox" id="extra-edges">
         <span>Edge cleanup<small>Removes JPEG speckle and ghost lines right next to outlines.</small></span></label>
+      <label class="dialog-check extra"><input type="checkbox" id="extra-aa">
+        <span>Edge anti-aliasing<small>Smooths staircase steps along slanted and curved lines, along each edge only, so lines stay sharp. Good after AI.</small></span></label>
+      <label class="slider-row" id="aa-row" hidden>Smoothing
+        <input type="range" id="aa-strength" min="10" max="100" step="10" value="60">
+        <output id="aa-strength-out">60</output>
+      </label>
     </fieldset>
     <fieldset>
       <legend>Format</legend>
@@ -1373,8 +1379,9 @@ function sanitizeUpscale(raw) {
     denoise: raw.engine === 'generalv3' && num(raw.denoise) != null ? Math.max(0, Math.min(100, raw.denoise)) : null,
     cuganMode: raw.engine === 'cugan' && CUGAN_MODES[raw.cuganMode] ? raw.cuganMode : null,
     device: raw.device === 'gpu' ? 'gpu' : null,
-    extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges)
-      ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges }
+    extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges || num(raw.extras.aa))
+      ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges,
+          ...(num(raw.extras.aa) ? { aa: Math.max(10, Math.min(100, raw.extras.aa)) } : {}) }
       : null,
     tuning: raw.tuning && typeof raw.tuning === 'object' && num(raw.tuning.flatness) != null && num(raw.tuning.lines) != null
       ? { flatness: Math.max(0, Math.min(100, raw.tuning.flatness)), lines: Math.max(0, Math.min(100, raw.tuning.lines)) }
@@ -1783,7 +1790,7 @@ let lbShowingOriginal = false;
 
 function extrasNames(x) {
   if (!x) return '';
-  return [x.lines && 'smooth lines', x.fills && 'flat fills', x.edges && 'edge cleanup'].filter(Boolean).join(' + ');
+  return [x.lines && 'smooth lines', x.fills && 'flat fills', x.edges && 'edge cleanup', x.aa && 'anti-aliasing ' + x.aa].filter(Boolean).join(' + ');
 }
 
 function describeUpscale(u) {
@@ -2683,6 +2690,90 @@ function upscalerModule() {
   // and line darkness (erosion). The map is smoothed — removing the pixel
   // stair-steps and JPEG wobble — and re-thresholded at half its local peak
   // with a ~1 px anti-aliased edge, then the line is re-painted from it.
+  // Edge anti-aliasing: removes staircase steps along slanted and curved
+  // edges. A smoothed structure tensor gives each pixel's edge direction and
+  // how clearly it is one edge (coherence); where it is, the colour is averaged
+  // along the edge (never across it), so the steps melt into a smooth slope
+  // while the edge stays sharp. period ≈ the step size in output pixels (the
+  // enlargement); strength 0–100.
+  function antialias(rgba, W, H, period, strength, sub = () => {}, k = {}) {
+    const N = W * H, s = Math.max(0, Math.min(1, strength / 100));
+    if (!(s > 0) || N === 0) return rgba;
+    const Y = new Float32Array(N);
+    for (let i = 0, j = 0; i < N; i++, j += 4) Y[i] = 0.299 * rgba[j] + 0.587 * rgba[j + 1] + 0.114 * rgba[j + 2];
+    const Ys = gaussBlur(Y, W, H, 0.7);
+    sub(0.15);
+    const J11 = new Float32Array(N), J12 = new Float32Array(N), J22 = new Float32Array(N);
+    for (let y = 0; y < H; y++) {
+      const ym = y > 0 ? y - 1 : 0, yp = y < H - 1 ? y + 1 : H - 1;
+      for (let x = 0; x < W; x++) {
+        const xm = x > 0 ? x - 1 : 0, xp = x < W - 1 ? x + 1 : W - 1, i = y * W + x;
+        const gx = (Ys[y * W + xp] - Ys[y * W + xm]) * 0.5, gy = (Ys[yp * W + x] - Ys[ym * W + x]) * 0.5;
+        J11[i] = gx * gx; J12[i] = gx * gy; J22[i] = gy * gy;
+      }
+    }
+    // Direction is measured over ~2 steps, so on a staircase it follows the
+    // true slope rather than each step; the average along it spans ~2.5 steps.
+    const rho = Math.max(1, (k.rho || 2) * period);
+    const A = gaussBlur(J11, W, H, rho), B = gaussBlur(J12, W, H, rho), C = gaussBlur(J22, W, H, rho);
+    sub(0.45);
+    const src = rgba, out = new Uint8ClampedArray(rgba), touched = new Float32Array(N);
+    const L = Math.max(2, Math.min(k.maxLen || 14, Math.round((k.len || 2.5) * period))), sig2 = 2 * (L / 2) * (L / 2);
+    const wk = new Float32Array(2 * L + 1);
+    for (let k = -L; k <= L; k++) wk[k + L] = Math.exp(-k * k / sig2);
+    for (let y = 0; y < H; y++) {
+      if ((y & 63) === 0) sub(0.45 + 0.55 * y / H);
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x, a = A[i], b = B[i], c = C[i];
+        const half = (a + c) / 2, d = Math.sqrt((a - c) * (a - c) / 4 + b * b);
+        const l1 = half + d, l2 = half - d;
+        if (l1 < 4) continue;                                   // no edge here (gradient < 2 levels/px)
+        const coh = (l1 - l2) / (l1 + l2 + 1e-6);
+        // Fully on for clear edges (strong, one direction); off in texture and flat areas.
+        const e = Math.min(1, Math.max(0, (Math.sqrt(l1) - 2) / 6)), q = Math.min(1, Math.max(0, (coh - 0.35) / 0.4));
+        const wgt = s * e * q;
+        if (wgt < 0.02) continue;
+        // Gradient direction = eigenvector of λ1; the edge runs perpendicular to it.
+        let gx = l1 - c, gy = b;
+        if (Math.abs(gx) + Math.abs(gy) < 1e-6) { gx = b; gy = l1 - a; }
+        const gl = Math.hypot(gx, gy) || 1, tx = -gy / gl, ty = gx / gl;
+        let r = 0, g = 0, bl = 0, ws = 0;
+        for (let k = -L; k <= L; k++) {
+          const px = Math.min(W - 1, Math.max(0, x + k * tx)), py = Math.min(H - 1, Math.max(0, y + k * ty));
+          const x0 = px | 0, y0 = py | 0, x1 = x0 < W - 1 ? x0 + 1 : x0, y1 = y0 < H - 1 ? y0 + 1 : y0;
+          const fx = px - x0, fy = py - y0, w = wk[k + L];
+          const i00 = (y0 * W + x0) * 4, i01 = (y0 * W + x1) * 4, i10 = (y1 * W + x0) * 4, i11 = (y1 * W + x1) * 4;
+          const w00 = (1 - fx) * (1 - fy) * w, w01 = fx * (1 - fy) * w, w10 = (1 - fx) * fy * w, w11 = fx * fy * w;
+          r += src[i00] * w00 + src[i01] * w01 + src[i10] * w10 + src[i11] * w11;
+          g += src[i00 + 1] * w00 + src[i01 + 1] * w01 + src[i10 + 1] * w10 + src[i11 + 1] * w11;
+          bl += src[i00 + 2] * w00 + src[i01 + 2] * w01 + src[i10 + 2] * w10 + src[i11 + 2] * w11;
+          ws += w;
+        }
+        const j = i * 4;
+        touched[i] = wgt;
+        out[j] = src[j] + (r / ws - src[j]) * wgt;
+        out[j + 1] = src[j + 1] + (g / ws - src[j + 1]) * wgt;
+        out[j + 2] = src[j + 2] + (bl / ws - src[j + 2]) * wgt;
+      }
+    }
+    // Averaging along the edge leaves a soft ramp where a step was; steepen
+    // it again across the edge (shock filter on luminance), so the edge is
+    // crisp at its new, smooth position.
+    const iters = k.shock ?? 2;
+    if (iters > 0) {
+      const Ya = new Float32Array(N);
+      for (let i = 0, j = 0; i < N; i++, j += 4) Ya[i] = 0.299 * out[j] + 0.587 * out[j + 1] + 0.114 * out[j + 2];
+      const Yb = shockFilter(Float32Array.from(Ya), W, H, iters, k.dt || 0.3, Math.max(1, Math.round(period / 2)));
+      for (let i = 0, j = 0; i < N; i++, j += 4) {
+        const t = touched[i];
+        if (t <= 0) continue;
+        const dlt = (Yb[i] - Ya[i]) * Math.min(1, t * 1.5);
+        out[j] += dlt; out[j + 1] += dlt; out[j + 2] += dlt;
+      }
+    }
+    return out;
+  }
+
   function redrawLines(Yo, W, H, scale, sub = () => {}) {
     const r = Math.max(2, Math.ceil(1.5 * scale));
     const dil = morph(Yo, W, H, r, true);
@@ -3088,10 +3179,11 @@ function upscalerModule() {
       redraw: x.lines ? outMP * 230 * scale : 0,
       accent: P.lines ? outMP * (300 + 25 * scale * scale) : x.lines ? outMP * 30 : 0,
       output: outMP * 30,
+      aa: x.aa ? outMP * (300 + 40 * Math.max(2, Math.min(14, Math.round(2.5 * (opts.lineScale || scale))))) : 0,
     };
   }
   const PREPARE_STAGES = ['planes', 'flatten', 'guide', 'chroma', 'edges', 'fills', 'field'];
-  const FINISH_STAGES = ['resampleY', 'resampleCb', 'resampleCr', 'shock', 'sharpen', 'redraw', 'accent', 'output'];
+  const FINISH_STAGES = ['resampleY', 'resampleCb', 'resampleCr', 'shock', 'sharpen', 'redraw', 'accent', 'output', 'aa'];
 
   // onProgress wrapper: track(stage, label, sub 0..1) → overall fraction.
   // part: 'all' | 'prepare' | 'finish' (each part alone runs 0..1).
@@ -3147,6 +3239,9 @@ function upscalerModule() {
     if (!onProgress.isTracker) track('done', 'Prepared');
     return { w, h, W, H, scale: W / w, P, extras, flattenWhite: !!opts.flattenWhite,
       preset: opts.preset, tuning: opts.tuning, jpegSource: opts.jpegSource,
+      // Scale of the steps in the picture: after AI the cleanup runs at 1× on
+      // an already enlarged picture whose stair-steps are the AI's enlargement.
+      lineScale: opts.lineScale || W / w,
       Yc, Cbc, Crc, A, C2: field.C2, S2: field.S2 };
   }
 
@@ -3172,7 +3267,7 @@ function upscalerModule() {
     if (P.finalFlatten) flattenFlatAreas(Yo, W, H, P.finalFlatten);
     if (extras.lines) {
       track('redraw', 'Redrawing lines…');
-      redrawLines(Yo, W, H, scale, f => track('redraw', 'Redrawing lines…', f));
+      redrawLines(Yo, W, H, prep.lineScale || scale, f => track('redraw', 'Redrawing lines…', f));
     }
     if (P.lines) {
       track('accent', 'Accentuating lines…');
@@ -3201,11 +3296,16 @@ function upscalerModule() {
       }
       out[j] = r; out[j + 1] = g; out[j + 2] = b; out[j + 3] = a;
     }
+    if (extras.aa) {
+      const res = antialias(out, W, H, prep.lineScale || scale, extras.aa, f => track('aa', 'Smoothing edges…', f));
+      track('done', 'Done');
+      return res;
+    }
     track('done', 'Done');
     return out;
   }
 
-  return { upscale, prepare, finish, analyzePicture, chooseAuto, stageCosts, PREPARE_STAGES, FINISH_STAGES, PRESETS, LANCZOS2, LUT_RES };
+  return { upscale, prepare, finish, antialias, analyzePicture, chooseAuto, stageCosts, PREPARE_STAGES, FINISH_STAGES, PRESETS, LANCZOS2, LUT_RES };
 }
 
 // ── ENHANCE (UPSCALE) ─────────────────────────────────────────────────────────
@@ -3244,6 +3344,11 @@ function createUpscaleWorker() {
       '      const bufs = [prep.Yc.buffer, prep.Cbc.buffer, prep.Crc.buffer, prep.C2.buffer, prep.S2.buffer];\n' +
       '      if (prep.A) bufs.push(prep.A.buffer);\n' +
       '      postMessage({ done: true, prep }, bufs);\n' +
+      '      return;\n' +
+      '    }\n' +
+      '    if (cmd === "antialias") {\n' +
+      '      const out = M.antialias(new Uint8ClampedArray(rgba), w, h, opts.period, opts.strength, f => prog(f, "Smoothing edges…"));\n' +
+      '      postMessage({ done: true, rgba: out.buffer }, [out.buffer]);\n' +
       '      return;\n' +
       '    }\n' +
       '    const out = M.upscale(new Uint8ClampedArray(rgba), w, h, opts, prog);\n' +
@@ -3303,7 +3408,8 @@ function describeSettings(st) {
 function engineExtras(settings) {
   if (settings.preset === 'none') return null;          // AI as-is: no built-in steps
   const x = settings.extras || {};
-  return x.lines || x.fills || x.edges ? { lines: !!x.lines, fills: !!x.fills, edges: !!x.edges } : null;
+  return x.lines || x.fills || x.edges || x.aa
+    ? { lines: !!x.lines, fills: !!x.fills, edges: !!x.edges, ...(x.aa ? { aa: x.aa } : {}) } : null;
 }
 
 // The engine options for a set of dialog settings.
@@ -3320,7 +3426,8 @@ function runUpscaleJob(rgba, w, h, opts, onProgress, cmd = 'upscale') {
   if (!worker) {
     return yieldToBrowser().then(() => {
       const M = getMainUpscaler();
-      return cmd === 'prepare' ? M.prepare(rgba, w, h, opts, onProgress) : M.upscale(rgba, w, h, opts, onProgress);
+      return cmd === 'prepare' ? M.prepare(rgba, w, h, opts, onProgress)
+        : cmd === 'antialias' ? M.antialias(rgba, w, h, opts.period, opts.strength) : M.upscale(rgba, w, h, opts, onProgress);
     });
   }
   return new Promise((resolve, reject) => {
@@ -3358,8 +3465,12 @@ async function builtinJob(rgba, w, h, opts, onProgress, device) {
   const M = getMainUpscaler(), c = M.stageCosts(w, h, opts);
   const sum = keys => keys.reduce((a, k) => a + c[k], 0);
   const prepCost = sum(M.PREPARE_STAGES), split = prepCost / (prepCost + sum(M.FINISH_STAGES) / 6);
-  const prep = await runUpscaleJob(rgba, w, h, opts, (f, label) => onProgress(f * split, label), 'prepare');
-  return gpuFinish(prep, f => onProgress(split + f * (1 - split), 'Upscaling on the GPU…'), null, true);
+  const aa = opts.extras && opts.extras.aa;
+  const prep = await runUpscaleJob(rgba, w, h, opts, (f, label) => onProgress(f * split * (aa ? 0.8 : 1), label), 'prepare');
+  const out = await gpuFinish(prep, f => onProgress((split + f * (1 - split)) * (aa ? 0.8 : 1), 'Upscaling on the GPU…'), null, true);
+  if (!aa) return out;                     // edge anti-aliasing runs on the CPU (in the worker)
+  return runUpscaleJob(out, opts.width, opts.height, { period: opts.lineScale || opts.width / w, strength: aa },
+    f => onProgress(0.8 + f * 0.2, 'Smoothing edges…'), 'antialias');
 }
 
 // Output-resolution half on the GPU. `asJob` makes it cancellable from the
@@ -3522,7 +3633,7 @@ function formatEta(sec) {
 const ETA_KEY = 'lumity-gallery-eta-v1';
 function etaSignature(st) {
   const x = st.extras || {};
-  return [st.engine || 'builtin', st.device, st.preset, x.lines ? 'L' : '', x.fills ? 'F' : '', x.edges ? 'E' : '',
+  return [st.engine || 'builtin', st.device, st.preset, x.lines ? 'L' : '', x.fills ? 'F' : '', x.edges ? 'E' : '', x.aa ? 'A' : '',
     st.mode === 'width' ? 'w' : st.scale].join('|');
 }
 function loadEtaRates() { try { return JSON.parse(localStorage.getItem(ETA_KEY)) || {}; } catch { return {}; } }
@@ -3687,6 +3798,7 @@ function readEnhanceForm() {
       lines: document.getElementById('extra-lines').checked,
       fills: document.getElementById('extra-fills').checked,
       edges: document.getElementById('extra-edges').checked,
+      aa: document.getElementById('extra-aa').checked ? Number(document.getElementById('aa-strength').value) : 0,
     },
     skipExisting: document.getElementById('enhance-skip').checked,
   };
@@ -3720,6 +3832,7 @@ function timeEstimate(st) {
   if (x.lines) { lo += 1; hi += 4; }
   if (x.fills) { lo += 0.5; hi += 1; }
   if (x.edges) { lo += 0.5; hi += 1.5; }
+  if (x.aa) { lo += 0.5; hi += 2; }
   if (st.mode === 'scale' && st.scale > 2) { const k = (st.scale / 2) ** 2; lo *= k; hi *= k; }   // ∝ output pixels
   if (st.device === 'gpu') { lo = Math.max(0.5, lo * 0.3); hi = Math.max(1, hi * 0.35); }   // output stages on the GPU
   return (lo < 1 ? '<1' : Math.round(lo)) + '–' + Math.round(hi);
@@ -3762,6 +3875,8 @@ function updateEnhanceSummary() {
   const autoNote = document.getElementById('auto-note');
   autoNote.hidden = st.preset !== 'auto';
   if (st.preset === 'auto' && enhanceMode === 'batch') autoNote.textContent = 'Settings are picked per picture; the preview shows the pick for the picture shown.';
+  document.getElementById('aa-row').hidden = !document.getElementById('extra-aa').checked;
+  document.getElementById('aa-strength-out').textContent = document.getElementById('aa-strength').value;
   document.getElementById('tune-flatness-out').textContent = st.flatness;
   document.getElementById('tune-lines-out').textContent = st.lines;
   schedulePreview();
@@ -3821,6 +3936,8 @@ function openEnhanceDialog(targets, mode) {
   document.getElementById('extra-lines').checked = !!savedExtras.lines;
   document.getElementById('extra-fills').checked = !!savedExtras.fills;
   document.getElementById('extra-edges').checked = !!savedExtras.edges;
+  document.getElementById('extra-aa').checked = !!savedExtras.aa;
+  if (savedExtras.aa) document.getElementById('aa-strength').value = savedExtras.aa;
   document.getElementById('enhance-title').textContent = mode === 'single' ? '✨ Enhance picture' : '✨ Enhance all';
   document.getElementById('enhance-target').textContent = mode === 'single'
     ? targets[0].name + ' — creates a separate enhanced copy; the original is kept.'
@@ -3860,6 +3977,7 @@ enhanceWidth.addEventListener('input', updateEnhanceSummary);
 tuneFlatness.addEventListener('input', updateEnhanceSummary);
 tuneLines.addEventListener('input', updateEnhanceSummary);
 document.getElementById('ai-denoise').addEventListener('input', updateEnhanceSummary);
+document.getElementById('aa-strength').addEventListener('input', updateEnhanceSummary);
 document.getElementById('tune-reset').addEventListener('click', () => {
   tuneFlatness.value = 50; tuneLines.value = 50;
   updateEnhanceSummary();
@@ -4042,7 +4160,8 @@ function previewWorkerRun(region, rw, rh, opts, cmd) {
   if (!preview.worker) preview.worker = createUpscaleWorker();
   if (!preview.worker) return yieldToBrowser().then(() => {
     const M = getMainUpscaler();
-    return cmd === 'prepare' ? M.prepare(region, rw, rh, opts) : M.upscale(region, rw, rh, opts);
+    return cmd === 'prepare' ? M.prepare(region, rw, rh, opts)
+      : cmd === 'antialias' ? M.antialias(region, rw, rh, opts.period, opts.strength) : M.upscale(region, rw, rh, opts);
   });
   return new Promise((resolve, reject) => {
     preview.worker.onmessage = e => {
@@ -4057,7 +4176,9 @@ function previewWorkerRun(region, rw, rh, opts, cmd) {
 async function previewEngine(region, rw, rh, opts, device, isCancelled) {
   if (device !== 'gpu') return previewWorkerRun(region, rw, rh, opts, 'upscale');
   const prep = await previewWorkerRun(region, rw, rh, opts, 'prepare');
-  return gpuFinish(prep, null, isCancelled, false);
+  const out = await gpuFinish(prep, null, isCancelled, false);
+  const aa = opts.extras && opts.extras.aa;
+  return aa ? previewWorkerRun(out, opts.width, opts.height, { period: opts.lineScale || opts.width / rw, strength: aa }, 'antialias') : out;
 }
 
 // Preview area for some settings: the crop (cs×cs around the chosen centre)
@@ -4156,7 +4277,7 @@ async function runPreview() {
       }
       const stale = () => closed() || preview.dirty;
       if (preview.dirty) throw new Error('cancelled');
-      if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false }, settings.device, stale);
+      if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false, lineScale: sc }, settings.device, stale);
     } else {
       const stale = () => token !== preview.token || preview.dirty || !enhanceDialog.classList.contains('open');
       out = await previewEngine(region, rw, rh, opts, settings.device, stale);
@@ -5428,7 +5549,7 @@ void main(){
             pass(B.fflat, Mo(), 10, bind => { bind('uCur', cur); bind('uMean', S[1]); gl.uniform1f(B.fflat.loc.uT, P.finalFlatten); }); swap();
           }
           if (extras.lines) {
-            const r = Math.max(2, Math.ceil(1.5 * scale)), sigma = 0.4 * scale;
+            const ls = prep.lineScale || scale, r = Math.max(2, Math.ceil(1.5 * ls)), sigma = 0.4 * ls;
             morph2(M(), 0, r, true, S[0], S[1]); morph2(S[1], 0, r, false, S[0], S[2]);   // S2 = closing
             morph2(M(), 0, r, false, S[0], S[3]);                                         // S3 = erosion
             const cur = M();
@@ -5823,7 +5944,7 @@ async function aiUpscale(px, W, H, settings, onProgress) {
   if (!post) return out;
   return builtinJob(out, W, H, {
     width: W, height: H, preset: settings.preset, tuning: engineTuning(settings),
-    extras: engineExtras(settings), jpegSource: false, flattenWhite: settings.format === 'jpeg',
+    extras: engineExtras(settings), jpegSource: false, flattenWhite: settings.format === 'jpeg', lineScale: W / w,
   }, (f, label) => onProgress(0.62 + f * 0.28, 'After AI: ' + label), settings.device);
 }
 
