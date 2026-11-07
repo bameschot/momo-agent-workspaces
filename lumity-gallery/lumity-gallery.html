@@ -533,7 +533,7 @@
     .ai-row button:disabled { opacity: 0.45; cursor: not-allowed; }
     #ai-note { color: var(--text-muted); font-size: 0.75rem; line-height: 1.4; }
     #ai-options { margin-top: 0.45rem; }
-    #ai-options[hidden], #ai-pick-hint[hidden], #scale-hint[hidden], #denoise-row[hidden] { display: none; }
+    #ai-options[hidden], #ai-pick-hint[hidden], #scale-hint[hidden], #denoise-row[hidden], #cugan-row[hidden] { display: none; }
     #use-ai + span small { display: block; color: var(--text-muted); font-size: 0.72rem; }
     #ai-note a { color: var(--accent2); }
     #auto-note { color: var(--accent2); font-size: 0.8rem; line-height: 1.4; }
@@ -794,6 +794,11 @@
           <label><input type="radio" name="engine" value="animevideov3" disabled><span>🤖 AI · Fast</span></label>
           <label><input type="radio" name="engine" value="generalv3" disabled><span>🤖 AI · Balanced</span></label>
           <label><input type="radio" name="engine" value="anime6b" disabled><span>🤖 AI · Best</span></label>
+          <label><input type="radio" name="engine" value="cugan" disabled><span>🤖 AI · Anime+</span></label>
+        </div>
+        <div class="chips" id="cugan-row" hidden>
+          <label><input type="radio" name="cuganMode" value="conservative" checked><span>Conservative</span></label>
+          <label><input type="radio" name="cuganMode" value="denoise3x"><span>Denoise</span></label>
         </div>
         <label class="slider-row" id="denoise-row" hidden>Denoise
           <input type="range" id="ai-denoise" min="0" max="100" step="5" value="50">
@@ -1300,7 +1305,8 @@ async function storeFavorite(id, favorite) {
 // Same-size cleanups use label "cleaned" and "name.cleaned.png".
 const UPSCALE_NAME_RE = /^(.+)\.(?:upscaled-(\d+(?:\.\d+)?x|\d+w)|(cleaned))\.(png|jpe?g|webp|gif)$/i;
 const PRESET_NAMES = { soft: 'Soft', balanced: 'Balanced', strong: 'Strong', lumity: 'Lumity', none: 'No cleanup' };
-const ENGINE_NAMES = { builtin: 'Built-in', animevideov3: 'AI Fast', generalv3: 'AI Balanced', anime6b: 'AI Best' };
+const ENGINE_NAMES = { builtin: 'Built-in', animevideov3: 'AI Fast', generalv3: 'AI Balanced', anime6b: 'AI Best', cugan: 'AI Anime+' };
+const CUGAN_MODES = { conservative: 'conservative', denoise3x: 'denoise' };
 
 function stripExt(name) {
   const dot = name.lastIndexOf('.');
@@ -1332,6 +1338,7 @@ function sanitizeUpscale(raw) {
     auto: !!raw.auto,
     engine: ENGINE_NAMES[raw.engine] ? raw.engine : null,
     denoise: raw.engine === 'generalv3' && num(raw.denoise) != null ? Math.max(0, Math.min(100, raw.denoise)) : null,
+    cuganMode: raw.engine === 'cugan' && CUGAN_MODES[raw.cuganMode] ? raw.cuganMode : null,
     device: raw.device === 'gpu' ? 'gpu' : null,
     extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges)
       ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges }
@@ -1749,7 +1756,8 @@ function extrasNames(x) {
 function describeUpscale(u) {
   const parts = [u.label === 'cleaned' ? '✨ Cleaned up' : '✨ Upscaled ' + upscaleLabelText(u.label)];
   const ai = u.engine && u.engine !== 'builtin';
-  if (ai) parts.push('🤖 ' + ENGINE_NAMES[u.engine] + (u.denoise != null ? ' (denoise ' + u.denoise + ')' : '') + (u.preset && u.preset !== 'none' ? ' → ' + PRESET_NAMES[u.preset] +
+  if (ai) parts.push('🤖 ' + ENGINE_NAMES[u.engine] + (u.denoise != null ? ' (denoise ' + u.denoise + ')' : '') +
+    (u.cuganMode ? ' (' + CUGAN_MODES[u.cuganMode] + ')' : '') + (u.preset && u.preset !== 'none' ? ' → ' + PRESET_NAMES[u.preset] +
     (u.tuning ? ' (flatness ' + u.tuning.flatness + ', lines ' + u.tuning.lines + ')' : '') : ''));
   else if (u.preset) parts.push((u.auto ? 'Auto → ' : '') + PRESET_NAMES[u.preset] +
     (u.tuning ? ' (flatness ' + u.tuning.flatness + ', lines ' + u.tuning.lines + ')' : ''));
@@ -3205,7 +3213,8 @@ function resolveSettings(settings, pixels, scale, stats) {
 // "Lumity (flatness 60, lines 50) · flat fills + edge cleanup"
 function describeSettings(st) {
   if (isAiEngine(st)) {
-    return '🤖 ' + ENGINE_NAMES[st.engine] + (st.engine === 'generalv3' ? ' (denoise ' + st.denoise + ')' : '') + (st.preset === 'none' ? '' : ' → ' + PRESET_NAMES[st.preset] +
+    return '🤖 ' + ENGINE_NAMES[st.engine] + (st.engine === 'generalv3' ? ' (denoise ' + st.denoise + ')' : '') +
+      (st.engine === 'cugan' ? ' (' + CUGAN_MODES[st.cuganMode] + ')' : '') + (st.preset === 'none' ? '' : ' → ' + PRESET_NAMES[st.preset] +
       (st.preset === 'lumity' ? ' (flatness ' + st.flatness + ', lines ' + st.lines + ')' : '')) +
       (engineExtras(st) ? ' · ' + extrasNames(engineExtras(st)) : '');
   }
@@ -3372,6 +3381,7 @@ async function enhanceOne(original, settings, onProgress) {
       preset: settings.preset, format: settings.format, tuning: engineTuning(settings), extras: engineExtras(settings),
       auto: !!settings.auto, engine: settings.engine || 'builtin',
       ...(settings.engine === 'generalv3' ? { denoise: settings.denoise } : {}),
+      ...(settings.engine === 'cugan' ? { cuganMode: settings.cuganMode } : {}),
       device: settings.device === 'gpu' && !(isAiEngine(settings) && settings.preset === 'none') ? 'gpu' : 'cpu',
       originalWidth: w, originalHeight: h, width: size.W, height: size.H,
       created: Date.now(),
@@ -3588,6 +3598,7 @@ function readEnhanceForm() {
     preset: f.preset.value,
     format: f.format.value,
     denoise: Number(document.getElementById('ai-denoise').value),
+    cuganMode: f.cuganMode.value,
     flatness: Number(tuneFlatness.value),
     lines: Number(tuneLines.value),
     extras: {
@@ -3607,6 +3618,7 @@ function timeEstimate(st) {
   }
   if (st.engine === 'animevideov3') return st.preset === 'none' ? '2–10' : '4–20';
   if (st.engine === 'generalv3') return st.preset === 'none' ? '4–20' : '6–30';
+  if (st.engine === 'cugan') return st.preset === 'none' ? '8–40' : '10–50';
   if (st.engine === 'anime6b') return st.preset === 'none' ? '20–90' : '25–100';
   if (st.preset === 'auto') return '2–12';
   let lo = st.preset === 'lumity' ? 2 : 1, hi = st.preset === 'lumity' ? 7 : 3;
@@ -3629,6 +3641,7 @@ function updateEnhanceSummary() {
     : 'Download a model below (or load its files) to use AI. Until then the built-in engine is used.';
   const ai = f.engine.value !== 'builtin';
   document.getElementById('denoise-row').hidden = f.engine.value !== 'generalv3';
+  document.getElementById('cugan-row').hidden = f.engine.value !== 'cugan';
   document.getElementById('ai-denoise-out').textContent = document.getElementById('ai-denoise').value;
   // "None" only makes sense after AI; Auto only for the built-in engine.
   document.getElementById('preset-none-chip').hidden = !ai;
@@ -3706,6 +3719,7 @@ function openEnhanceDialog(targets, mode) {
   tuneFlatness.value = Number.isFinite(saved.flatness) ? saved.flatness : 50;
   tuneLines.value = Number.isFinite(saved.lines) ? saved.lines : 50;
   document.getElementById('ai-denoise').value = Number.isFinite(saved.denoise) ? saved.denoise : 50;
+  f.cuganMode.value = CUGAN_MODES[saved.cuganMode] ? saved.cuganMode : 'conservative';
   const savedExtras = saved.extras || {};
   document.getElementById('extra-lines').checked = !!savedExtras.lines;
   document.getElementById('extra-fills').checked = !!savedExtras.fills;
@@ -4008,7 +4022,7 @@ async function runPreview() {
       out = await aiRun(settings.engine, region, rw, rh, RW, RH, f => {
         pct.textContent = Math.round(f * 100) + '%';
         previewEls.status.textContent = 'Rendering AI preview… ' + Math.round(f * 100) + '%';
-      }, stale, settings.denoise);
+      }, stale, { denoise: settings.denoise, cuganMode: settings.cuganMode, seFrom: { rgba, w, h } });
       if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false }, settings.device, stale);
     } else {
       const stale = () => token !== preview.token || preview.dirty || !enhanceDialog.classList.contains('open');
@@ -5256,6 +5270,9 @@ const AI_MODELS = [
   { id: 'generalv3', title: 'AI · Balanced', detail: 'Real-ESRGAN general (realesr-general-x4v3 + its denoise variant) · 4.9 MB · for photos and art',
     file: 'models/realesr-general-x4v3', wdnFile: 'models/realesr-general-wdn-x4v3', bytes: 2 * 2435272 },
   { id: 'anime6b', title: 'AI · Best', detail: 'Real-ESRGAN anime 6B (realesrgan-x4plus-anime) · 9 MB · slower', file: 'models/realesrgan-x4plus-anime', bytes: 8973790 },
+  { id: 'cugan', title: 'AI · Anime+', detail: 'Real-CUGAN (Bilibili) · 2× and 4×, conservative and denoise · 10.8 MB',
+    parts: ['up2x-conservative', 'up2x-denoise3x', 'up4x-conservative', 'up4x-denoise3x'], partFile: k => 'models/realcugan-' + k,
+    bytes: 2 * 2573648 + 2 * 2818348 },
 ];
 const AI_PREVIEW_PAD = 24;
 const aiState = { stored: new Set(), compiled: new Map(), runner: null, gpuError: null, busy: new Set(), progress: {} };
@@ -5286,7 +5303,18 @@ function aiRunner() {
 // denoise (0–100) only matters for AI · Balanced: its weights are a blend of
 // realesr-general-x4v3 (strong denoise) and the -wdn variant (weak denoise),
 // the same "DNI" blend the official Real-ESRGAN tool uses.
-async function aiGetModel(id, denoise = 50) {
+// opts: { denoise } for AI · Balanced; { part } (e.g. 'up2x-conservative') for AI · Anime+.
+async function aiGetModel(id, opts = {}) {
+  const denoise = opts.denoise ?? 50;
+  if (id === 'cugan') {
+    const key = 'cugan:' + opts.part;
+    if (aiState.compiled.has(key)) return aiState.compiled.get(key).model;
+    const rec = await modelStoreTx('readonly', st => st.get(id));
+    if (!rec || !rec.parts || !rec.parts[opts.part]) throw new Error('The AI model is not downloaded.');
+    const model = aiModule().compile(rec.parts[opts.part].param, rec.parts[opts.part].bin);
+    aiState.compiled.set(key, { model });
+    return model;
+  }
   let entry = aiState.compiled.get(id);
   if (!entry) {
     const rec = await modelStoreTx('readonly', st => st.get(id));
@@ -5330,9 +5358,12 @@ async function withGpu(fn) {
   }
 }
 
-async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled, denoise) {
-  const model = await aiGetModel(id, denoise);
-  return withGpu(r => r.run(model, rgba, w, h, W, H, onProgress, isCancelled));
+// opts: { denoise, cuganMode, seFrom } (seFrom: the whole picture, when rgba is
+// only a part of it — Real-CUGAN measures its channel weights on the whole).
+async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled, opts = {}) {
+  const part = id === 'cugan' ? (W / w > 2.001 ? 'up4x-' : 'up2x-') + (opts.cuganMode === 'denoise3x' ? 'denoise3x' : 'conservative') : null;
+  const model = await aiGetModel(id, { denoise: opts.denoise, part });
+  return withGpu(r => r.run(model, rgba, w, h, W, H, onProgress, isCancelled, { seFrom: opts.seFrom }));
 }
 
 function gpuBuiltinAvailable() { return !aiState.gpuError && !!aiState.runner && aiState.runner.float32; }
@@ -5342,11 +5373,22 @@ function gpuBuiltinAvailable() { return !aiState.gpuError && !!aiState.runner &&
 function aiIdentify(model) {
   if (model.arch === 'compact' && model.convs.length === 18) return 'animevideov3';
   if (model.arch === 'compact' && model.convs.length === 34) return 'generalv3';
+  if (model.arch === 'cugan') return 'cugan';
   if (model.arch === 'rrdb' && model.blocks === 6) return 'anime6b';
   return null;
 }
 
 // extra: { param, bin } of the second (weak-denoise) file pair for AI · Balanced.
+// AI · Anime+: all four Real-CUGAN file pairs in one record.
+async function aiSaveParts(id, parts, source) {
+  const M = aiModule();
+  let bytes = 0;
+  for (const k in parts) { M.compile(parts[k].param, parts[k].bin); bytes += parts[k].param.length + parts[k].bin.byteLength; }
+  await modelStoreTx('readwrite', st => st.put({ id, parts, bytes, source, savedAt: Date.now() }));
+  for (const k of aiState.compiled.keys()) if (k === id || k.startsWith(id + ':')) aiState.compiled.delete(k);
+  aiState.stored.add(id);
+}
+
 async function aiSaveModel(id, param, bin, source, extra = null) {
   const M = aiModule();
   M.compile(param, bin);                                              // validates the files
@@ -5363,7 +5405,7 @@ async function aiDownload(id) {
   if (location.protocol === 'file:') throw new Error('Downloading needs the page opened from the website. Use "Load model files…" instead.');
   aiState.busy.add(id); aiRefreshUi();
   try {
-    const files = m.wdnFile ? [m.file, m.wdnFile] : [m.file];
+    const files = m.parts ? m.parts.map(m.partFile) : m.wdnFile ? [m.file, m.wdnFile] : [m.file];
     let before = 0;
     const pairs = [];
     for (const file of files) {
@@ -5384,7 +5426,8 @@ async function aiDownload(id) {
       let o = 0; for (const c of chunks) { bin.set(c, o); o += c.length; }
       pairs.push({ param, bin: bin.buffer });
     }
-    await aiSaveModel(id, pairs[0].param, pairs[0].bin, 'download', pairs[1] || null);
+    if (m.parts) await aiSaveParts(id, Object.fromEntries(m.parts.map((k, i) => [k, pairs[i]])), 'download');
+    else await aiSaveModel(id, pairs[0].param, pairs[0].bin, 'download', pairs[1] || null);
     showToast(m.title + ' model saved — works offline now ✨');
   } finally {
     aiState.busy.delete(id); delete aiState.progress[id];
@@ -5394,7 +5437,8 @@ async function aiDownload(id) {
 
 async function aiRemove(id) {
   await modelStoreTx('readwrite', st => st.delete(id));
-  aiState.stored.delete(id); aiState.compiled.delete(id);
+  aiState.stored.delete(id);
+  for (const k of [...aiState.compiled.keys()]) if (k === id || k.startsWith(id + ':')) aiState.compiled.delete(k);
   const f = enhanceForm.elements;
   if (f.engine.value === id) { f.engine.value = 'builtin'; updateEnhanceSummary(); }
   aiRefreshUi();
@@ -5409,6 +5453,7 @@ async function aiLoadFiles(files) {
   }
   let added = 0;
   const general = {};                      // AI · Balanced needs both of its file pairs
+  const cugan = {};                        // AI · Anime+ needs all four
   for (const [base, pair] of byBase) {
     if (!pair.param || !pair.bin) { showToast('Pick both ' + base + '.param and ' + base + '.bin.'); continue; }
     try {
@@ -5416,9 +5461,17 @@ async function aiLoadFiles(files) {
       const id = aiIdentify(aiModule().compile(param, bin));
       if (!id) { showToast(base + ' is not one of the supported models.'); continue; }
       if (id === 'generalv3') { general[/wdn/i.test(base) ? 'weak' : 'strong'] = { param, bin }; continue; }
+      if (id === 'cugan') {
+        const k = (/up4x/i.test(base) ? 'up4x-' : /up2x/i.test(base) ? 'up2x-' : '?') + (/conservative/i.test(base) ? 'conservative' : /denoise3x/i.test(base) ? 'denoise3x' : '?');
+        if (k.includes('?')) { showToast(base + ': only the up2x/up4x conservative and denoise3x Real-CUGAN files are used.'); continue; }
+        cugan[k] = { param, bin }; continue;
+      }
       await aiSaveModel(id, param, bin, 'file'); added++;
     } catch (err) { showToast('Could not use ' + base + ': ' + err.message); }
   }
+  const cuganParts = AI_MODELS.find(x => x.id === 'cugan').parts;
+  if (cuganParts.every(k => cugan[k])) { await aiSaveParts('cugan', cugan, 'file'); added++; }
+  else if (Object.keys(cugan).length) showToast('AI · Anime+ needs all four Real-CUGAN files (' + cuganParts.join(', ') + ', .param + .bin) — pick them together.');
   if (general.strong && general.weak) {
     await aiSaveModel('generalv3', general.strong.param, general.strong.bin, 'file', general.weak); added++;
   } else if (general.strong || general.weak) {
@@ -5473,9 +5526,10 @@ async function aiRefreshUi() {
   note.textContent = '';
   if (aiState.gpuError) note.textContent = 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). The built-in engine still works.';
   else {
-    note.append('Optional. Models run on your GPU and are stored in this browser. Real-ESRGAN models by Xintao Wang, ');
-    const a = document.createElement('a'); a.href = 'models/LICENSE-Real-ESRGAN.txt'; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'BSD-3-Clause';
-    note.append(a, '.');
+    const link = (href, text) => { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text; return a; };
+    note.append('Optional. Models run on your GPU and are stored in this browser. Real-ESRGAN models by Xintao Wang, ',
+      link('models/LICENSE-Real-ESRGAN.txt', 'BSD-3-Clause'), '; Real-CUGAN by Bilibili (ncnn files by nihui), ',
+      link('models/LICENSE-Real-CUGAN.txt', 'MIT'), '.');
   }
   // "Use AI" on but no model was ready yet: pick one as soon as it is.
   if (document.getElementById('use-ai').checked && enhanceForm.elements.engine.value === 'builtin' &&
@@ -5498,7 +5552,8 @@ async function aiUpscale(px, W, H, settings, onProgress) {
   try {
     onProgress(0.03, 'Loading AI model…');
     out = await aiRun(settings.engine, rgba, w, h, W, H,
-      f => onProgress(0.05 + f * (post ? 0.55 : 0.85), 'AI upscaling…'), () => cancelled, settings.denoise);
+      f => onProgress(0.05 + f * (post ? 0.55 : 0.85), 'AI upscaling…'), () => cancelled,
+      { denoise: settings.denoise, cuganMode: settings.cuganMode });
   } catch (err) {
     if (cancelled) throw new CancelledError('Cancelled');
     throw err;
