@@ -495,6 +495,33 @@
     .dialog-actions button.primary { background: var(--glow); border-color: var(--accent2); color: #fff; font-weight: 600; }
     .dialog-actions button:hover, #progress-cancel:hover { border-color: var(--accent2); }
     #progress-cancel[hidden] { display: none; }
+    .dialog-card { width: min(560px, 100%); }
+
+    /* Lumity sliders */
+    #tuning-fields[hidden] { display: none; }
+    .slider-row { display: grid; grid-template-columns: 7.5rem 1fr 2.2rem; align-items: center; gap: 0.6rem; color: var(--text); font-size: 0.85rem; }
+    .slider-row input[type=range] { width: 100%; accent-color: var(--accent2); }
+    .slider-row output { color: var(--accent2); font-variant-numeric: tabular-nums; text-align: right; }
+    .link-btn { background: none; border: none; color: var(--accent2); font-size: 0.78rem; cursor: pointer; text-decoration: underline; padding: 0; align-self: flex-start; }
+
+    /* Preview */
+    .preview { display: flex; flex-direction: column; gap: 0.5rem; }
+    .preview-head { display: flex; align-items: center; gap: 0.5rem; color: var(--text-muted); font-size: 0.8rem; min-width: 0; }
+    .preview-head .preview-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .preview-head button { background: var(--surface2); border: 1px solid var(--border); color: var(--accent2); border-radius: 6px; padding: 0.15rem 0.55rem; cursor: pointer; }
+    .preview-head button[hidden] { display: none; }
+    .preview-body { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr); gap: 0.5rem; align-items: start; }
+    .preview-body figure { margin: 0; display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+    .preview-body figcaption { color: var(--text-muted); font-size: 0.72rem; text-align: center; }
+    .preview-body canvas { width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); display: block; }
+    #preview-overview { cursor: crosshair; touch-action: none; }
+    #preview-after.stale { opacity: 0.55; }
+    #preview-status { color: var(--text-muted); font-size: 0.75rem; min-height: 1em; }
+    @media (max-width: 420px) {
+      .preview-body { grid-template-columns: 1fr 1fr; }
+      .preview-body figure.overview { grid-column: 1 / -1; }
+      .preview-body figure.overview canvas { max-height: 140px; width: auto; max-width: 100%; margin: 0 auto; }
+    }
 
     /* ── TOAST ── */
     /* ── LOAD PROGRESS ── */
@@ -731,6 +758,18 @@
       </div>
       <p class="dialog-sub" id="preset-hint"></p>
     </fieldset>
+    <fieldset id="tuning-fields" hidden>
+      <legend>Lumity tuning</legend>
+      <label class="slider-row">Flatness
+        <input type="range" id="tune-flatness" min="0" max="100" step="5" value="50">
+        <output id="tune-flatness-out">50</output>
+      </label>
+      <label class="slider-row">Line boldness
+        <input type="range" id="tune-lines" min="0" max="100" step="5" value="50">
+        <output id="tune-lines-out">50</output>
+      </label>
+      <button type="button" class="link-btn" id="tune-reset">Reset to 50 / 50</button>
+    </fieldset>
     <fieldset>
       <legend>Format</legend>
       <div class="chips">
@@ -741,6 +780,20 @@
     <label class="dialog-check" id="skip-row" hidden>
       <input type="checkbox" id="enhance-skip" checked> Skip pictures that already have an upscaled copy
     </label>
+    <div class="preview" aria-label="Preview">
+      <div class="preview-head">
+        <span class="preview-name" id="preview-name"></span>
+        <button type="button" id="preview-prev" aria-label="Previous picture" hidden>‹</button>
+        <span id="preview-pos" hidden></span>
+        <button type="button" id="preview-next" aria-label="Next picture" hidden>›</button>
+      </div>
+      <div class="preview-body">
+        <figure class="overview"><canvas id="preview-overview" width="160" height="160" aria-label="Tap to choose the preview area"></canvas><figcaption>Tap to choose area</figcaption></figure>
+        <figure><canvas id="preview-before" width="200" height="200"></canvas><figcaption>Before</figcaption></figure>
+        <figure><canvas id="preview-after" width="200" height="200"></canvas><figcaption>After</figcaption></figure>
+      </div>
+      <div id="preview-status" aria-live="polite"></div>
+    </div>
     <p class="dialog-sub" id="enhance-summary"></p>
     <div class="dialog-actions">
       <button type="button" id="enhance-cancel">Cancel</button>
@@ -1160,6 +1213,9 @@ function sanitizeUpscale(raw) {
     originalWidth: num(raw.originalWidth), originalHeight: num(raw.originalHeight),
     width: num(raw.width), height: num(raw.height),
     created: num(raw.created),
+    tuning: raw.tuning && typeof raw.tuning === 'object' && num(raw.tuning.flatness) != null && num(raw.tuning.lines) != null
+      ? { flatness: Math.max(0, Math.min(100, raw.tuning.flatness)), lines: Math.max(0, Math.min(100, raw.tuning.lines)) }
+      : null,
   };
 }
 
@@ -1542,7 +1598,8 @@ let lbShowingOriginal = false;
 
 function describeUpscale(u) {
   const parts = ['✨ Upscaled ' + upscaleLabelText(u.label)];
-  if (u.preset) parts.push(PRESET_NAMES[u.preset]);
+  if (u.preset) parts.push(PRESET_NAMES[u.preset] +
+    (u.tuning ? ' (flatness ' + u.tuning.flatness + ', lines ' + u.tuning.lines + ')' : ''));
   if (u.format) parts.push(u.format.toUpperCase());
   if (u.originalWidth && u.width) parts.push(u.originalWidth + '×' + u.originalHeight + ' → ' + u.width + '×' + u.height);
   if (u.of == null) parts.push('original not in this set');
@@ -2408,10 +2465,25 @@ function upscalerModule() {
     return out;
   }
 
-  // rgba: Uint8ClampedArray (w×h). opts: { width, height, preset, jpegSource,
-  // flattenWhite }. onProgress(fraction 0..1, label).
+  // Lumity sliders: flatness / lines in 0..100, 50 = the preset as defined,
+  // 0 = that step off, 100 = about twice as strong.
+  function tunePreset(P, tuning) {
+    if (!tuning || !P.flatten) return P;
+    const clamp = v => Math.max(0, Math.min(100, Number.isFinite(v) ? v : 50));
+    const f = clamp(tuning.flatness) / 50, b = clamp(tuning.lines) / 50;
+    const iterations = Math.round(P.flatten.iterations * f);
+    return {
+      ...P,
+      flatten: iterations > 0 ? { ...P.flatten, iterations, sigma: P.flatten.sigma * (0.5 + 0.5 * f) } : null,
+      finalFlatten: P.finalFlatten * f,
+      lines: b > 0 ? { ...P.lines, darken: P.lines.darken * b, saturate: P.lines.saturate * b } : null,
+    };
+  }
+
+  // rgba: Uint8ClampedArray (w×h). opts: { width, height, preset, tuning,
+  // jpegSource, flattenWhite }. onProgress(fraction 0..1, label).
   function upscale(rgba, w, h, opts, onProgress = () => {}) {
-    const P = PRESETS[opts.preset] || PRESETS.balanced;
+    const P = tunePreset(PRESETS[opts.preset] || PRESETS.balanced, opts.tuning);
     const W = opts.width, H = opts.height, n = w * h, N = W * H;
 
     onProgress(0.02, 'Cleaning up compression noise…');
@@ -2497,8 +2569,7 @@ let upscaleWorker = null;
 let mainThreadUpscaler = null;
 let currentJob = null;
 
-function getUpscaleWorker() {
-  if (upscaleWorker) return upscaleWorker;
+function createUpscaleWorker() {
   try {
     const src = 'const M = (' + upscalerModule.toString() + ')();\n' +
       'onmessage = e => {\n' +
@@ -2512,12 +2583,21 @@ function getUpscaleWorker() {
       '    postMessage({ done: true, rgba: out.buffer }, [out.buffer]);\n' +
       '  } catch (err) { postMessage({ error: String((err && err.message) || err) }); }\n' +
       '};';
-    upscaleWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    return new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
   } catch (err) {
     console.warn('Web Worker unavailable; upscaling on the main thread', err);
-    upscaleWorker = null;
+    return null;
   }
+}
+
+function getUpscaleWorker() {
+  if (!upscaleWorker) upscaleWorker = createUpscaleWorker();
   return upscaleWorker;
+}
+
+// The engine options for a set of dialog settings.
+function engineTuning(settings) {
+  return settings.preset === 'lumity' ? { flatness: settings.flatness, lines: settings.lines } : null;
 }
 
 class CancelledError extends Error {}
@@ -2607,7 +2687,7 @@ async function enhanceOne(original, settings, onProgress) {
   if (!size) return { skipped: 'already at least that size' };
 
   const out = await runUpscaleJob(rgba, w, h, {
-    width: size.W, height: size.H, preset: settings.preset,
+    width: size.W, height: size.H, preset: settings.preset, tuning: engineTuning(settings),
     jpegSource: jpeg, flattenWhite: settings.format === 'jpeg',
   }, (f, label) => onProgress(0.05 + f * 0.85, label));
 
@@ -2621,7 +2701,7 @@ async function enhanceOne(original, settings, onProgress) {
     modified: original.modified ?? null,
     upscale: {
       of: original.id, label: size.label, scale: Math.round(size.scale * 1000) / 1000,
-      preset: settings.preset, format: settings.format,
+      preset: settings.preset, format: settings.format, tuning: engineTuning(settings),
       originalWidth: w, originalHeight: h, width: size.W, height: size.H,
       created: Date.now(),
     },
@@ -2713,6 +2793,8 @@ async function runEnhance(targets, settings, mode) {
 const enhanceDialog = document.getElementById('enhance-dialog');
 const enhanceForm   = document.getElementById('enhance-form');
 const enhanceWidth  = document.getElementById('enhance-width');
+const tuneFlatness  = document.getElementById('tune-flatness');
+const tuneLines     = document.getElementById('tune-lines');
 let enhanceTargets = [], enhanceMode = 'single', enhanceReturnFocus = null;
 
 function loadEnhanceSettings() {
@@ -2731,6 +2813,8 @@ function readEnhanceForm() {
     width: Math.max(100, Math.min(MAX_OUTPUT_SIDE, Math.round(Number(enhanceWidth.value) || 1500))),
     preset: f.preset.value,
     format: f.format.value,
+    flatness: Number(tuneFlatness.value),
+    lines: Number(tuneLines.value),
     skipExisting: document.getElementById('enhance-skip').checked,
   };
 }
@@ -2738,6 +2822,10 @@ function readEnhanceForm() {
 function updateEnhanceSummary() {
   const st = readEnhanceForm();
   document.getElementById('width-row').hidden = st.mode !== 'width';
+  document.getElementById('tuning-fields').hidden = st.preset !== 'lumity';
+  document.getElementById('tune-flatness-out').textContent = st.flatness;
+  document.getElementById('tune-lines-out').textContent = st.lines;
+  schedulePreview();
   document.getElementById('preset-hint').textContent = PRESET_HINTS[st.preset];
   const summary = document.getElementById('enhance-summary');
   if (enhanceMode === 'single') {
@@ -2770,6 +2858,8 @@ function openEnhanceDialog(targets, mode) {
   if (saved.width) enhanceWidth.value = saved.width;
   if (PRESET_NAMES[saved.preset]) f.preset.value = saved.preset;
   if (saved.format === 'png' || saved.format === 'jpeg') f.format.value = saved.format;
+  tuneFlatness.value = Number.isFinite(saved.flatness) ? saved.flatness : 50;
+  tuneLines.value = Number.isFinite(saved.lines) ? saved.lines : 50;
   document.getElementById('enhance-title').textContent = mode === 'single' ? '✨ Enhance picture' : '✨ Enhance all';
   document.getElementById('enhance-target').textContent = mode === 'single'
     ? targets[0].name + ' — creates a separate upscaled copy; the original is kept.'
@@ -2777,17 +2867,269 @@ function openEnhanceDialog(targets, mode) {
   document.getElementById('skip-row').hidden = mode !== 'batch';
   enhanceReturnFocus = document.activeElement;
   enhanceDialog.classList.add('open');
+  openPreview(targets);
   updateEnhanceSummary();
   document.getElementById('enhance-go').focus();
 }
 
 function closeEnhanceDialog() {
   enhanceDialog.classList.remove('open');
+  closePreview();
   if (enhanceReturnFocus && enhanceReturnFocus.focus) enhanceReturnFocus.focus();
 }
 
 enhanceForm.addEventListener('change', updateEnhanceSummary);
 enhanceWidth.addEventListener('input', updateEnhanceSummary);
+tuneFlatness.addEventListener('input', updateEnhanceSummary);
+tuneLines.addEventListener('input', updateEnhanceSummary);
+document.getElementById('tune-reset').addEventListener('click', () => {
+  tuneFlatness.value = 50; tuneLines.value = 50;
+  updateEnhanceSummary();
+});
+
+// ── ENHANCE PREVIEW ───────────────────────────────────────────────────────────
+// Runs the real engine on a small crop of the picture (in its own worker) so
+// settings can be judged before the full run. The crop is padded and aligned
+// to the 8×8 JPEG grid so it comes out the same as in the full picture.
+const PREVIEW_OUT = 200;                 // preview tiles are 200×200 output px
+const PREVIEW_PAD = 16;                  // context around the crop (multiple of 8)
+const previewEls = {
+  name: document.getElementById('preview-name'),
+  prev: document.getElementById('preview-prev'),
+  next: document.getElementById('preview-next'),
+  pos: document.getElementById('preview-pos'),
+  overview: document.getElementById('preview-overview'),
+  before: document.getElementById('preview-before'),
+  after: document.getElementById('preview-after'),
+  status: document.getElementById('preview-status'),
+};
+const preview = {
+  targets: [], index: 0, pixels: null, center: null, overviewScale: 1,
+  worker: null, busy: false, dirty: false, timer: null, token: 0,
+};
+
+function openPreview(targets) {
+  preview.targets = targets;
+  preview.index = 0;
+  const multi = targets.length > 1;
+  previewEls.prev.hidden = previewEls.next.hidden = previewEls.pos.hidden = !multi;
+  loadPreviewTarget();
+}
+
+function closePreview() {
+  preview.token++;
+  preview.pixels = null;
+  preview.sourceCanvas = null;
+  overviewBase = null;
+  clearTimeout(preview.timer);
+  if (preview.worker) { preview.worker.terminate(); preview.worker = null; }
+  preview.busy = false;
+}
+
+async function loadPreviewTarget() {
+  const token = ++preview.token;
+  const target = preview.targets[preview.index];
+  preview.pixels = null;
+  previewEls.name.textContent = 'Preview · ' + target.name;
+  previewEls.pos.textContent = (preview.index + 1) + ' / ' + preview.targets.length;
+  previewEls.status.textContent = 'Loading picture…';
+  try {
+    const px = await decodePixels(target);
+    if (token !== preview.token) return;
+    preview.pixels = px;
+    drawOverviewImage();
+    preview.center = busiestPoint();
+    drawOverviewFrame();
+    schedulePreview(0);
+  } catch (err) {
+    if (token === preview.token) previewEls.status.textContent = 'Preview unavailable for this picture.';
+  }
+}
+
+let overviewBase = null;     // ImageData of the plain overview (frame drawn on top)
+
+function drawOverviewImage() {
+  const { rgba, w, h } = preview.pixels;
+  const max = 160, k = Math.min(1, max / Math.max(w, h));
+  const ow = Math.max(1, Math.round(w * k)), oh = Math.max(1, Math.round(h * k));
+  const src = document.createElement('canvas');
+  src.width = w; src.height = h;
+  src.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0);
+  const c = previewEls.overview;
+  c.width = ow; c.height = oh;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, ow, oh);
+  overviewBase = ctx.getImageData(0, 0, ow, oh);
+  preview.overviewScale = k;
+  preview.sourceCanvas = src;
+}
+
+// Default preview spot: the part of the overview with the most edge detail
+// (usually line work), so the effect of the settings is easy to see.
+function busiestPoint() {
+  const { w, h } = preview.pixels;
+  const { width: ow, height: oh, data } = overviewBase;
+  const k = preview.overviewScale;
+  const lum = new Float32Array(ow * oh);
+  for (let i = 0; i < ow * oh; i++) lum[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+  const win = Math.max(4, Math.round(cropSourceSize() * k));
+  let best = -1, bx = ow / 2, by = oh / 2;
+  for (let y = 0; y + win < oh; y += 2) {
+    for (let x = 0; x + win < ow; x += 2) {
+      let sum = 0;
+      for (let yy = y + 1; yy < y + win; yy += 2) {
+        for (let xx = x + 1; xx < x + win; xx += 2) {
+          const i = yy * ow + xx;
+          sum += Math.abs(lum[i] - lum[i - 1]) + Math.abs(lum[i] - lum[i - ow]);
+        }
+      }
+      if (sum > best) { best = sum; bx = x + win / 2; by = y + win / 2; }
+    }
+  }
+  return { x: Math.min(w - 1, bx / k), y: Math.min(h - 1, by / k) };
+}
+
+function previewScale() {
+  if (!preview.pixels) return null;
+  const size = targetSize(preview.pixels.w, preview.pixels.h, readEnhanceForm());
+  return size ? size.scale : null;
+}
+
+function cropSourceSize() {
+  const sc = previewScale() || 2;
+  return Math.max(8, Math.ceil(PREVIEW_OUT / sc));
+}
+
+function drawOverviewFrame() {
+  if (!overviewBase || !preview.center) return;
+  const c = previewEls.overview, ctx = c.getContext('2d');
+  ctx.putImageData(overviewBase, 0, 0);
+  const k = preview.overviewScale, cs = cropSourceSize() * k;
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#ffffff';
+  ctx.strokeRect(preview.center.x * k - cs / 2, preview.center.y * k - cs / 2, cs, cs);
+  ctx.strokeStyle = '#9b59b6';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(preview.center.x * k - cs / 2 - 1.5, preview.center.y * k - cs / 2 - 1.5, cs + 3, cs + 3);
+}
+
+previewEls.overview.addEventListener('pointerdown', e => {
+  if (!preview.pixels) return;
+  const pick = ev => {
+    const r = previewEls.overview.getBoundingClientRect();
+    const x = (ev.clientX - r.left) / r.width * previewEls.overview.width;
+    const y = (ev.clientY - r.top) / r.height * previewEls.overview.height;
+    preview.center = {
+      x: Math.max(0, Math.min(preview.pixels.w - 1, x / preview.overviewScale)),
+      y: Math.max(0, Math.min(preview.pixels.h - 1, y / preview.overviewScale)),
+    };
+    drawOverviewFrame();
+    schedulePreview(120);
+  };
+  pick(e);
+  previewEls.overview.setPointerCapture(e.pointerId);
+  const move = ev => pick(ev);
+  const up = () => { previewEls.overview.removeEventListener('pointermove', move); previewEls.overview.removeEventListener('pointerup', up); };
+  previewEls.overview.addEventListener('pointermove', move);
+  previewEls.overview.addEventListener('pointerup', up);
+});
+
+previewEls.prev.addEventListener('click', () => {
+  preview.index = (preview.index - 1 + preview.targets.length) % preview.targets.length;
+  loadPreviewTarget();
+});
+previewEls.next.addEventListener('click', () => {
+  preview.index = (preview.index + 1) % preview.targets.length;
+  loadPreviewTarget();
+});
+
+function schedulePreview(delay = 180) {
+  if (!enhanceDialog.classList.contains('open') || !preview.pixels) return;
+  drawOverviewFrame();
+  previewEls.after.classList.add('stale');
+  clearTimeout(preview.timer);
+  preview.timer = setTimeout(runPreview, delay);
+}
+
+// Only one preview render at a time; a change while rendering re-runs once
+// the current render finishes (so dragging a slider never queues up work).
+function runPreview() {
+  if (!preview.pixels || !enhanceDialog.classList.contains('open')) return;
+  if (preview.busy) { preview.dirty = true; return; }
+  const settings = readEnhanceForm();
+  const { rgba, w, h, jpeg } = preview.pixels;
+  const size = targetSize(w, h, settings);
+  if (!size) {
+    previewEls.status.textContent = 'This picture is already at least that size.';
+    previewEls.after.classList.remove('stale');
+    return;
+  }
+  const sc = size.scale, cs = Math.max(8, Math.ceil(PREVIEW_OUT / sc));
+  // Crop (cs×cs around the chosen centre) plus padding, aligned to 8 px.
+  const cx0 = Math.round(Math.max(0, Math.min(w - cs, preview.center.x - cs / 2)));
+  const cy0 = Math.round(Math.max(0, Math.min(h - cs, preview.center.y - cs / 2)));
+  const rx0 = Math.max(0, Math.floor((cx0 - PREVIEW_PAD) / 8) * 8);
+  const ry0 = Math.max(0, Math.floor((cy0 - PREVIEW_PAD) / 8) * 8);
+  const rx1 = Math.min(w, cx0 + cs + PREVIEW_PAD), ry1 = Math.min(h, cy0 + cs + PREVIEW_PAD);
+  const rw = rx1 - rx0, rh = ry1 - ry0;
+  const region = new Uint8ClampedArray(rw * rh * 4);
+  for (let y = 0; y < rh; y++) {
+    const from = ((ry0 + y) * w + rx0) * 4;
+    region.set(rgba.subarray(from, from + rw * 4), y * rw * 4);
+  }
+  const RW = Math.round(rw * sc), RH = Math.round(rh * sc);
+  const opts = { width: RW, height: RH, preset: settings.preset, tuning: engineTuning(settings),
+    jpegSource: jpeg, flattenWhite: settings.format === 'jpeg' };
+  const crop = { x: Math.round((cx0 - rx0) * sc), y: Math.round((cy0 - ry0) * sc),
+    w: Math.min(PREVIEW_OUT, Math.round(Math.min(cs, w) * sc)), h: Math.min(PREVIEW_OUT, Math.round(Math.min(cs, h) * sc)) };
+  const token = preview.token;
+  preview.busy = true;
+  previewEls.status.textContent = 'Rendering preview…';
+
+  // "Before": the same area scaled the normal way by the browser.
+  const bctx = previewEls.before.getContext('2d');
+  previewEls.before.width = crop.w; previewEls.before.height = crop.h;
+  bctx.imageSmoothingQuality = 'high';
+  bctx.drawImage(preview.sourceCanvas, cx0, cy0, crop.w / sc, crop.h / sc, 0, 0, crop.w, crop.h);
+
+  const done = out => {
+    preview.busy = false;
+    if (token !== preview.token) return;
+    const full = new ImageData(out, RW, RH);
+    const tmp = document.createElement('canvas');
+    tmp.width = RW; tmp.height = RH;
+    tmp.getContext('2d').putImageData(full, 0, 0);
+    previewEls.after.width = crop.w; previewEls.after.height = crop.h;
+    previewEls.after.getContext('2d').drawImage(tmp, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
+    previewEls.after.classList.remove('stale');
+    previewEls.status.textContent = 'Preview at ' + (Math.round(sc * 100) / 100) + '× · ' + PRESET_NAMES[settings.preset] +
+      (settings.preset === 'lumity' ? ' (flatness ' + settings.flatness + ', lines ' + settings.lines + ')' : '');
+    if (preview.dirty) { preview.dirty = false; runPreview(); }
+  };
+  const fail = () => {
+    preview.busy = false;
+    if (token === preview.token) previewEls.status.textContent = 'Preview failed.';
+    if (preview.dirty) { preview.dirty = false; runPreview(); }
+  };
+
+  if (!preview.worker) preview.worker = createUpscaleWorker();
+  if (!preview.worker) {
+    setTimeout(() => {
+      try {
+        mainThreadUpscaler = mainThreadUpscaler || upscalerModule();
+        done(mainThreadUpscaler.upscale(region, rw, rh, opts));
+      } catch { fail(); }
+    }, 0);
+    return;
+  }
+  preview.worker.onmessage = e => {
+    if (e.data.done) done(new Uint8ClampedArray(e.data.rgba));
+    else if (e.data.error) fail();
+  };
+  preview.worker.onerror = ev => { ev.preventDefault(); preview.worker.terminate(); preview.worker = null; fail(); };
+  preview.worker.postMessage({ rgba: region.buffer, w: rw, h: rh, opts }, [region.buffer]);
+}
 document.getElementById('enhance-cancel').addEventListener('click', closeEnhanceDialog);
 enhanceDialog.addEventListener('click', e => { if (e.target === enhanceDialog) closeEnhanceDialog(); });
 enhanceForm.addEventListener('submit', e => {
