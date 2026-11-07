@@ -533,7 +533,7 @@
     .ai-row button:disabled { opacity: 0.45; cursor: not-allowed; }
     #ai-note { color: var(--text-muted); font-size: 0.75rem; line-height: 1.4; }
     #ai-options { margin-top: 0.45rem; }
-    #ai-options[hidden], #ai-pick-hint[hidden], #scale-hint[hidden] { display: none; }
+    #ai-options[hidden], #ai-pick-hint[hidden], #scale-hint[hidden], #denoise-row[hidden] { display: none; }
     #use-ai + span small { display: block; color: var(--text-muted); font-size: 0.72rem; }
     #ai-note a { color: var(--accent2); }
     #auto-note { color: var(--accent2); font-size: 0.8rem; line-height: 1.4; }
@@ -792,8 +792,13 @@
         <div class="chips">
           <label hidden><input type="radio" name="engine" value="builtin" checked><span>Built-in</span></label>
           <label><input type="radio" name="engine" value="animevideov3" disabled><span>🤖 AI · Fast</span></label>
+          <label><input type="radio" name="engine" value="generalv3" disabled><span>🤖 AI · Balanced</span></label>
           <label><input type="radio" name="engine" value="anime6b" disabled><span>🤖 AI · Best</span></label>
         </div>
+        <label class="slider-row" id="denoise-row" hidden>Denoise
+          <input type="range" id="ai-denoise" min="0" max="100" step="5" value="50">
+          <output id="ai-denoise-out">50</output>
+        </label>
         <p class="dialog-sub" id="ai-pick-hint" hidden></p>
         <div class="ai-models" id="ai-models"></div>
         <div class="ai-row"><button type="button" id="ai-load-files">Load model files…</button>
@@ -1295,7 +1300,7 @@ async function storeFavorite(id, favorite) {
 // Same-size cleanups use label "cleaned" and "name.cleaned.png".
 const UPSCALE_NAME_RE = /^(.+)\.(?:upscaled-(\d+(?:\.\d+)?x|\d+w)|(cleaned))\.(png|jpe?g|webp|gif)$/i;
 const PRESET_NAMES = { soft: 'Soft', balanced: 'Balanced', strong: 'Strong', lumity: 'Lumity', none: 'No cleanup' };
-const ENGINE_NAMES = { builtin: 'Built-in', animevideov3: 'AI Fast', anime6b: 'AI Best' };
+const ENGINE_NAMES = { builtin: 'Built-in', animevideov3: 'AI Fast', generalv3: 'AI Balanced', anime6b: 'AI Best' };
 
 function stripExt(name) {
   const dot = name.lastIndexOf('.');
@@ -1326,6 +1331,7 @@ function sanitizeUpscale(raw) {
     created: num(raw.created),
     auto: !!raw.auto,
     engine: ENGINE_NAMES[raw.engine] ? raw.engine : null,
+    denoise: raw.engine === 'generalv3' && num(raw.denoise) != null ? Math.max(0, Math.min(100, raw.denoise)) : null,
     device: raw.device === 'gpu' ? 'gpu' : null,
     extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges)
       ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges }
@@ -1743,7 +1749,7 @@ function extrasNames(x) {
 function describeUpscale(u) {
   const parts = [u.label === 'cleaned' ? '✨ Cleaned up' : '✨ Upscaled ' + upscaleLabelText(u.label)];
   const ai = u.engine && u.engine !== 'builtin';
-  if (ai) parts.push('🤖 ' + ENGINE_NAMES[u.engine] + (u.preset && u.preset !== 'none' ? ' → ' + PRESET_NAMES[u.preset] +
+  if (ai) parts.push('🤖 ' + ENGINE_NAMES[u.engine] + (u.denoise != null ? ' (denoise ' + u.denoise + ')' : '') + (u.preset && u.preset !== 'none' ? ' → ' + PRESET_NAMES[u.preset] +
     (u.tuning ? ' (flatness ' + u.tuning.flatness + ', lines ' + u.tuning.lines + ')' : '') : ''));
   else if (u.preset) parts.push((u.auto ? 'Auto → ' : '') + PRESET_NAMES[u.preset] +
     (u.tuning ? ' (flatness ' + u.tuning.flatness + ', lines ' + u.tuning.lines + ')' : ''));
@@ -3199,7 +3205,7 @@ function resolveSettings(settings, pixels, scale, stats) {
 // "Lumity (flatness 60, lines 50) · flat fills + edge cleanup"
 function describeSettings(st) {
   if (isAiEngine(st)) {
-    return '🤖 ' + ENGINE_NAMES[st.engine] + (st.preset === 'none' ? '' : ' → ' + PRESET_NAMES[st.preset] +
+    return '🤖 ' + ENGINE_NAMES[st.engine] + (st.engine === 'generalv3' ? ' (denoise ' + st.denoise + ')' : '') + (st.preset === 'none' ? '' : ' → ' + PRESET_NAMES[st.preset] +
       (st.preset === 'lumity' ? ' (flatness ' + st.flatness + ', lines ' + st.lines + ')' : '')) +
       (engineExtras(st) ? ' · ' + extrasNames(engineExtras(st)) : '');
   }
@@ -3365,6 +3371,7 @@ async function enhanceOne(original, settings, onProgress) {
       of: original.id, label: size.label, scale: Math.round(size.scale * 1000) / 1000,
       preset: settings.preset, format: settings.format, tuning: engineTuning(settings), extras: engineExtras(settings),
       auto: !!settings.auto, engine: settings.engine || 'builtin',
+      ...(settings.engine === 'generalv3' ? { denoise: settings.denoise } : {}),
       device: settings.device === 'gpu' && !(isAiEngine(settings) && settings.preset === 'none') ? 'gpu' : 'cpu',
       originalWidth: w, originalHeight: h, width: size.W, height: size.H,
       created: Date.now(),
@@ -3580,6 +3587,7 @@ function readEnhanceForm() {
     device: f.device.value,
     preset: f.preset.value,
     format: f.format.value,
+    denoise: Number(document.getElementById('ai-denoise').value),
     flatness: Number(tuneFlatness.value),
     lines: Number(tuneLines.value),
     extras: {
@@ -3598,6 +3606,7 @@ function timeEstimate(st) {
     return '<1–' + Math.max(1, Math.round(t[1] * 0.4));
   }
   if (st.engine === 'animevideov3') return st.preset === 'none' ? '2–10' : '4–20';
+  if (st.engine === 'generalv3') return st.preset === 'none' ? '4–20' : '6–30';
   if (st.engine === 'anime6b') return st.preset === 'none' ? '20–90' : '25–100';
   if (st.preset === 'auto') return '2–12';
   let lo = st.preset === 'lumity' ? 2 : 1, hi = st.preset === 'lumity' ? 7 : 3;
@@ -3619,6 +3628,8 @@ function updateEnhanceSummary() {
   pickHint.textContent = aiState.gpuError ? 'AI isn’t available in this browser — the built-in engine is used.'
     : 'Download a model below (or load its files) to use AI. Until then the built-in engine is used.';
   const ai = f.engine.value !== 'builtin';
+  document.getElementById('denoise-row').hidden = f.engine.value !== 'generalv3';
+  document.getElementById('ai-denoise-out').textContent = document.getElementById('ai-denoise').value;
   // "None" only makes sense after AI; Auto only for the built-in engine.
   document.getElementById('preset-none-chip').hidden = !ai;
   document.getElementById('preset-auto-chip').hidden = ai;
@@ -3686,12 +3697,15 @@ function openEnhanceDialog(targets, mode) {
   if (saved.aiEngine || (saved.engine && saved.engine !== 'builtin')) lastAiEngine = saved.aiEngine || saved.engine;
   aiRefreshUi().then(() => {
     if (document.getElementById('use-ai').checked) pickAiEngine();
+    // "None (AI as-is)" was reset while the engine still read Built-in.
+    if (saved.preset === 'none' && f.engine.value !== 'builtin') f.preset.value = 'none';
     if (saved.device === 'gpu' && gpuBuiltinAvailable()) f.device.value = 'gpu';
     updateEnhanceSummary();                      // GPU availability is known now
   });
   if (saved.format === 'png' || saved.format === 'jpeg') f.format.value = saved.format;
   tuneFlatness.value = Number.isFinite(saved.flatness) ? saved.flatness : 50;
   tuneLines.value = Number.isFinite(saved.lines) ? saved.lines : 50;
+  document.getElementById('ai-denoise').value = Number.isFinite(saved.denoise) ? saved.denoise : 50;
   const savedExtras = saved.extras || {};
   document.getElementById('extra-lines').checked = !!savedExtras.lines;
   document.getElementById('extra-fills').checked = !!savedExtras.fills;
@@ -3730,6 +3744,7 @@ enhanceForm.addEventListener('change', updateEnhanceSummary);
 enhanceWidth.addEventListener('input', updateEnhanceSummary);
 tuneFlatness.addEventListener('input', updateEnhanceSummary);
 tuneLines.addEventListener('input', updateEnhanceSummary);
+document.getElementById('ai-denoise').addEventListener('input', updateEnhanceSummary);
 document.getElementById('tune-reset').addEventListener('click', () => {
   tuneFlatness.value = 50; tuneLines.value = 50;
   updateEnhanceSummary();
@@ -3993,7 +4008,7 @@ async function runPreview() {
       out = await aiRun(settings.engine, region, rw, rh, RW, RH, f => {
         pct.textContent = Math.round(f * 100) + '%';
         previewEls.status.textContent = 'Rendering AI preview… ' + Math.round(f * 100) + '%';
-      }, stale);
+      }, stale, settings.denoise);
       if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false }, settings.device, stale);
     } else {
       const stale = () => token !== preview.token || preview.dirty || !enhanceDialog.classList.contains('open');
@@ -4683,7 +4698,10 @@ void main(){
     // Whole picture, tile by tile. Returns RGBA (alpha 255) at W×H.
     async function run(model, rgba, w, h, W, H, onProgress, isCancelled) {
       if (gl.isContextLost()) throw new Error('The GPU was reset — please try again.');
-      if (!model.wTex || model.wGl !== gl) { upload(model); model.wGl = gl; }
+      if (!model.wTex || model.wGl !== gl || model.wVersion !== model.version) {
+        if (model.wTex && model.wGl === gl) gl.deleteTexture(model.wTex);
+        upload(model); model.wGl = gl; model.wVersion = model.version;
+      }
       const s = W / w;
       const core = model.arch === 'compact' ? 256 : 96, pad = model.pad;
       const out = new Uint8ClampedArray(W * H * 4);
@@ -4869,6 +4887,8 @@ void main(){
 // IndexedDB so everything works offline. They can also be picked from disk.
 const AI_MODELS = [
   { id: 'animevideov3', title: 'AI · Fast', detail: 'Real-ESRGAN anime (realesr-animevideov3) · 1.2 MB', file: 'models/realesr-animevideov3-x4', bytes: 1250445 },
+  { id: 'generalv3', title: 'AI · Balanced', detail: 'Real-ESRGAN general (realesr-general-x4v3 + its denoise variant) · 4.9 MB · for photos and art',
+    file: 'models/realesr-general-x4v3', wdnFile: 'models/realesr-general-wdn-x4v3', bytes: 2 * 2435272 },
   { id: 'anime6b', title: 'AI · Best', detail: 'Real-ESRGAN anime 6B (realesrgan-x4plus-anime) · 9 MB · slower', file: 'models/realesrgan-x4plus-anime', bytes: 8973790 },
 ];
 const AI_PREVIEW_PAD = 24;
@@ -4897,13 +4917,36 @@ function aiRunner() {
   return aiState.runner;
 }
 
-async function aiGetModel(id) {
-  if (aiState.compiled.has(id)) return aiState.compiled.get(id);
-  const rec = await modelStoreTx('readonly', st => st.get(id));
-  if (!rec) throw new Error('The AI model is not downloaded.');
-  const model = aiModule().compile(rec.param, rec.bin);
-  aiState.compiled.set(id, model);
-  return model;
+// denoise (0–100) only matters for AI · Balanced: its weights are a blend of
+// realesr-general-x4v3 (strong denoise) and the -wdn variant (weak denoise),
+// the same "DNI" blend the official Real-ESRGAN tool uses.
+async function aiGetModel(id, denoise = 50) {
+  let entry = aiState.compiled.get(id);
+  if (!entry) {
+    const rec = await modelStoreTx('readonly', st => st.get(id));
+    if (!rec) throw new Error('The AI model is not downloaded.');
+    const M = aiModule();
+    entry = { model: M.compile(rec.param, rec.bin) };
+    if (rec.param2) {
+      entry.strong = M.compile(rec.param, rec.bin);
+      entry.weak = M.compile(rec.param2, rec.bin2);
+      entry.model.version = 0; entry.denoise = null;
+    }
+    aiState.compiled.set(id, entry);
+  }
+  if (entry.weak) {
+    const s = Math.max(0, Math.min(100, denoise)) / 100;
+    if (entry.denoise !== s) {
+      const mix = (out, a, b) => { for (let i = 0; i < out.length; i++) out[i] = a[i] * s + b[i] * (1 - s); };
+      entry.model.convs.forEach((c, k) => {
+        const a = entry.strong.convs[k], b = entry.weak.convs[k];
+        mix(c.weight, a.weight, b.weight); mix(c.bias, a.bias, b.bias);
+        if (c.prelu) mix(c.prelu, a.prelu, b.prelu);
+      });
+      entry.denoise = s; entry.model.version++;          // the runner re-uploads the weights
+    }
+  }
+  return entry.model;
 }
 
 let aiActive = 0;
@@ -4921,23 +4964,30 @@ async function withGpu(fn) {
   }
 }
 
-async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled) {
-  const model = await aiGetModel(id);
+async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled, denoise) {
+  const model = await aiGetModel(id, denoise);
   return withGpu(r => r.run(model, rgba, w, h, W, H, onProgress, isCancelled));
 }
 
 function gpuBuiltinAvailable() { return !aiState.gpuError && !!aiState.runner && aiState.runner.float32; }
 
 // Which supported model a parsed file pair is.
+// Both general-x4v3 files have the same shape; the -wdn one is told apart by name.
 function aiIdentify(model) {
-  if (model.arch === 'compact') return 'animevideov3';
+  if (model.arch === 'compact' && model.convs.length === 18) return 'animevideov3';
+  if (model.arch === 'compact' && model.convs.length === 34) return 'generalv3';
   if (model.arch === 'rrdb' && model.blocks === 6) return 'anime6b';
   return null;
 }
 
-async function aiSaveModel(id, param, bin, source) {
-  aiModule().compile(param, bin);                                     // validates the files
-  await modelStoreTx('readwrite', st => st.put({ id, param, bin, bytes: param.length + bin.byteLength, source, savedAt: Date.now() }));
+// extra: { param, bin } of the second (weak-denoise) file pair for AI · Balanced.
+async function aiSaveModel(id, param, bin, source, extra = null) {
+  const M = aiModule();
+  M.compile(param, bin);                                              // validates the files
+  if (extra) M.compile(extra.param, extra.bin);
+  await modelStoreTx('readwrite', st => st.put({ id, param, bin,
+    ...(extra ? { param2: extra.param, bin2: extra.bin } : {}),
+    bytes: param.length + bin.byteLength + (extra ? extra.param.length + extra.bin.byteLength : 0), source, savedAt: Date.now() }));
   aiState.compiled.delete(id);
   aiState.stored.add(id);
 }
@@ -4947,22 +4997,28 @@ async function aiDownload(id) {
   if (location.protocol === 'file:') throw new Error('Downloading needs the page opened from the website. Use "Load model files…" instead.');
   aiState.busy.add(id); aiRefreshUi();
   try {
-    const param = await fetch(m.file + '.param').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); });
-    const res = await fetch(m.file + '.bin');
-    if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
-    const total = +res.headers.get('content-length') || m.bytes;
-    const reader = res.body.getReader(), chunks = [];
-    let got = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value); got += value.length;
-      aiState.progress[id] = Math.min(99, Math.round(got / total * 100));
-      aiRefreshRow(id);
+    const files = m.wdnFile ? [m.file, m.wdnFile] : [m.file];
+    let before = 0;
+    const pairs = [];
+    for (const file of files) {
+      const param = await fetch(file + '.param').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); });
+      const res = await fetch(file + '.bin');
+      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+      const reader = res.body.getReader(), chunks = [];
+      let got = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); got += value.length;
+        aiState.progress[id] = Math.min(99, Math.round((before + got) / m.bytes * 100));
+        aiRefreshRow(id);
+      }
+      before += got;
+      const bin = new Uint8Array(got);
+      let o = 0; for (const c of chunks) { bin.set(c, o); o += c.length; }
+      pairs.push({ param, bin: bin.buffer });
     }
-    const bin = new Uint8Array(got);
-    let o = 0; for (const c of chunks) { bin.set(c, o); o += c.length; }
-    await aiSaveModel(id, param, bin.buffer, 'download');
+    await aiSaveModel(id, pairs[0].param, pairs[0].bin, 'download', pairs[1] || null);
     showToast(m.title + ' model saved — works offline now ✨');
   } finally {
     aiState.busy.delete(id); delete aiState.progress[id];
@@ -4986,14 +5042,21 @@ async function aiLoadFiles(files) {
     const e = byBase.get(m[1]) || {}; e[m[2].toLowerCase()] = file; byBase.set(m[1], e);
   }
   let added = 0;
+  const general = {};                      // AI · Balanced needs both of its file pairs
   for (const [base, pair] of byBase) {
     if (!pair.param || !pair.bin) { showToast('Pick both ' + base + '.param and ' + base + '.bin.'); continue; }
     try {
       const param = await pair.param.text(), bin = await pair.bin.arrayBuffer();
       const id = aiIdentify(aiModule().compile(param, bin));
       if (!id) { showToast(base + ' is not one of the supported models.'); continue; }
+      if (id === 'generalv3') { general[/wdn/i.test(base) ? 'weak' : 'strong'] = { param, bin }; continue; }
       await aiSaveModel(id, param, bin, 'file'); added++;
     } catch (err) { showToast('Could not use ' + base + ': ' + err.message); }
+  }
+  if (general.strong && general.weak) {
+    await aiSaveModel('generalv3', general.strong.param, general.strong.bin, 'file', general.weak); added++;
+  } else if (general.strong || general.weak) {
+    showToast('AI · Balanced needs both realesr-general-x4v3 and realesr-general-wdn-x4v3 (.param + .bin) — pick all four files together.');
   }
   if (added) showToast('Loaded ' + added + ' AI model' + (added === 1 ? '' : 's') + ' ✨');
   aiRefreshUi();
@@ -5069,7 +5132,7 @@ async function aiUpscale(px, W, H, settings, onProgress) {
   try {
     onProgress(0.03, 'Loading AI model…');
     out = await aiRun(settings.engine, rgba, w, h, W, H,
-      f => onProgress(0.05 + f * (post ? 0.55 : 0.85), 'AI upscaling…'), () => cancelled);
+      f => onProgress(0.05 + f * (post ? 0.55 : 0.85), 'AI upscaling…'), () => cancelled, settings.denoise);
   } catch (err) {
     if (cancelled) throw new CancelledError('Cancelled');
     throw err;
