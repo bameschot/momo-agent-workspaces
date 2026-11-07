@@ -503,6 +503,9 @@
     .extra input { margin-top: 0.2rem; flex: none; }
     .extra span { display: flex; flex-direction: column; gap: 0.1rem; }
     .extra small { color: var(--text-muted); font-size: 0.76rem; line-height: 1.35; }
+    #extras-fields:disabled .extra { opacity: 0.45; cursor: default; }
+    #auto-note { color: var(--accent2); font-size: 0.8rem; line-height: 1.4; }
+    #auto-note[hidden] { display: none; }
     .slider-row { display: grid; grid-template-columns: 7.5rem 1fr 2.2rem; align-items: center; gap: 0.6rem; color: var(--text); font-size: 0.85rem; }
     .slider-row input[type=range] { width: 100%; accent-color: var(--accent2); }
     .slider-row output { color: var(--accent2); font-variant-numeric: tabular-nums; text-align: right; }
@@ -759,8 +762,10 @@
         <label><input type="radio" name="preset" value="balanced"><span>Balanced</span></label>
         <label><input type="radio" name="preset" value="strong"><span>Strong</span></label>
         <label><input type="radio" name="preset" value="lumity" checked><span>✨ Lumity</span></label>
+        <label><input type="radio" name="preset" value="auto"><span>🪄 Auto</span></label>
       </div>
       <p class="dialog-sub" id="preset-hint"></p>
+      <p id="auto-note" hidden></p>
     </fieldset>
     <fieldset id="tuning-fields" hidden>
       <legend>Lumity tuning</legend>
@@ -774,7 +779,7 @@
       </label>
       <button type="button" class="link-btn" id="tune-reset">Reset to 50 / 50</button>
     </fieldset>
-    <fieldset>
+    <fieldset id="extras-fields">
       <legend>Extras</legend>
       <label class="dialog-check extra"><input type="checkbox" id="extra-lines">
         <span>Smooth line redraw<small>Rebuilds outlines as smooth, even strokes. Biggest difference at 3–4×.</small></span></label>
@@ -1226,6 +1231,7 @@ function sanitizeUpscale(raw) {
     originalWidth: num(raw.originalWidth), originalHeight: num(raw.originalHeight),
     width: num(raw.width), height: num(raw.height),
     created: num(raw.created),
+    auto: !!raw.auto,
     extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges)
       ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges }
       : null,
@@ -1619,7 +1625,7 @@ function extrasNames(x) {
 
 function describeUpscale(u) {
   const parts = ['✨ Upscaled ' + upscaleLabelText(u.label)];
-  if (u.preset) parts.push(PRESET_NAMES[u.preset] +
+  if (u.preset) parts.push((u.auto ? 'Auto → ' : '') + PRESET_NAMES[u.preset] +
     (u.tuning ? ' (flatness ' + u.tuning.flatness + ', lines ' + u.tuning.lines + ')' : ''));
   if (u.extras) {
     const names = extrasNames(u.extras);
@@ -2726,6 +2732,73 @@ function upscalerModule() {
     };
   }
 
+  // ── Auto settings ─────────────────────────────────────────────────────────
+  // Measures the whole picture (so the preview and the full run agree):
+  //  • blockiness – luma steps across the 8×8 JPEG grid vs. inside blocks
+  //  • noise      – robust (median-based) noise level in non-edge areas
+  //  • flat       – share of the picture that is locally flat colour
+  //  • lines      – share covered by thin dark strokes (outlines)
+  function analyzePicture(rgba, w, h, jpeg) {
+    const n = w * h, Y = new Float32Array(n);
+    for (let i = 0, j = 0; i < n; i++, j += 4) Y[i] = 0.299 * rgba[j] + 0.587 * rgba[j + 1] + 0.114 * rgba[j + 2];
+    let bSum = 0, bCnt = 0, iSum = 0, iCnt = 0;
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 1; x < w; x++) {
+        const d = Math.abs(Y[row + x] - Y[row + x - 1]);
+        if (d > 24) continue;                               // real edges say nothing about blocking
+        if (x % 8 === 0) { bSum += d; bCnt++; } else if (x % 8 === 4) { iSum += d; iCnt++; }
+      }
+    }
+    for (let y = 1; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const d = Math.abs(Y[y * w + x] - Y[(y - 1) * w + x]);
+        if (d > 24) continue;
+        if (y % 8 === 0) { bSum += d; bCnt++; } else if (y % 8 === 4) { iSum += d; iCnt++; }
+      }
+    }
+    const blockiness = jpeg && bCnt && iCnt ? (bSum / bCnt + 0.05) / (iSum / iCnt + 0.05) : 1;
+
+    const yMax = morph(Y, w, h, 2, true), yMin = morph(Y, w, h, 2, false);
+    const closing = morph(yMax, w, h, 2, false);
+    let lapSum = 0, lapCnt = 0, flat = 0, lines = 0;
+    for (let y = 2; y < h - 2; y++) {
+      for (let x = 2; x < w - 2; x++) {
+        const i = y * w + x, range = yMax[i] - yMin[i];
+        if (range < 12) flat++;
+        if (closing[i] - Y[i] > 40) lines++;
+        // Noise: mean |Laplacian| where the area varies a little but holds no
+        // edge (perfectly flat JPEG areas would pull a median to 0).
+        if (range >= 1 && range < 20) {
+          lapSum += Math.abs(4 * Y[i] - Y[i - 1] - Y[i + 1] - Y[i - w] - Y[i + w]);
+          lapCnt++;
+        }
+      }
+    }
+    const inner = (w - 4) * (h - 4);
+    const noise = lapCnt ? (lapSum / lapCnt) * Math.sqrt(Math.PI / 2) / Math.sqrt(20) : 0;
+    return { blockiness, noise, flat: flat / inner, lines: lines / inner };
+  }
+
+  // Settings from the measurements and the chosen scale.
+  function chooseAuto(st, scale) {
+    const cartoon = st.flat > 0.45 && st.lines > 0.004 && st.lines < 0.2;
+    const blocky = st.blockiness > 1.25, veryBlocky = st.blockiness > 1.6;
+    const noisy = st.noise > 1.6, veryNoisy = st.noise > 3;
+    if (cartoon) {
+      return {
+        preset: 'lumity',
+        tuning: { flatness: Math.round(Math.min(100, Math.max(30, 40 + (st.noise - 1) * 20 + (st.blockiness - 1) * 40)) / 5) * 5, lines: 50 },
+        extras: { lines: scale >= 2.5, fills: noisy || blocky, edges: noisy || blocky },
+      };
+    }
+    return {
+      preset: veryBlocky || veryNoisy ? 'strong' : noisy || blocky ? 'balanced' : 'soft',
+      tuning: null,
+      extras: { lines: false, fills: false, edges: blocky || veryNoisy },
+    };
+  }
+
   // rgba: Uint8ClampedArray (w×h). opts: { width, height, preset, tuning,
   // extras: { lines, fills, edges }, jpegSource, flattenWhite }.
   // onProgress(fraction 0..1, label).
@@ -2810,7 +2883,7 @@ function upscalerModule() {
     return out;
   }
 
-  return { upscale, PRESETS };
+  return { upscale, analyzePicture, chooseAuto, PRESETS };
 }
 
 // ── ENHANCE (UPSCALE) ─────────────────────────────────────────────────────────
@@ -2825,6 +2898,7 @@ const PRESET_HINTS = {
   balanced: 'Removes most JPEG noise and colour bleed; crisp lines. Best for most fan art.',
   strong: 'Heavy cleanup for very blocky pictures. Flattens texture; can thicken lines.',
   lumity: 'For cartoon art: flattens noisy single-colour areas into clean flat colour and keeps outlines bold and sharp in colour. Slowest preset.',
+  auto: 'Measures each picture (JPEG blockiness, noise, how cartoon-like it is) and picks the cleanup, Lumity tuning and extras for it. Size and format stay your choice.',
 };
 
 let upscaleWorker = null;
@@ -2857,6 +2931,37 @@ function getUpscaleWorker() {
   return upscaleWorker;
 }
 
+function getMainUpscaler() {
+  mainThreadUpscaler = mainThreadUpscaler || upscalerModule();
+  return mainThreadUpscaler;
+}
+
+// With "Auto", measure the whole picture and turn the dialog settings into
+// concrete ones (preset, Lumity tuning, extras). Other presets pass through.
+// `stats` may be passed in when already measured (preview caches it).
+function resolveSettings(settings, pixels, scale, stats) {
+  if (settings.preset !== 'auto') return settings;
+  const M = getMainUpscaler();
+  const st = stats || M.analyzePicture(pixels.rgba, pixels.w, pixels.h, pixels.jpeg);
+  const pick = M.chooseAuto(st, scale);
+  return {
+    ...settings,
+    preset: pick.preset,
+    flatness: pick.tuning ? pick.tuning.flatness : 50,
+    lines: pick.tuning ? pick.tuning.lines : 50,
+    extras: pick.extras,
+    auto: true,
+    autoStats: st,
+  };
+}
+
+// "Lumity (flatness 60, lines 50) · flat fills + edge cleanup"
+function describeSettings(st) {
+  return (st.auto ? 'Auto → ' : '') + PRESET_NAMES[st.preset] +
+    (st.preset === 'lumity' ? ' (flatness ' + st.flatness + ', lines ' + st.lines + ')' : '') +
+    (engineExtras(st) ? ' · ' + extrasNames(engineExtras(st)) : '');
+}
+
 // Extras chosen in the dialog, or null when none.
 function engineExtras(settings) {
   const x = settings.extras || {};
@@ -2875,8 +2980,7 @@ function runUpscaleJob(rgba, w, h, opts, onProgress) {
   const worker = getUpscaleWorker();
   if (!worker) {
     return yieldToBrowser().then(() => {
-      mainThreadUpscaler = mainThreadUpscaler || upscalerModule();
-      return mainThreadUpscaler.upscale(rgba, w, h, opts, onProgress);
+      return getMainUpscaler().upscale(rgba, w, h, opts, onProgress);
     });
   }
   return new Promise((resolve, reject) => {
@@ -2953,6 +3057,9 @@ async function enhanceOne(original, settings, onProgress) {
   const { rgba, w, h, jpeg } = await decodePixels(original);
   const size = targetSize(w, h, settings);
   if (!size) return { skipped: 'already at least that size' };
+  if (settings.preset === 'auto') onProgress(0.03, 'Analysing picture…');
+  // Measured before the pixels are handed to the worker.
+  settings = resolveSettings(settings, { rgba, w, h, jpeg }, size.scale);
 
   const out = await runUpscaleJob(rgba, w, h, {
     width: size.W, height: size.H, preset: settings.preset, tuning: engineTuning(settings),
@@ -2970,6 +3077,7 @@ async function enhanceOne(original, settings, onProgress) {
     upscale: {
       of: original.id, label: size.label, scale: Math.round(size.scale * 1000) / 1000,
       preset: settings.preset, format: settings.format, tuning: engineTuning(settings), extras: engineExtras(settings),
+      auto: !!settings.auto,
       originalWidth: w, originalHeight: h, width: size.W, height: size.H,
       created: Date.now(),
     },
@@ -3094,6 +3202,7 @@ function readEnhanceForm() {
 
 // Rough seconds per picture at 2× on a laptop, for the batch summary.
 function timeEstimate(st) {
+  if (st.preset === 'auto') return '2–12';
   let lo = st.preset === 'lumity' ? 2 : 1, hi = st.preset === 'lumity' ? 7 : 3;
   const x = st.extras || {};
   if (x.lines) { lo += 1; hi += 4; }
@@ -3106,6 +3215,10 @@ function updateEnhanceSummary() {
   const st = readEnhanceForm();
   document.getElementById('width-row').hidden = st.mode !== 'width';
   document.getElementById('tuning-fields').hidden = st.preset !== 'lumity';
+  document.getElementById('extras-fields').disabled = st.preset === 'auto';
+  const autoNote = document.getElementById('auto-note');
+  autoNote.hidden = st.preset !== 'auto';
+  if (st.preset === 'auto' && enhanceMode === 'batch') autoNote.textContent = 'Settings are picked per picture; the preview shows the pick for the picture shown.';
   document.getElementById('tune-flatness-out').textContent = st.flatness;
   document.getElementById('tune-lines-out').textContent = st.lines;
   schedulePreview();
@@ -3139,7 +3252,7 @@ function openEnhanceDialog(targets, mode) {
   const f = enhanceForm.elements;
   if (saved.scale || saved.mode === 'width') f.scale.value = saved.mode === 'width' ? 'width' : String(saved.scale);
   if (saved.width) enhanceWidth.value = saved.width;
-  if (PRESET_NAMES[saved.preset]) f.preset.value = saved.preset;
+  if (PRESET_NAMES[saved.preset] || saved.preset === 'auto') f.preset.value = saved.preset;
   if (saved.format === 'png' || saved.format === 'jpeg') f.format.value = saved.format;
   tuneFlatness.value = Number.isFinite(saved.flatness) ? saved.flatness : 50;
   tuneLines.value = Number.isFinite(saved.lines) ? saved.lines : 50;
@@ -3207,6 +3320,7 @@ function openPreview(targets) {
 function closePreview() {
   preview.token++;
   preview.pixels = null;
+  preview.autoStats = null;
   preview.sourceCanvas = null;
   overviewBase = null;
   clearTimeout(preview.timer);
@@ -3218,6 +3332,7 @@ async function loadPreviewTarget() {
   const token = ++preview.token;
   const target = preview.targets[preview.index];
   preview.pixels = null;
+  preview.autoStats = null;
   previewEls.name.textContent = 'Preview · ' + target.name;
   previewEls.pos.textContent = (preview.index + 1) + ' / ' + preview.targets.length;
   previewEls.status.textContent = 'Loading picture…';
@@ -3345,9 +3460,16 @@ function schedulePreview(delay = 180) {
 function runPreview() {
   if (!preview.pixels || !enhanceDialog.classList.contains('open')) return;
   if (preview.busy) { preview.dirty = true; return; }
-  const settings = readEnhanceForm();
   const { rgba, w, h, jpeg } = preview.pixels;
-  const size = targetSize(w, h, settings);
+  const chosen = readEnhanceForm();
+  const size = targetSize(w, h, chosen);
+  if (size && chosen.preset === 'auto' && !preview.autoStats) {
+    preview.autoStats = getMainUpscaler().analyzePicture(rgba, w, h, jpeg);
+  }
+  const settings = size ? resolveSettings(chosen, preview.pixels, size.scale, preview.autoStats) : chosen;
+  if (settings.auto && enhanceMode === 'single') {
+    document.getElementById('auto-note').textContent = 'Auto picked: ' + describeSettings(settings).replace('Auto → ', '');
+  }
   if (!size) {
     previewEls.status.textContent = 'This picture is already at least that size.';
     previewEls.after.classList.remove('stale');
@@ -3392,9 +3514,7 @@ function runPreview() {
     previewEls.after.width = crop.w; previewEls.after.height = crop.h;
     previewEls.after.getContext('2d').drawImage(tmp, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
     previewEls.after.classList.remove('stale');
-    previewEls.status.textContent = 'Preview at ' + (Math.round(sc * 100) / 100) + '× · ' + PRESET_NAMES[settings.preset] +
-      (settings.preset === 'lumity' ? ' (flatness ' + settings.flatness + ', lines ' + settings.lines + ')' : '') +
-      (engineExtras(settings) ? ' · ' + extrasNames(engineExtras(settings)) : '');
+    previewEls.status.textContent = 'Preview at ' + (Math.round(sc * 100) / 100) + '× · ' + describeSettings(settings);
     if (preview.dirty) { preview.dirty = false; runPreview(); }
   };
   const fail = () => {
@@ -3407,8 +3527,7 @@ function runPreview() {
   if (!preview.worker) {
     setTimeout(() => {
       try {
-        mainThreadUpscaler = mainThreadUpscaler || upscalerModule();
-        done(mainThreadUpscaler.upscale(region, rw, rh, opts));
+        done(getMainUpscaler().upscale(region, rw, rh, opts));
       } catch { fail(); }
     }, 0);
     return;
