@@ -3359,6 +3359,8 @@ async function enhanceOne(original, settings, onProgress) {
     name: stripExt(original.name) + (size.label === 'cleaned' ? '.cleaned' : '.upscaled-' + size.label) + (settings.format === 'png' ? '.png' : '.jpg'),
     blob,
     modified: original.modified ?? null,
+    // A copy of a ♥ picture is ♥ too, and a re-enhance keeps the ♥ of the copy it replaces.
+    favorite: !!original.favorite || !!(previous && previous.favorite),
     upscale: {
       of: original.id, label: size.label, scale: Math.round(size.scale * 1000) / 1000,
       preset: settings.preset, format: settings.format, tuning: engineTuning(settings), extras: engineExtras(settings),
@@ -3372,7 +3374,7 @@ async function enhanceOne(original, settings, onProgress) {
   try { await storeOnePicture(item, previous ? previous.id : null); }
   catch (err) { console.error('Saving upscaled picture failed', err); saved = false; }
 
-  const img = { id: item.id, name: item.name, url: URL.createObjectURL(blob), modified: item.modified, upscale: item.upscale, favorite: false };
+  const img = { id: item.id, name: item.name, url: URL.createObjectURL(blob), modified: item.modified, upscale: item.upscale, favorite: item.favorite };
   addUpscaledToView(img, original, previous);
   onProgress(1, 'Done');
   return { img, saved, capped: size.capped };
@@ -5097,7 +5099,7 @@ async function aiUpscale(px, W, H, settings, onProgress) {
 
 // ── FAVOURITES ────────────────────────────────────────────────────────────────
 // A favourite is a flag on the picture: stored with it in IndexedDB and in
-// JSON exports. Upscaled copies have their own flag. The "♥ Favourites"
+// JSON exports. Enhanced copies have their own flag; a new copy starts ♥ when its original (or the copy it replaces) is ♥. The "♥ Favourites"
 // toggle combines with Show / search; unfavouriting a picture while the
 // toggle is on keeps it on screen until the view is next refreshed.
 const lbFavBtn = document.getElementById('lb-fav');
