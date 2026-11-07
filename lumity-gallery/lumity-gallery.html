@@ -4518,7 +4518,10 @@ void main(){
   outColor = vec4(roundEven(clamp(rgb, 0.0, 255.0)), a) / 255.0;
 }`;
 
-  function createRunner() {
+  // opts.isUserBusy(ms): whether the user scrolled/touched within the last ms —
+  // GPU work then waits, so scrolling stays smooth.
+  function createRunner(opts = {}) {
+    const isUserBusy = opts.isUserBusy || (() => false);
     const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
     const gl = canvas.getContext('webgl2', { antialias: false, depth: false, stencil: false, premultipliedAlpha: false, powerPreference: 'high-performance' });
     if (!gl) throw new Error('WebGL2 is not available');
@@ -4526,16 +4529,31 @@ void main(){
     if (!float32 && !gl.getExtension('EXT_color_buffer_half_float')) throw new Error('This GPU cannot render to float textures');
     const maxLayers = gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS), maxSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
 
+    // Shaders compile in the background where the browser supports it
+    // (KHR_parallel_shader_compile); run() waits for them without blocking
+    // the page. A program's uniforms are looked up on first use.
+    const pext = gl.getExtension('KHR_parallel_shader_compile');
+    const progs = [];
     const prog = fs => {
-      const mk = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
-      const p = gl.createProgram();
-      gl.attachShader(p, mk(gl.VERTEX_SHADER, VS)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
-      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
-      const loc = {}; const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
-      for (let i = 0; i < n; i++) { const u = gl.getActiveUniform(p, i); loc[u.name] = gl.getUniformLocation(p, u.name); }
-      return { p, loc };
+      const mk = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+      const p = gl.createProgram(), fsh = mk(gl.FRAGMENT_SHADER, fs);
+      gl.attachShader(p, mk(gl.VERTEX_SHADER, VS)); gl.attachShader(p, fsh); gl.linkProgram(p);
+      const pr = { p, _loc: null, get loc() {
+        if (!this._loc) {
+          if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getShaderInfoLog(fsh) || gl.getProgramInfoLog(p));
+          const loc = {}; const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+          for (let i = 0; i < n; i++) { const u = gl.getActiveUniform(p, i); loc[u.name] = gl.getUniformLocation(p, u.name); }
+          this._loc = loc;
+        }
+        return this._loc;
+      } };
+      progs.push(pr);
+      return pr;
     };
+    async function compiled() {
+      if (!pext) return;
+      while (progs.some(pr => !pr._loc && !gl.getProgramParameter(pr.p, pext.COMPLETION_STATUS_KHR))) await new Promise(r => setTimeout(r, 16));
+    }
     const P = { conv: prog(FS_CONV), shuffle: prog(FS_SHUFFLE), up2: prog(FS_UP2), mix: prog(FS_MIX), resize: prog(FS_RESIZE),
       cgConv: prog(FS_CG_CONV), cgDeconv: prog(FS_CG_DECONV), cgAdd: prog(FS_CG_ADD), cgScale: prog(FS_CG_SCALE),
       cgMean: prog(FS_CG_MEAN), cgFinal: prog(FS_CG_FINAL) };
@@ -4578,13 +4596,7 @@ void main(){
         for (let o = 0; o < c.outC; o++) data[(c.bBase + (o >> 2)) * 4 + (o & 3)] = c.bias[o];
         if (c.prelu) for (let o = 0; o < c.outC; o++) data[(c.sBase + (o >> 2)) * 4 + (o & 3)] = c.prelu[o];
       }
-      const t = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, t);
-      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, 4096, rows);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4096, rows, gl.RGBA, gl.FLOAT, data);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      model.wTex = t;
+      return { data, rows };
     }
 
     // Real-CUGAN: every (de)convolution's weights as vec4s over 4 output
@@ -4610,19 +4622,37 @@ void main(){
         }
         if (L.bias) for (let o = 0; o < outC; o++) data[(bBase + (o >> 2)) * 4 + (o & 3)] = L.bias[o];
       }
+      return { data, rows };
+    }
+
+    // While drain() runs a big step in parts, bandRange limits drawing to a
+    // band of rows (scissor), so no single submission holds up the GPU long.
+    let bandRange = null, bandUsed = false;
+    // Weight texture for a model, sent to the GPU in 1 MB chunks with a frame
+    // in between, so a big model doesn't stall the page's drawing.
+    async function sendWeights(model) {
+      const { data, rows } = upload(model);
       const t = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, t);
       gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, 4096, rows);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4096, rows, gl.RGBA, gl.FLOAT, data);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      model.wTex = t;
+      for (let y = 0; y < rows; y += 16) {
+        if (y) await new Promise(r => setTimeout(r, 16));
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y, 4096, Math.min(16, rows - y), gl.RGBA, gl.FLOAT, data, y * 4096 * 4);
+      }
+      return t;
     }
 
     const target = (tex, layer, w, h) => {
       gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
       gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, tex.t, 0, layer);
       gl.viewport(0, 0, w, h);
+      if (bandRange) {
+        const y0 = Math.floor(bandRange[0] * h), y1 = Math.ceil(bandRange[1] * h);
+        gl.enable(gl.SCISSOR_TEST); gl.scissor(0, y0, w, Math.max(0, y1 - y0)); bandUsed = true;
+      }
     };
     const bindArr = (unit, loc, tex) => { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex.t); gl.uniform1i(loc, unit); };
     const useW = (pr, model) => { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, model.wTex); gl.uniform1i(pr.loc.uW, 0); };
@@ -4699,13 +4729,28 @@ void main(){
       let done = 0, i = 0;
       while (i < steps.length) {
         if (isCancelled && isCancelled()) throw new Error('cancelled');
-        const targetMs = Math.min(150, Math.max(12, 3 * overhead));
+        // Scrolling or touching: leave the GPU to the page until it stops,
+        // then use short slices for a moment in case it continues.
+        if (isUserBusy(250)) { await new Promise(r => setTimeout(r, 50)); continue; }
+        const targetMs = isUserBusy(1500) ? 8 : Math.min(150, Math.max(12, 3 * overhead));
         // Until the GPU's speed is known, start with a small slice so the first
         // one can't hold up the page (or a cancel) for long on a slow GPU.
         const budget = bestRate > 0 ? bestRate * targetMs : 3e5;
         let slice = 0;
         const t0 = performance.now();
-        while (i < steps.length && (slice === 0 || slice < budget)) { steps[i].fn(); slice += steps[i].cost; i++; }
+        while (i < steps.length && (slice === 0 || slice < budget)) {
+          const st = steps[i];
+          if (st.cost > budget && st.k !== -1) {             // too big for one slice: draw it in row bands
+            const n = st.n || (st.n = Math.min(64, Math.ceil(st.cost / budget)));
+            st.k = st.k || 0;
+            bandRange = [st.k / n, (st.k + 1) / n]; bandUsed = false;
+            st.fn();
+            bandRange = null; gl.disable(gl.SCISSOR_TEST);
+            slice += st.cost / n;
+            if (!bandUsed) st.k = -1;                          // drew without target(): it ran whole
+            if (st.k === -1 || ++st.k >= n) i++;
+          } else { st.fn(); slice += st.cost; i++; }
+        }
         await waitGpu();
         const ms = Math.max(0.5, performance.now() - t0);
         bestRate = Math.max(slice / ms, bestRate * 0.98);          // slow decay follows GPU throttling
@@ -4829,9 +4874,13 @@ void main(){
     // Whole picture, tile by tile. Returns RGBA (alpha 255) at W×H.
     async function run(model, rgba, w, h, W, H, onProgress, isCancelled, opts = {}) {
       if (gl.isContextLost()) throw new Error('The GPU was reset — please try again.');
+      await compiled();
       if (!model.wTex || model.wGl !== gl || model.wVersion !== model.version) {
         if (model.wTex && model.wGl === gl) gl.deleteTexture(model.wTex);
-        upload(model); model.wGl = gl; model.wVersion = model.version;
+        model.wTex = null;
+        const version = model.version, t = await sendWeights(model);
+        if (gl.isContextLost()) throw new Error('The GPU was reset — please try again.');
+        model.wTex = t; model.wGl = gl; model.wVersion = version;
       }
       if (model.arch === 'cugan') return runCugan(model, rgba, w, h, W, H, onProgress, isCancelled, opts);
       releaseExcept('esrgan');
@@ -5162,6 +5211,7 @@ void main(){
 
     async function runBuiltin(prep, LUT, onProgress, isCancelled) {
       if (gl.isContextLost()) throw new Error('The GPU was reset — please try again.');
+      await compiled();
       releaseExcept('builtin');
       const { w, h, W, H, P, extras, scale } = prep;
       // Inputs: planes (Y, Cb, Cr, alpha) and edge field at input resolution.
@@ -5318,7 +5368,7 @@ function modelStoreTx(mode, fn) {
 function aiRunner() {
   if (aiState.runner) return aiState.runner;
   if (aiState.gpuError) throw new Error(aiState.gpuError);
-  try { aiState.runner = aiModule().createRunner(); }
+  try { aiState.runner = aiModule().createRunner({ isUserBusy: ms => performance.now() - userScrollAt < ms }); }
   catch (err) { aiState.gpuError = err.message || String(err); throw err; }
   return aiState.runner;
 }
@@ -5383,6 +5433,11 @@ async function withGpu(fn) {
 
 // opts: { denoise, cuganMode, seFrom } (seFrom: the whole picture, when rgba is
 // only a part of it — Real-CUGAN measures its channel weights on the whole).
+// Last scroll / wheel / touch, so GPU work can step aside while the user scrolls.
+let userScrollAt = -1e9;
+for (const type of ['scroll', 'wheel', 'touchstart', 'touchmove'])
+  window.addEventListener(type, () => { userScrollAt = performance.now(); }, { capture: true, passive: true });
+
 async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled, opts = {}) {
   const part = id === 'cugan' ? (W / w > 2.001 ? 'up4x-' : 'up2x-') + (opts.cuganMode === 'denoise3x' ? 'denoise3x' : 'conservative') : null;
   const model = await aiGetModel(id, { denoise: opts.denoise, part });
