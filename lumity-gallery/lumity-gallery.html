@@ -2366,9 +2366,12 @@ function upscalerModule() {
   //  • Snap: near an edge, each pixel takes the colour of the dark or the light
   //    side of the edge according to where its (sharp) luma sits between them,
   //    so colour transitions are as crisp as the luma lines.
-  function accentuateLines(Yo, Cbo, Cro, W, H, scale, L) {
+  function accentuateLines(Yo, Cbo, Cro, W, H, scale, L, sub = () => {}) {
     const r = Math.max(2, Math.round(scale));
-    const closing = maxMin(maxMin(Yo, W, H, r, true), W, H, r, false);
+    const dil = maxMin(Yo, W, H, r, true);
+    sub(0.2);
+    const closing = maxMin(dil, W, H, r, false);
+    sub(0.4);
     const N = W * H, hat = new Float32Array(N);
     for (let i = 0; i < N; i++) {
       const t = closing[i] - Yo[i];
@@ -2376,15 +2379,16 @@ function upscalerModule() {
       const v = Yo[i] - L.darken * hat[i];
       Yo[i] = v < 0 ? 0 : v;
     }
-    chromaSnap(Yo, Cbo, Cro, W, H, L.snap, hat, L.saturate);
+    chromaSnap(Yo, Cbo, Cro, W, H, L.snap, hat, L.saturate, f => sub(0.4 + 0.6 * f));
   }
 
   // Colour follows luma edges: near an edge each pixel takes the colour of the
   // dark or light side according to where its luma sits between them.
   // Optional `hat` + `saturate` boost colour on line pixels.
-  function chromaSnap(Yo, Cbo, Cro, W, H, snapT, hat, saturate) {
+  function chromaSnap(Yo, Cbo, Cro, W, H, snapT, hat, saturate, sub = null) {
     const cb = Cbo.slice(), cr = Cro.slice(), R = 2;
     for (let y = R; y < H - R; y++) {
+      if (sub && (y & 63) === 0) sub(y / H);
       for (let x = R; x < W - R; x++) {
         const i = y * W + x;
         let iLo = i, iHi = i;
@@ -2589,10 +2593,14 @@ function upscalerModule() {
   // and line darkness (erosion). The map is smoothed — removing the pixel
   // stair-steps and JPEG wobble — and re-thresholded at half its local peak
   // with a ~1 px anti-aliased edge, then the line is re-painted from it.
-  function redrawLines(Yo, W, H, scale) {
+  function redrawLines(Yo, W, H, scale, sub = () => {}) {
     const r = Math.max(2, Math.ceil(1.5 * scale));
-    const closing = morph(morph(Yo, W, H, r, true), W, H, r, false);
+    const dil = morph(Yo, W, H, r, true);
+    sub(0.15);
+    const closing = morph(dil, W, H, r, false);
+    sub(0.3);
     const ero = morph(Yo, W, H, r, false);
+    sub(0.45);
     const N = W * H, MIN_C = 24;
     const cov = new Float32Array(N);
     for (let i = 0; i < N; i++) {
@@ -2603,8 +2611,11 @@ function upscalerModule() {
     // spreading thin lines — wider blurs thicken hatching noticeably.
     const sigma = 0.4 * scale;
     const Ls = gaussBlur(cov, W, H, sigma);
+    sub(0.6);
     const peak = morph(Ls, W, H, r, true);
+    sub(0.75);
     const lineY = gaussBlur(ero, W, H, Math.max(0.7, sigma * 0.5));
+    sub(0.9);
     const slope = 2.5 * sigma;                              // ≈ px across the smoothed edge
     for (let i = 0; i < N; i++) {
       const c = closing[i] - ero[i];
@@ -2959,14 +2970,63 @@ function upscalerModule() {
   // GPU: prepare() does every input-resolution step (cheap, partly
   // sequential — e.g. flat fills), finish() does the output-resolution steps.
   function upscale(rgba, w, h, opts, onProgress = () => {}) {
-    return finish(prepare(rgba, w, h, opts, onProgress), onProgress);
+    const track = progressTracker(w, h, opts, onProgress, 'all');
+    return finish(prepare(rgba, w, h, opts, track), track);
+  }
+
+  // Rough cost of each step (ms per megapixel on a laptop, measured), so the
+  // reported progress follows the time spent: the line steps at 3–4× can take
+  // over half the run, the input-size steps very little.
+  function stageCosts(w, h, opts) {
+    const P = tunePreset(PRESETS[opts.preset] || PRESETS.balanced, opts.tuning);
+    const x = opts.extras || {}, inMP = w * h / 1e6, scale = opts.width / w;
+    const outMP = opts.width * opts.height / 1e6;
+    const iterations = P.shock + (scale > 2.5 ? 1 : 0);
+    return {
+      planes: inMP * (opts.jpegSource !== false ? 60 : 20),
+      flatten: P.flatten ? inMP * 1750 : 0,
+      guide: inMP * 150,
+      chroma: inMP * 280,
+      edges: x.edges ? inMP * 560 : 0,
+      fills: x.fills ? inMP * 450 : 0,
+      field: inMP * 150,
+      resampleY: outMP * 140,
+      resampleCb: outMP * 125,
+      resampleCr: outMP * 125,
+      shock: outMP * 30 * iterations,
+      sharpen: outMP * (P.finalFlatten ? 80 : 35),
+      redraw: x.lines ? outMP * 230 * scale : 0,
+      accent: P.lines ? outMP * (300 + 25 * scale * scale) : x.lines ? outMP * 30 : 0,
+      output: outMP * 30,
+    };
+  }
+  const PREPARE_STAGES = ['planes', 'flatten', 'guide', 'chroma', 'edges', 'fills', 'field'];
+  const FINISH_STAGES = ['resampleY', 'resampleCb', 'resampleCr', 'shock', 'sharpen', 'redraw', 'accent', 'output'];
+
+  // onProgress wrapper: track(stage, label, sub 0..1) → overall fraction.
+  // part: 'all' | 'prepare' | 'finish' (each part alone runs 0..1).
+  function progressTracker(w, h, opts, onProgress, part) {
+    if (onProgress.isTracker) return onProgress;
+    const costs = stageCosts(w, h, opts);
+    const order = part === 'prepare' ? PREPARE_STAGES : part === 'finish' ? FINISH_STAGES : PREPARE_STAGES.concat(FINISH_STAGES);
+    const start = {};
+    let total = 0;
+    for (const k of order) { start[k] = total; total += costs[k]; }
+    const track = (stage, label, sub = 0) => {
+      if (stage === 'done') { onProgress(1, label); return; }
+      if (!(stage in start)) return;
+      onProgress(Math.min(0.999, (start[stage] + costs[stage] * sub) / total), label);
+    };
+    track.isTracker = true;
+    return track;
   }
 
   function prepare(rgba, w, h, opts, onProgress = () => {}) {
     const P = tunePreset(PRESETS[opts.preset] || PRESETS.balanced, opts.tuning);
     const W = opts.width, H = opts.height, n = w * h;
+    const track = progressTracker(w, h, opts, onProgress, 'prepare');
 
-    onProgress(0.02, 'Cleaning up compression noise…');
+    track('planes', 'Cleaning up compression noise…');
     const { Y, Cb, Cr, A } = toPlanes(rgba, n);
     if (opts.jpegSource !== false) {
       deblock(Y, w, h, P.deblock);
@@ -2974,59 +3034,65 @@ function upscalerModule() {
       deblock(Cr, w, h, P.deblock * 1.5);
     }
     if (P.flatten) {
-      onProgress(0.04, 'Flattening colour areas…');
+      track('flatten', 'Flattening colour areas…');
       flatten(Y, Cb, Cr, w, h, P.flatten.r, P.flatten.sigma, P.flatten.iterations, P.flatten.keepEdges);
     }
+    track('guide', 'Cleaning up…');
     const Yc = guidedFilter(Y, Y, w, h, P.r, P.eps);
-    onProgress(0.12, 'Snapping colours to the line art…');
+    track('chroma', 'Snapping colours to the line art…');
     const Cbc = guidedFilter(Yc, Cb, w, h, P.chromaR, P.chromaEps);
     const Crc = guidedFilter(Yc, Cr, w, h, P.chromaR, P.chromaEps);
     const extras = opts.extras || {};
     if (extras.edges) {
-      onProgress(0.16, 'Cleaning up around the lines…');
+      track('edges', 'Cleaning up around the lines…');
       edgeCleanup(Yc, Cbc, Crc, w, h);
     }
     if (extras.fills) {
-      onProgress(0.19, 'Flattening colour fills…');
+      track('fills', 'Flattening colour fills…');
       flatFills(Yc, Cbc, Crc, w, h);
     }
 
-    onProgress(0.22, 'Finding edges…');
+    track('field', 'Finding edges…');
     const field = edgeField(Yc, w, h);
+    if (!onProgress.isTracker) track('done', 'Prepared');
     return { w, h, W, H, scale: W / w, P, extras, flattenWhite: !!opts.flattenWhite,
+      preset: opts.preset, tuning: opts.tuning, jpegSource: opts.jpegSource,
       Yc, Cbc, Crc, A, C2: field.C2, S2: field.S2 };
   }
 
   function finish(prep, onProgress = () => {}) {
     const { w, h, W, H, P, extras, Yc, Cbc, Crc, A } = prep;
     const field = { C2: prep.C2, S2: prep.S2 }, N = W * H, opts = prep;
+    const track = progressTracker(w, h, { width: W, height: H, preset: prep.preset, tuning: prep.tuning, extras,
+      jpegSource: prep.jpegSource }, onProgress, 'finish');
     const Yo = new Float32Array(N);
-    resample(Yc, w, h, W, H, field, Yo, f => onProgress(0.25 + f * 0.3, 'Upscaling…'));
-    const Cbo = resample(Cbc, w, h, W, H, field, new Uint8ClampedArray(N), f => onProgress(0.55 + f * 0.1, 'Upscaling colour…'));
-    const Cro = resample(Crc, w, h, W, H, field, new Uint8ClampedArray(N), f => onProgress(0.65 + f * 0.1, 'Upscaling colour…'));
+    resample(Yc, w, h, W, H, field, Yo, f => track('resampleY', 'Upscaling…', f));
+    const Cbo = resample(Cbc, w, h, W, H, field, new Uint8ClampedArray(N), f => track('resampleCb', 'Upscaling colour…', f));
+    const Cro = resample(Crc, w, h, W, H, field, new Uint8ClampedArray(N), f => track('resampleCr', 'Upscaling colour…', f));
 
-    onProgress(0.76, 'Sharpening lines…');
+    track('shock', 'Sharpening lines…');
     const scale = W / w;    // (same as prep.scale)
     // Bigger scales leave wider soft edges; one extra pass and a wider
     // derivative window handle that without stair-stepping diagonal lines.
     const iterations = P.shock + (scale > 2.5 ? 1 : 0);
     const smoothR = scale > 2.5 ? 2 : 1;
     shockFilter(Yo, W, H, iterations, P.dt, smoothR);
-    onProgress(0.9, 'Sharpening lines…');
+    track('sharpen', 'Sharpening lines…');
     sharpen(Yo, W, H, P.sharpen);
     if (P.finalFlatten) flattenFlatAreas(Yo, W, H, P.finalFlatten);
     if (extras.lines) {
-      onProgress(0.91, 'Redrawing lines…');
-      redrawLines(Yo, W, H, scale);
+      track('redraw', 'Redrawing lines…');
+      redrawLines(Yo, W, H, scale, f => track('redraw', 'Redrawing lines…', f));
     }
     if (P.lines) {
-      onProgress(0.93, 'Accentuating lines…');
-      accentuateLines(Yo, Cbo, Cro, W, H, scale, P.lines);
+      track('accent', 'Accentuating lines…');
+      accentuateLines(Yo, Cbo, Cro, W, H, scale, P.lines, f => track('accent', 'Accentuating lines…', f));
     } else if (extras.lines) {
+      track('accent', 'Matching colours to the lines…');
       chromaSnap(Yo, Cbo, Cro, W, H, 18, null, 0);       // colour follows the redrawn lines
     }
 
-    onProgress(0.95, 'Finishing…');
+    track('output', 'Finishing…');
     const Ao = A ? bilinearAlpha(A, w, h, W, H) : null;
     const out = new Uint8ClampedArray(N * 4);
     let seed = 0x9e3779b9;
@@ -3045,11 +3111,11 @@ function upscalerModule() {
       }
       out[j] = r; out[j + 1] = g; out[j + 2] = b; out[j + 3] = a;
     }
-    onProgress(1, 'Done');
+    track('done', 'Done');
     return out;
   }
 
-  return { upscale, prepare, finish, analyzePicture, chooseAuto, PRESETS, LANCZOS2, LUT_RES };
+  return { upscale, prepare, finish, analyzePicture, chooseAuto, stageCosts, PREPARE_STAGES, FINISH_STAGES, PRESETS, LANCZOS2, LUT_RES };
 }
 
 // ── ENHANCE (UPSCALE) ─────────────────────────────────────────────────────────
@@ -3197,8 +3263,12 @@ function runUpscaleJob(rgba, w, h, opts, onProgress, cmd = 'upscale') {
 // GPU = input-resolution half in the worker, output-resolution half on the GPU.
 async function builtinJob(rgba, w, h, opts, onProgress, device) {
   if (device !== 'gpu') return runUpscaleJob(rgba, w, h, opts, onProgress);
-  const prep = await runUpscaleJob(rgba, w, h, opts, (f, label) => onProgress(f * 0.45, label), 'prepare');
-  return gpuFinish(prep, f => onProgress(0.45 + f * 0.55, 'Upscaling on the GPU…'), null, true);
+  // Share of the time spent preparing (CPU) vs finishing (GPU, assumed ~6× faster).
+  const M = getMainUpscaler(), c = M.stageCosts(w, h, opts);
+  const sum = keys => keys.reduce((a, k) => a + c[k], 0);
+  const prepCost = sum(M.PREPARE_STAGES), split = prepCost / (prepCost + sum(M.FINISH_STAGES) / 6);
+  const prep = await runUpscaleJob(rgba, w, h, opts, (f, label) => onProgress(f * split, label), 'prepare');
+  return gpuFinish(prep, f => onProgress(split + f * (1 - split), 'Upscaling on the GPU…'), null, true);
 }
 
 // Output-resolution half on the GPU. `asJob` makes it cancellable from the
@@ -3335,7 +3405,7 @@ function addUpscaledToView(img, original, previous) {
 // ── TIME REMAINING ────────────────────────────────────────────────────────────
 // "about 1 min 20 s" — coarser as it grows, so it doesn't look over-precise.
 function formatEta(sec) {
-  if (sec < 8) return 'a few seconds';
+  if (sec < 5) return 'a few seconds';
   if (sec < 60) return 'about ' + Math.round(sec / 5) * 5 + ' s';
   if (sec < 600) {
     const t = Math.round(sec / 10) * 10, m = Math.floor(t / 60), r = t % 60;
@@ -3346,28 +3416,48 @@ function formatEta(sec) {
   return 'about ' + h + ' h' + (m ? ' ' + m + ' min' : '');
 }
 
-// Time left for an enhance run. Within a picture: elapsed ÷ progress.
-// For a batch: the pictures still to do, at the seconds-per-megapixel
-// measured on the finished ones (or, before any finished, projected from the
-// current one). The shown value counts down between updates and is blended
-// with each new measurement, so it doesn't jump around.
+// Time left for an enhance run. The engines report progress roughly in
+// proportion to time, so within a picture: elapsed ÷ progress. Seconds per
+// megapixel for the same settings are remembered from earlier runs (in this
+// browser) and blended in, which gives a figure straight away and steadies
+// it early on. For a batch, the pictures still to do are added at the rate
+// measured on the finished ones. The shown value counts down between updates
+// and is blended with each new measurement, so it doesn't jump around.
+const ETA_KEY = 'lumity-gallery-eta-v1';
+function etaSignature(st) {
+  const x = st.extras || {};
+  return [st.engine || 'builtin', st.device, st.preset, x.lines ? 'L' : '', x.fills ? 'F' : '', x.edges ? 'E' : '',
+    st.mode === 'width' ? 'w' : st.scale].join('|');
+}
+function loadEtaRates() { try { return JSON.parse(localStorage.getItem(ETA_KEY)) || {}; } catch { return {}; } }
+
 function makeEnhanceEta(targets, settings, batch) {
   const pending = targets.filter(t => !t.broken && !(batch && settings.skipExisting && upscaledCopyOf(t)));
+  const sig = etaSignature(settings), rates = loadEtaRates();
+  let learned = num(rates[sig]);                  // seconds per input megapixel
   const px = new Map();
-  if (batch) pending.forEach(t => getDimensions(t.url).then(d => { if (d.px) px.set(t, d.px); }));
-  const pxOf = t => {
-    if (px.has(t)) return px.get(t);
+  (async () => {                                 // one at a time, in the background
+    for (const t of pending.slice()) { const d = await getDimensions(t.url); if (d.px) px.set(t, d.px); }
+  })();
+  const mpOf = t => {
+    if (px.has(t)) return px.get(t) / 1e6;
     const known = [...px.values()];
-    return known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1e6;
+    return known.length ? known.reduce((a, b) => a + b, 0) / known.length / 1e6 : 1;
   };
-  let doneSec = 0, donePx = 0, cur = null, curStart = 0;
+  let doneSec = 0, doneMP = 0, cur = null, curStart = 0;
   const shown = { cur: null, all: null, at: 0 };
-  const blend = (old, raw, dt) => old == null ? raw : Math.max(0, old - dt) * 0.7 + raw * 0.3;
+  const blend = (old, raw, dt) => old == null ? raw : Math.max(0, old - dt) * 0.6 + raw * 0.4;
   return {
     start(t) { cur = t; curStart = performance.now(); shown.cur = null; },
     finish(t, ok) {
       const sec = (performance.now() - curStart) / 1000;
-      if (ok) { doneSec += sec; donePx += pxOf(t); }
+      if (ok && px.has(t)) {
+        const mp = px.get(t) / 1e6;
+        doneSec += sec; doneMP += mp;
+        learned = learned ? learned * 0.5 + (sec / mp) * 0.5 : sec / mp;
+        const all = loadEtaRates(); all[sig] = Math.round(learned * 1000) / 1000;
+        try { localStorage.setItem(ETA_KEY, JSON.stringify(all)); } catch {}
+      }
       const i = pending.indexOf(t); if (i !== -1) pending.splice(i, 1);
       cur = null;
     },
@@ -3375,18 +3465,23 @@ function makeEnhanceEta(targets, settings, batch) {
     // f = progress of the current picture (0–1). Returns the text, or null to keep the old one.
     update(f) {
       const now = performance.now();
-      if (shown.at && now - shown.at < 1000) return null;
+      if (!cur || (shown.at && now - shown.at < 1000)) return null;
       const elapsed = (now - curStart) / 1000;
-      if (!cur || f < 0.03 || elapsed < 1.5) return shown.at ? null : 'Estimating time left…';
-      const curTotal = elapsed / f, curLeft = curTotal - elapsed;
+      const rate = doneMP ? doneSec / doneMP : learned;          // s per MP, if known
+      const prior = rate && px.has(cur) ? rate * mpOf(cur) : null;
+      const measured = f >= 0.03 && elapsed >= 1.5 ? elapsed / f : null;
+      if (prior == null && measured == null) return shown.cur == null && !shown.all ? 'Estimating time left…' : null;
+      // Trust the measurement more as the picture progresses.
+      const total = prior == null ? measured : measured == null ? Math.max(prior, elapsed) : prior * (1 - f) + measured * f;
+      const curLeft = Math.max(0, total - elapsed);
       const dt = shown.at ? (now - shown.at) / 1000 : 0;
-      shown.cur = blend(shown.cur, curLeft, dt);
+      shown.cur = shown.cur == null ? curLeft : blend(shown.cur, curLeft, dt);
       shown.at = now;
       if (!batch) return formatEta(shown.cur) + ' left';
-      const rate = donePx ? doneSec / donePx : curTotal / pxOf(cur);
+      const perMP = rate || total / mpOf(cur);
       let rest = 0;
-      for (const t of pending) if (t !== cur) rest += pxOf(t) * rate;
-      shown.all = blend(shown.all, curLeft + rest, dt);
+      for (const t of pending) if (t !== cur) rest += mpOf(t) * perMP;
+      shown.all = Math.max(shown.cur, blend(shown.all, curLeft + rest, dt));
       return 'This picture: ' + formatEta(shown.cur) + ' · all: ' + formatEta(shown.all) + ' left';
     },
   };
