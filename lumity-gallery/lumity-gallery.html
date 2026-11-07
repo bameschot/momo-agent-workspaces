@@ -632,6 +632,8 @@
     }
     @keyframes progress-slide { from { left: -35%; } to { left: 100%; } }
     #progress-count { color: var(--accent2); font-size: 0.78rem; min-height: 1.1em; font-variant-numeric: tabular-nums; }
+    #progress-eta { color: var(--text-muted); font-size: 0.75rem; min-height: 1.1em; margin-top: -0.25rem; }
+    #progress-eta[hidden] { display: none; }
     @media (prefers-reduced-motion: reduce) {
       .progress-spinner { animation-duration: 2.5s; }
       .progress-track.indeterminate #progress-fill { animation: none; left: 0; width: 100% !important; opacity: 0.5; }
@@ -773,6 +775,7 @@
       <div id="progress-fill"></div>
     </div>
     <div id="progress-count"></div>
+    <div id="progress-eta" hidden></div>
     <button type="button" id="progress-cancel" hidden>Cancel</button>
   </div>
 </div>
@@ -1050,6 +1053,7 @@ const progress = {
   track:   document.getElementById('progress-track'),
   fill:    document.getElementById('progress-fill'),
   count:   document.getElementById('progress-count'),
+  eta:     document.getElementById('progress-eta'),
   cancel:  document.getElementById('progress-cancel'),
   showTimer: null,
 };
@@ -1062,6 +1066,7 @@ function showProgress(title, delayMs = 0, onCancel = null) {
   progress.cancel.hidden = !onCancel;
   progress.cancel.onclick = onCancel;
   setProgress('', null);
+  setProgressEta(null);
   clearTimeout(progress.showTimer);
   if (delayMs > 0) progress.showTimer = setTimeout(() => progress.overlay.classList.add('open'), delayMs);
   else progress.overlay.classList.add('open');
@@ -1086,8 +1091,14 @@ function setProgress(stepLabel, done, total, unit = '') {
     : done + ' / ' + total + ' · ' + pct + '%';
 }
 
+function setProgressEta(text) {
+  progress.eta.hidden = !text;
+  progress.eta.textContent = text || '';
+}
+
 function hideProgress() {
   clearTimeout(progress.showTimer);
+  setProgressEta(null);
   progress.overlay.classList.remove('open');
 }
 
@@ -3321,6 +3332,66 @@ function addUpscaledToView(img, original, previous) {
   updateCount();
 }
 
+// ── TIME REMAINING ────────────────────────────────────────────────────────────
+// "about 1 min 20 s" — coarser as it grows, so it doesn't look over-precise.
+function formatEta(sec) {
+  if (sec < 8) return 'a few seconds';
+  if (sec < 60) return 'about ' + Math.round(sec / 5) * 5 + ' s';
+  if (sec < 600) {
+    const t = Math.round(sec / 10) * 10, m = Math.floor(t / 60), r = t % 60;
+    return 'about ' + m + ' min' + (r ? ' ' + r + ' s' : '');
+  }
+  if (sec < 5400) return 'about ' + Math.round(sec / 60) + ' min';
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60 / 5) * 5;
+  return 'about ' + h + ' h' + (m ? ' ' + m + ' min' : '');
+}
+
+// Time left for an enhance run. Within a picture: elapsed ÷ progress.
+// For a batch: the pictures still to do, at the seconds-per-megapixel
+// measured on the finished ones (or, before any finished, projected from the
+// current one). The shown value counts down between updates and is blended
+// with each new measurement, so it doesn't jump around.
+function makeEnhanceEta(targets, settings, batch) {
+  const pending = targets.filter(t => !t.broken && !(batch && settings.skipExisting && upscaledCopyOf(t)));
+  const px = new Map();
+  if (batch) pending.forEach(t => getDimensions(t.url).then(d => { if (d.px) px.set(t, d.px); }));
+  const pxOf = t => {
+    if (px.has(t)) return px.get(t);
+    const known = [...px.values()];
+    return known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1e6;
+  };
+  let doneSec = 0, donePx = 0, cur = null, curStart = 0;
+  const shown = { cur: null, all: null, at: 0 };
+  const blend = (old, raw, dt) => old == null ? raw : Math.max(0, old - dt) * 0.7 + raw * 0.3;
+  return {
+    start(t) { cur = t; curStart = performance.now(); shown.cur = null; },
+    finish(t, ok) {
+      const sec = (performance.now() - curStart) / 1000;
+      if (ok) { doneSec += sec; donePx += pxOf(t); }
+      const i = pending.indexOf(t); if (i !== -1) pending.splice(i, 1);
+      cur = null;
+    },
+    skip(t) { const i = pending.indexOf(t); if (i !== -1) pending.splice(i, 1); },
+    // f = progress of the current picture (0–1). Returns the text, or null to keep the old one.
+    update(f) {
+      const now = performance.now();
+      if (shown.at && now - shown.at < 1000) return null;
+      const elapsed = (now - curStart) / 1000;
+      if (!cur || f < 0.03 || elapsed < 1.5) return shown.at ? null : 'Estimating time left…';
+      const curTotal = elapsed / f, curLeft = curTotal - elapsed;
+      const dt = shown.at ? (now - shown.at) / 1000 : 0;
+      shown.cur = blend(shown.cur, curLeft, dt);
+      shown.at = now;
+      if (!batch) return formatEta(shown.cur) + ' left';
+      const rate = donePx ? doneSec / donePx : curTotal / pxOf(cur);
+      let rest = 0;
+      for (const t of pending) if (t !== cur) rest += pxOf(t) * rate;
+      shown.all = blend(shown.all, curLeft + rest, dt);
+      return 'This picture: ' + formatEta(shown.cur) + ' · all: ' + formatEta(shown.all) + ' left';
+    },
+  };
+}
+
 async function runEnhance(targets, settings, mode) {
   if (loadBusy) { showToast('Still busy — please wait…'); return; }
   loadBusy = true;
@@ -3329,18 +3400,28 @@ async function runEnhance(targets, settings, mode) {
     cancelled = true;
     if (currentJob) currentJob.cancel();
     setProgress('Cancelling…', null);
+    setProgressEta(null);
   });
   let done = 0, skipped = 0, failed = 0, notSaved = 0, capped = 0, last = null;
+  const eta = makeEnhanceEta(targets, settings, mode !== 'single');
+  setProgressEta('Estimating time left…');
   try {
     for (let i = 0; i < targets.length && !cancelled; i++) {
       const original = targets[i];
-      if (!ALL_IMAGES.includes(original) || original.broken) { skipped++; continue; }
-      if (mode === 'batch' && settings.skipExisting && upscaledCopyOf(original)) { skipped++; continue; }
+      if (!ALL_IMAGES.includes(original) || original.broken) { skipped++; eta.skip(original); continue; }
+      if (mode === 'batch' && settings.skipExisting && upscaledCopyOf(original)) { skipped++; eta.skip(original); continue; }
       const prefix = mode === 'single' ? '' : 'Picture ' + (i + 1) + ' of ' + targets.length + ' · ';
+      eta.start(original);
+      let ok = false, lastF = 0;
+      const showEta = () => { const text = cancelled ? null : eta.update(lastF); if (text) setProgressEta(text); };
+      const ticker = setInterval(showEta, 1000);    // keeps counting while a step reports nothing
       try {
-        const r = await enhanceOne(original, settings, (f, label) =>
-          setProgress(prefix + label, Math.round((i + f) / targets.length * 1000), 1000, 'percent'));
+        const r = await enhanceOne(original, settings, (f, label) => {
+          setProgress(prefix + label, Math.round((i + f) / targets.length * 1000), 1000, 'percent');
+          lastF = f; showEta();
+        });
         if (r.skipped) { skipped++; continue; }
+        ok = true;
         done++; last = r.img;
         if (!r.saved) notSaved++;
         if (r.capped) capped++;
@@ -3348,6 +3429,9 @@ async function runEnhance(targets, settings, mode) {
         if (err instanceof CancelledError) break;
         console.error('Enhancing ' + original.name + ' failed', err);
         failed++;
+      } finally {
+        clearInterval(ticker);
+        eta.finish(original, ok);
       }
     }
   } finally {
