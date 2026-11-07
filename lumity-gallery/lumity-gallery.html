@@ -3697,6 +3697,8 @@ function openEnhanceDialog(targets, mode) {
   if (saved.aiEngine || (saved.engine && saved.engine !== 'builtin')) lastAiEngine = saved.aiEngine || saved.engine;
   aiRefreshUi().then(() => {
     if (document.getElementById('use-ai').checked) pickAiEngine();
+    // "None (AI as-is)" was reset while the engine still read Built-in.
+    if (saved.preset === 'none' && f.engine.value !== 'builtin') f.preset.value = 'none';
     if (saved.device === 'gpu' && gpuBuiltinAvailable()) f.device.value = 'gpu';
     updateEnhanceSummary();                      // GPU availability is known now
   });
