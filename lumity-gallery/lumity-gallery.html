@@ -377,6 +377,7 @@
     #empty-state .empty-title { color: var(--text); font-size: 1.15rem; font-weight: 600; }
     #empty-state .empty-text { color: var(--text-muted); font-size: 0.88rem; line-height: 1.45; }
     #empty-state .empty-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; margin-top: 0.4rem; }
+    #empty-state .empty-actions[hidden] { display: none; }
     #empty-state button {
       background: var(--surface2);
       border: 1px solid var(--accent);
@@ -546,9 +547,9 @@
 <div id="gallery" class="contain-mode"></div>
 <div id="empty-state" hidden>
   <div class="empty-icon" aria-hidden="true">🖼️</div>
-  <p class="empty-title">No images yet</p>
-  <p class="empty-text">Open a folder of pictures or load a JSON export. You can also drop a JSON file anywhere on the page.</p>
-  <div class="empty-actions">
+  <p class="empty-title" id="empty-title">No images yet</p>
+  <p class="empty-text" id="empty-text">Open a folder of pictures or load a JSON export. You can also drop a JSON file anywhere on the page.</p>
+  <div class="empty-actions" id="empty-actions">
     <button type="button" id="empty-folder-btn">📁 Open Folder</button>
     <button type="button" id="empty-json-btn">📥 Load JSON</button>
   </div>
@@ -642,7 +643,7 @@ function buildZip(entries) {
     const local = new Uint8Array(30 + nameBytes.length);
     writeU32LE(local, 0, 0x04034b50);
     writeU16LE(local, 4, 20);   // version needed
-    writeU16LE(local, 6, 0);    // flags
+    writeU16LE(local, 6, 0x0800); // flags: bit 11 = file name is UTF-8
     writeU16LE(local, 8, 0);    // method: 0 = stored
     writeU16LE(local, 10, time);
     writeU16LE(local, 12, day);
@@ -658,7 +659,7 @@ function buildZip(entries) {
     writeU32LE(central, 0, 0x02014b50);
     writeU16LE(central, 4, 20);  // version made by
     writeU16LE(central, 6, 20);  // version needed
-    writeU16LE(central, 8, 0);
+    writeU16LE(central, 8, 0x0800); // flags: bit 11 = file name is UTF-8
     writeU16LE(central, 10, 0);
     writeU16LE(central, 12, time);
     writeU16LE(central, 14, day);
@@ -909,10 +910,15 @@ function requestPersistentStorage() {
 }
 
 // Swap the in-memory image set, releasing object URLs from the previous one.
+// Bumped on every swap so async work (sorting, downloads) started against an
+// older set can tell it has been replaced and must not write back.
+let imagesGeneration = 0;
+
 function setImages(images) {
-  ALL_IMAGES.forEach(img => { if (img.url.startsWith('blob:')) URL.revokeObjectURL(img.url); });
+  ALL_IMAGES.forEach(img => URL.revokeObjectURL(img.url));
   dimCache.clear();
   ALL_IMAGES = images;
+  imagesGeneration++;
 }
 
 function blobsToImages(items) {
@@ -1050,14 +1056,19 @@ document.getElementById('fit-select').addEventListener('change', e => {
   gallery.classList.toggle('contain-mode', e.target.value === 'contain');
 });
 
-// ── SEARCH ────────────────────────────────────────────────────────────────────
-document.getElementById('search').addEventListener('input', e => {
-  const q = e.target.value.toLowerCase();
-  filtered = ALL_IMAGES.filter(img => img.name.toLowerCase().includes(q));
-  rendered = 0;
-  gallery.innerHTML = '';
-  renderBatch();
-  updateCount();
+// ── SEARCH / FILTER ───────────────────────────────────────────────────────────
+const searchInput = document.getElementById('search');
+
+// Images that failed to decode are flagged `broken` and left out of every
+// later filter, so they don't keep reappearing and failing again.
+function applyFilter() {
+  const q = searchInput.value.toLowerCase();
+  filtered = ALL_IMAGES.filter(img => !img.broken && img.name.toLowerCase().includes(q));
+}
+
+searchInput.addEventListener('input', () => {
+  applyFilter();
+  rerender();
 });
 
 function shuffle(arr) {
@@ -1068,30 +1079,70 @@ function shuffle(arr) {
 }
 
 function resetGallery() {
-  const q = document.getElementById('search').value.toLowerCase();
-  filtered = ALL_IMAGES.filter(img => img.name.toLowerCase().includes(q));
+  applyFilter();
   shuffle(filtered);
+  rerender();
+}
+
+// Redraw the gallery from the top after `filtered` changed (search, sort,
+// shuffle, new set) and keep an open lightbox pointing at a valid image.
+function rerender() {
   rendered = 0;
   gallery.innerHTML = '';
   renderBatch();
-  updateCount();
+  syncLightbox();
 }
 
 // ── RENDER ────────────────────────────────────────────────────────────────────
-const emptyState = document.getElementById('empty-state');
+const emptyState   = document.getElementById('empty-state');
+const emptyTitle   = document.getElementById('empty-title');
+const emptyText    = document.getElementById('empty-text');
+const emptyActions = document.getElementById('empty-actions');
+
+function updateEmptyState() {
+  if (filtered.length) { emptyState.hidden = true; return; }
+  const usable = ALL_IMAGES.some(img => !img.broken);
+  if (usable && searchInput.value) {
+    emptyTitle.textContent = 'No matches';
+    emptyText.textContent = 'No images match "' + searchInput.value + '".';
+    emptyActions.hidden = true;
+  } else if (ALL_IMAGES.length && !usable) {
+    emptyTitle.textContent = 'Nothing could be displayed';
+    emptyText.textContent = 'None of the loaded files could be shown as images. Try another folder or JSON export.';
+    emptyActions.hidden = false;
+  } else {
+    emptyTitle.textContent = 'No images yet';
+    emptyText.textContent = 'Open a folder of pictures or load a JSON export. You can also drop a JSON file anywhere on the page.';
+    emptyActions.hidden = false;
+  }
+  emptyState.hidden = false;
+}
 
 function updateCount() {
   countBadge.textContent = filtered.length + ' images';
-  emptyState.hidden = ALL_IMAGES.length > 0;
+  updateEmptyState();
   loadMore.textContent = rendered < filtered.length
     ? 'Loading more… (' + (filtered.length - rendered) + ' remaining)'
     : '';
 }
 
+// Drop an image that failed to decode, keeping `rendered` and an open
+// lightbox's index aligned with the shortened list.
+function removeBrokenImage(img, thumb) {
+  img.broken = true;
+  thumb.remove();
+  const idx = filtered.indexOf(img);
+  if (idx === -1) return;
+  filtered.splice(idx, 1);
+  if (idx < rendered) rendered--;
+  if (lb.classList.contains('open') && idx < lbIndex) lbIndex--;
+  syncLightbox();
+  updateCount();
+}
+
 function renderBatch() {
   const batch = filtered.slice(rendered, rendered + PAGE_SIZE);
-  batch.forEach((img, i) => {
-    const idx = rendered + i;
+  batch.forEach(img => {
     const div = document.createElement('div');
     div.className = 'thumb';
 
@@ -1106,11 +1157,7 @@ function renderBatch() {
       el.classList.remove('loading');
       dimSpan.textContent = el.naturalWidth + ' × ' + el.naturalHeight;
     });
-    el.addEventListener('error', () => {
-      div.style.display = 'none';
-      filtered = filtered.filter(x => x !== img);
-      updateCount();
-    });
+    el.addEventListener('error', () => removeBrokenImage(img, div));
 
     const ov = document.createElement('div');
     ov.className = 'overlay';
@@ -1127,7 +1174,12 @@ function renderBatch() {
 
     div.appendChild(el);
     div.appendChild(ov);
-    div.addEventListener('click', () => openLightbox(idx));
+    // Look the index up at click time: earlier images may have been removed
+    // (failed to decode) since this thumbnail was drawn.
+    div.addEventListener('click', () => {
+      const idx = filtered.indexOf(img);
+      if (idx !== -1) openLightbox(idx);
+    });
     gallery.appendChild(div);
   });
   rendered += batch.length;
@@ -1141,6 +1193,7 @@ loadMoreObserver.observe(loadMore);
 
 // ── LIGHTBOX ──────────────────────────────────────────────────────────────────
 function openLightbox(idx) {
+  if (!filtered.length) return;
   lbIndex = idx;
   showLb();
   lb.classList.add('open');
@@ -1150,6 +1203,7 @@ const lbDim = document.getElementById('lb-dim');
 
 function showLb() {
   const img = filtered[lbIndex];
+  if (!img) { closeLb(); return; }
   lbDim.textContent = '';
   lbImg.onload = () => { lbDim.textContent = lbImg.naturalWidth + ' × ' + lbImg.naturalHeight + ' px'; };
   lbImg.src = img.url;
@@ -1162,37 +1216,38 @@ function closeLb() {
   stopSlideshow();
 }
 
+// After `filtered` changed: close the lightbox if nothing is left, otherwise
+// clamp its index and refresh what it shows.
+function syncLightbox() {
+  if (!lb.classList.contains('open')) return;
+  if (!filtered.length) { closeLb(); return; }
+  lbIndex = Math.max(0, Math.min(lbIndex, filtered.length - 1));
+  showLb();
+}
+
+// Single entry point for prev / next (buttons, keys, slideshow).
+function stepLb(delta) {
+  if (!filtered.length) { closeLb(); return; }
+  lbIndex = ((lbIndex + delta) % filtered.length + filtered.length) % filtered.length;
+  ensureRendered(lbIndex);
+  showLb();
+}
+
 function ensureRendered(idx) {
   while (rendered <= idx && rendered < filtered.length) renderBatch();
 }
 
 document.getElementById('lb-close').addEventListener('click', closeLb);
-document.getElementById('lb-prev').addEventListener('click', () => {
-  lbIndex = (lbIndex - 1 + filtered.length) % filtered.length;
-  ensureRendered(lbIndex);
-  showLb();
-});
-document.getElementById('lb-next').addEventListener('click', () => {
-  lbIndex = (lbIndex + 1) % filtered.length;
-  ensureRendered(lbIndex);
-  showLb();
-});
+document.getElementById('lb-prev').addEventListener('click', () => stepLb(-1));
+document.getElementById('lb-next').addEventListener('click', () => stepLb(1));
 
 lb.addEventListener('click', e => { if (e.target === lb) closeLb(); });
 
 document.addEventListener('keydown', e => {
   if (!lb.classList.contains('open')) return;
-  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-    lbIndex = (lbIndex + 1) % filtered.length;
-    ensureRendered(lbIndex);
-    showLb();
-  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-    lbIndex = (lbIndex - 1 + filtered.length) % filtered.length;
-    ensureRendered(lbIndex);
-    showLb();
-  } else if (e.key === 'Escape') {
-    closeLb();
-  }
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') stepLb(1);
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') stepLb(-1);
+  else if (e.key === 'Escape') closeLb();
 });
 
 // ── SLIDESHOW ─────────────────────────────────────────────────────────────────
@@ -1210,11 +1265,7 @@ function startSlideshow() {
   const speed = parseInt(document.getElementById('ss-speed').value);
   ssToggle.textContent = '⏹ Stop';
   ssToggle.classList.add('active');
-  ssTimer = setInterval(() => {
-    lbIndex = (lbIndex + 1) % filtered.length;
-    ensureRendered(lbIndex);
-    showLb();
-  }, speed);
+  ssTimer = setInterval(() => stepLb(1), speed);
 }
 
 function stopSlideshow() {
@@ -1226,14 +1277,8 @@ function stopSlideshow() {
 
 // ── SHUFFLE ───────────────────────────────────────────────────────────────────
 document.getElementById('shuffle-btn').addEventListener('click', () => {
-  for (let i = filtered.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [filtered[i], filtered[j]] = [filtered[j], filtered[i]];
-  }
-  rendered = 0;
-  gallery.innerHTML = '';
-  renderBatch();
-  updateCount();
+  shuffle(filtered);
+  rerender();
   showToast('Images shuffled 🔀');
 });
 
@@ -1311,29 +1356,52 @@ document.addEventListener('drop', e => {
   if (file) loadFromJson(file);
 });
 
-// ── DOWNLOAD ZIP ──────────────────────────────────────────────────────────────
-document.getElementById('download-btn').addEventListener('click', async () => {
-  const btn = document.getElementById('download-btn');
-  const total = filtered.length;
-  if (!total) { showToast('No images to download.'); return; }
+// ── DOWNLOAD HELPERS ──────────────────────────────────────────────────────────
+// Revoking the object URL in the same task as click() can cancel the download
+// in some browsers (older Firefox, some Safari), so release it a bit later.
+function downloadBlob(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+}
 
+async function fetchImageBytes(img) {
+  const res = await fetch(img.url);
+  if (!res.ok) throw new Error('Could not read ' + img.name);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+// Runs an export with its button disabled and showing progress, and always
+// restores the button — even if a read fails (e.g. a new set was loaded
+// mid-export, which releases the old images).
+async function runExport(btn, idleLabel, work) {
+  const list = filtered.slice();
+  if (!list.length) { showToast('No images to download.'); return; }
   btn.disabled = true;
+  try {
+    await work(list, (i, total) => { btn.textContent = `⏳ ${i} / ${total}`; });
+  } catch (err) {
+    console.error('Export failed', err);
+    showToast('Download failed — the images changed or could not be read.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = idleLabel;
+  }
+}
 
+// ── DOWNLOAD ZIP ──────────────────────────────────────────────────────────────
+const downloadZipBtn = document.getElementById('download-btn');
+downloadZipBtn.addEventListener('click', () => runExport(downloadZipBtn, '⬇ Download ZIP', async (list, onProgress) => {
   const entries = [];
   const seen = new Map();
-
-  for (let i = 0; i < total; i++) {
-    const img = filtered[i];
-    btn.textContent = `⏳ ${i + 1} / ${total}`;
-
-    let data;
-    if (img.url.startsWith('data:')) {
-      const b64 = img.url.split(',')[1];
-      data = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-    } else {
-      const res = await fetch(img.url);
-      data = new Uint8Array(await res.arrayBuffer());
-    }
+  for (let i = 0; i < list.length; i++) {
+    const img = list[i];
+    onProgress(i + 1, list.length);
+    const data = await fetchImageBytes(img);
 
     // deduplicate filenames
     let name = img.name;
@@ -1347,18 +1415,10 @@ document.getElementById('download-btn').addEventListener('click', async () => {
     entries.push({ name, data, date: img.modified != null ? new Date(img.modified) : null });
   }
 
-  btn.textContent = '⏳ Compressing…';
-  const blob = buildZip(entries);
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'lumity-gallery.zip';
-  a.click();
-  URL.revokeObjectURL(a.href);
-
-  btn.disabled = false;
-  btn.textContent = '⬇ Download ZIP';
-  showToast('Downloaded ' + total + ' images ✨');
-});
+  downloadZipBtn.textContent = '⏳ Building ZIP…';
+  downloadBlob(buildZip(entries), 'lumity-gallery.zip');
+  showToast('Downloaded ' + entries.length + ' images ✨');
+}));
 
 // Spreading a large typed array straight into String.fromCharCode(...bytes)
 // blows the call stack once a single image is much past ~100KB (a real
@@ -1385,28 +1445,15 @@ function hashBase64(b64) {
 }
 
 // ── DOWNLOAD JSON ─────────────────────────────────────────────────────────────
-document.getElementById('download-json-btn').addEventListener('click', async () => {
-  const btn = document.getElementById('download-json-btn');
-  const total = filtered.length;
-  if (!total) { showToast('No images to download.'); return; }
-
-  btn.disabled = true;
-
+const downloadJsonBtn = document.getElementById('download-json-btn');
+downloadJsonBtn.addEventListener('click', () => runExport(downloadJsonBtn, '⬇ Download JSON', async (list, onProgress) => {
   const files = [];
   const seenHashes = new Set();
   let duplicates = 0;
-  for (let i = 0; i < total; i++) {
-    const img = filtered[i];
-    btn.textContent = `⏳ ${i + 1} / ${total}`;
-
-    let b64;
-    if (img.url.startsWith('data:')) {
-      b64 = img.url.split(',')[1];
-    } else {
-      const res = await fetch(img.url);
-      const ab = await res.arrayBuffer();
-      b64 = bytesToBase64(new Uint8Array(ab));
-    }
+  for (let i = 0; i < list.length; i++) {
+    const img = list[i];
+    onProgress(i + 1, list.length);
+    const b64 = bytesToBase64(await fetchImageBytes(img));
 
     const hash = hashBase64(b64);
     if (seenHashes.has(hash)) {
@@ -1421,24 +1468,14 @@ document.getElementById('download-json-btn').addEventListener('click', async () 
 
   const folderName = sourceBadge.textContent.replace(/📁|📦|\s*—.*$/g, '').trim() || 'lumity';
   const payload = JSON.stringify({ folder: folderName, files });
-  const blob = new Blob([payload], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = folderName + '.json';
-  a.click();
-  URL.revokeObjectURL(a.href);
-
-  btn.disabled = false;
-  btn.textContent = '⬇ Download JSON';
+  downloadBlob(new Blob([payload], { type: 'application/json' }), folderName + '.json');
   showToast('Downloaded ' + files.length + ' images as JSON'
     + (duplicates ? ` (${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped)` : '')
     + ' ✨');
-});
+}));
 
 // ── SORT BY DIMENSIONS / ASPECT RATIO ───────────────────────────────────────────
 const dimCache = new Map();
-let dimSortDir = 1;
-let ratioSortDir = 1;
 
 function getDimensions(url) {
   if (dimCache.has(url)) return Promise.resolve(dimCache.get(url));
@@ -1454,41 +1491,36 @@ function getDimensions(url) {
   });
 }
 
-const sortDimBtn = document.getElementById('sort-dim-btn');
-sortDimBtn.addEventListener('click', async () => {
-  sortDimBtn.disabled = true;
-  sortDimBtn.textContent = '⏳ Measuring…';
+// Measures every visible image, then sorts by `key` ('px' or 'ratio'),
+// toggling direction on each click. If a new set is loaded while measuring,
+// the result is discarded instead of overwriting the new set.
+function setupMeasureSort(btn, key, shortLabel, idleLabel) {
+  let dir = 1;
+  btn.addEventListener('click', async () => {
+    if (!filtered.length) return;
+    const generation = imagesGeneration;
+    btn.disabled = true;
+    btn.textContent = '⏳ Measuring…';
+    try {
+      await Promise.all(filtered.map(img => getDimensions(img.url)));
+      if (generation !== imagesGeneration) {
+        btn.textContent = idleLabel;
+        return;
+      }
+      // Sort whatever is visible *now* (a search may have changed it).
+      const value = img => (dimCache.get(img.url) || { [key]: 0 })[key];
+      filtered = filtered.slice().sort((a, b) => dir * (value(a) - value(b)));
+      dir *= -1;
+      btn.textContent = dir === 1 ? `⇅ ${shortLabel} ↑` : `⇅ ${shortLabel} ↓`;
+      rerender();
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
 
-  const withDims = await Promise.all(filtered.map(async img => ({ img, px: (await getDimensions(img.url)).px })));
-  withDims.sort((a, b) => dimSortDir * (a.px - b.px));
-  filtered = withDims.map(x => x.img);
-
-  dimSortDir *= -1;
-  sortDimBtn.textContent = dimSortDir === 1 ? '⇅ Dim ↑' : '⇅ Dim ↓';
-  sortDimBtn.disabled = false;
-
-  rendered = 0;
-  gallery.innerHTML = '';
-  renderBatch();
-});
-
-const sortRatioBtn = document.getElementById('sort-ratio-btn');
-sortRatioBtn.addEventListener('click', async () => {
-  sortRatioBtn.disabled = true;
-  sortRatioBtn.textContent = '⏳ Measuring…';
-
-  const withRatio = await Promise.all(filtered.map(async img => ({ img, ratio: (await getDimensions(img.url)).ratio })));
-  withRatio.sort((a, b) => ratioSortDir * (a.ratio - b.ratio));
-  filtered = withRatio.map(x => x.img);
-
-  ratioSortDir *= -1;
-  sortRatioBtn.textContent = ratioSortDir === 1 ? '⇅ Ratio ↑' : '⇅ Ratio ↓';
-  sortRatioBtn.disabled = false;
-
-  rendered = 0;
-  gallery.innerHTML = '';
-  renderBatch();
-});
+setupMeasureSort(document.getElementById('sort-dim-btn'), 'px', 'Dim', '⇅ Dimensions');
+setupMeasureSort(document.getElementById('sort-ratio-btn'), 'ratio', 'Ratio', '⇅ Aspect Ratio');
 
 // ── SORT BY FILE DATE ─────────────────────────────────────────────────────────
 // Oldest-first on the first click, then toggles. Images without a known file
@@ -1510,10 +1542,7 @@ sortDateBtn.addEventListener('click', () => {
   showToast(dateSortDir === 1 ? 'Sorted oldest first 📅' : 'Sorted newest first 📅');
   dateSortDir *= -1;
   sortDateBtn.textContent = dateSortDir === 1 ? '⇅ Date ↑' : '⇅ Date ↓';
-
-  rendered = 0;
-  gallery.innerHTML = '';
-  renderBatch();
+  rerender();
 });
 
 // ── COLLAPSIBLE MENU ──────────────────────────────────────────────────────────
