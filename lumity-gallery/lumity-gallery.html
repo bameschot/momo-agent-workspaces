@@ -520,6 +520,7 @@
     .extra span { display: flex; flex-direction: column; gap: 0.1rem; }
     .extra small { color: var(--text-muted); font-size: 0.76rem; line-height: 1.35; }
     #extras-fields:disabled .extra { opacity: 0.45; cursor: default; }
+    #device-fields:disabled .chips { opacity: 0.45; }
     .chips input:disabled + span { opacity: 0.4; cursor: not-allowed; }
     .chips label[hidden] { display: none; }
     .ai-models { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.35rem; }
@@ -788,6 +789,14 @@
       <div class="ai-row"><button type="button" id="ai-load-files">Load model files…</button>
         <input type="file" id="ai-file-input" multiple accept=".param,.bin" hidden></div>
       <p id="ai-note"></p>
+    </fieldset>
+    <fieldset id="device-fields">
+      <legend>Processing</legend>
+      <div class="chips">
+        <label><input type="radio" name="device" value="cpu" checked><span>CPU</span></label>
+        <label><input type="radio" name="device" value="gpu" disabled><span>⚡ GPU</span></label>
+      </div>
+      <p class="dialog-sub" id="device-hint"></p>
     </fieldset>
     <fieldset>
       <legend>Size</legend>
@@ -1294,6 +1303,7 @@ function sanitizeUpscale(raw) {
     created: num(raw.created),
     auto: !!raw.auto,
     engine: ENGINE_NAMES[raw.engine] ? raw.engine : null,
+    device: raw.device === 'gpu' ? 'gpu' : null,
     extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges)
       ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges }
       : null,
@@ -1717,6 +1727,7 @@ function describeUpscale(u) {
     const names = extrasNames(u.extras);
     if (names) parts.push(names);
   }
+  if (u.device === 'gpu') parts.push('GPU');
   if (u.format) parts.push(u.format.toUpperCase());
   if (u.originalWidth && u.width) parts.push(u.originalWidth + '×' + u.originalHeight + ' → ' + u.width + '×' + u.height);
   if (u.of == null) parts.push('original not in this set');
@@ -2373,8 +2384,13 @@ function upscalerModule() {
         for (let i = 0; i < len; i++) g[i] = i % k === 0 ? line[i] : op(g[i - 1], line[i]);
         for (let i = len - 1; i >= 0; i--) hh[i] = (i === len - 1 || (i + 1) % k === 0) ? line[i] : op(hh[i + 1], line[i]);
         for (let i = 0; i < len; i++) {
-          const a = i - r < 0 ? 0 : i - r, b = i + r > len - 1 ? len - 1 : i + r;
-          set(c, i, op(hh[a], g[b]));
+          if (i - r < 0 || i + r > len - 1) {
+            // Near the ends the block trick could include pixels outside the
+            // window, so compute the clamped window directly.
+            let v = line[Math.max(0, i - r)];
+            for (let j = Math.max(0, i - r) + 1; j <= Math.min(len - 1, i + r); j++) v = op(v, line[j]);
+            set(c, i, v);
+          } else set(c, i, op(hh[i - r], g[i + r]));
         }
       }
     };
@@ -2755,7 +2771,9 @@ function upscalerModule() {
           const vnn = (gx * gx * ixx + 2 * gx * gy * ixy + gy * gy * iyy) / g2;
           const ux = (cur[i + 1] - cur[i - 1]) / 2, uy = (cur[i + W] - cur[i - W]) / 2;
           const mag = Math.sqrt(ux * ux + uy * uy);
-          let v = cur[i] - (vnn > 0 ? 1 : vnn < 0 ? -1 : 0) * mag * dt;
+          // Dead zone: on perfectly symmetric edges vnn is ~0 and its sign is
+          // just rounding noise (it would differ between CPU and GPU).
+          let v = cur[i] - (vnn > 1e-3 ? 1 : vnn < -1e-3 ? -1 : 0) * mag * dt;
           let lo = cur[i], hi = cur[i];
           for (let k = -1; k <= 1; k++) {
             const r = i + k * W;
@@ -2894,9 +2912,16 @@ function upscalerModule() {
   // rgba: Uint8ClampedArray (w×h). opts: { width, height, preset, tuning,
   // extras: { lines, fills, edges }, jpegSource, flattenWhite }.
   // onProgress(fraction 0..1, label).
+  // The pipeline is split so the output-resolution half can also run on the
+  // GPU: prepare() does every input-resolution step (cheap, partly
+  // sequential — e.g. flat fills), finish() does the output-resolution steps.
   function upscale(rgba, w, h, opts, onProgress = () => {}) {
+    return finish(prepare(rgba, w, h, opts, onProgress), onProgress);
+  }
+
+  function prepare(rgba, w, h, opts, onProgress = () => {}) {
     const P = tunePreset(PRESETS[opts.preset] || PRESETS.balanced, opts.tuning);
-    const W = opts.width, H = opts.height, n = w * h, N = W * H;
+    const W = opts.width, H = opts.height, n = w * h;
 
     onProgress(0.02, 'Cleaning up compression noise…');
     const { Y, Cb, Cr, A } = toPlanes(rgba, n);
@@ -2925,14 +2950,20 @@ function upscalerModule() {
 
     onProgress(0.22, 'Finding edges…');
     const field = edgeField(Yc, w, h);
+    return { w, h, W, H, scale: W / w, P, extras, flattenWhite: !!opts.flattenWhite,
+      Yc, Cbc, Crc, A, C2: field.C2, S2: field.S2 };
+  }
 
+  function finish(prep, onProgress = () => {}) {
+    const { w, h, W, H, P, extras, Yc, Cbc, Crc, A } = prep;
+    const field = { C2: prep.C2, S2: prep.S2 }, N = W * H, opts = prep;
     const Yo = new Float32Array(N);
     resample(Yc, w, h, W, H, field, Yo, f => onProgress(0.25 + f * 0.3, 'Upscaling…'));
     const Cbo = resample(Cbc, w, h, W, H, field, new Uint8ClampedArray(N), f => onProgress(0.55 + f * 0.1, 'Upscaling colour…'));
     const Cro = resample(Crc, w, h, W, H, field, new Uint8ClampedArray(N), f => onProgress(0.65 + f * 0.1, 'Upscaling colour…'));
 
     onProgress(0.76, 'Sharpening lines…');
-    const scale = W / w;
+    const scale = W / w;    // (same as prep.scale)
     // Bigger scales leave wider soft edges; one extra pass and a wider
     // derivative window handle that without stair-stepping diagonal lines.
     const iterations = P.shock + (scale > 2.5 ? 1 : 0);
@@ -2975,7 +3006,7 @@ function upscalerModule() {
     return out;
   }
 
-  return { upscale, analyzePicture, chooseAuto, PRESETS };
+  return { upscale, prepare, finish, analyzePicture, chooseAuto, PRESETS, LANCZOS2, LUT_RES };
 }
 
 // ── ENHANCE (UPSCALE) ─────────────────────────────────────────────────────────
@@ -3002,13 +3033,21 @@ function createUpscaleWorker() {
   try {
     const src = 'const M = (' + upscalerModule.toString() + ')();\n' +
       'onmessage = e => {\n' +
-      '  const { rgba, w, h, opts } = e.data;\n' +
+      '  const { rgba, w, h, opts, cmd } = e.data;\n' +
       '  try {\n' +
       '    let last = 0;\n' +
-      '    const out = M.upscale(new Uint8ClampedArray(rgba), w, h, opts, (f, label) => {\n' +
+      '    const prog = (f, label) => {\n' +
       '      const now = Date.now();\n' +
       '      if (now - last > 60 || f >= 1) { last = now; postMessage({ progress: f, label }); }\n' +
-      '    });\n' +
+      '    };\n' +
+      '    if (cmd === "prepare") {\n' +
+      '      const prep = M.prepare(new Uint8ClampedArray(rgba), w, h, opts, prog);\n' +
+      '      const bufs = [prep.Yc.buffer, prep.Cbc.buffer, prep.Crc.buffer, prep.C2.buffer, prep.S2.buffer];\n' +
+      '      if (prep.A) bufs.push(prep.A.buffer);\n' +
+      '      postMessage({ done: true, prep }, bufs);\n' +
+      '      return;\n' +
+      '    }\n' +
+      '    const out = M.upscale(new Uint8ClampedArray(rgba), w, h, opts, prog);\n' +
       '    postMessage({ done: true, rgba: out.buffer }, [out.buffer]);\n' +
       '  } catch (err) { postMessage({ error: String((err && err.message) || err) }); }\n' +
       '};';
@@ -3075,11 +3114,13 @@ function engineTuning(settings) {
 class CancelledError extends Error {}
 
 // rgba: Uint8ClampedArray (transferred). Resolves to the output Uint8ClampedArray.
-function runUpscaleJob(rgba, w, h, opts, onProgress) {
+// cmd 'upscale' → output RGBA; 'prepare' → the input-resolution half (for the GPU).
+function runUpscaleJob(rgba, w, h, opts, onProgress, cmd = 'upscale') {
   const worker = getUpscaleWorker();
   if (!worker) {
     return yieldToBrowser().then(() => {
-      return getMainUpscaler().upscale(rgba, w, h, opts, onProgress);
+      const M = getMainUpscaler();
+      return cmd === 'prepare' ? M.prepare(rgba, w, h, opts, onProgress) : M.upscale(rgba, w, h, opts, onProgress);
     });
   }
   return new Promise((resolve, reject) => {
@@ -3095,7 +3136,7 @@ function runUpscaleJob(rgba, w, h, opts, onProgress) {
     worker.onmessage = e => {
       const d = e.data;
       if (d.progress != null) onProgress(d.progress, d.label);
-      else if (d.done) { finish(); resolve(new Uint8ClampedArray(d.rgba)); }
+      else if (d.done) { finish(); resolve(d.prep || new Uint8ClampedArray(d.rgba)); }
       else if (d.error) { finish(); reject(new Error(d.error)); }
     };
     worker.onerror = e => {
@@ -3105,8 +3146,32 @@ function runUpscaleJob(rgba, w, h, opts, onProgress) {
       upscaleWorker = null;
       reject(new Error(e.message || 'Upscaler crashed (out of memory?)'));
     };
-    worker.postMessage({ rgba: rgba.buffer, w, h, opts }, [rgba.buffer]);
+    worker.postMessage({ rgba: rgba.buffer, w, h, opts, cmd }, [rgba.buffer]);
   });
+}
+
+// Built-in engine with the chosen processing: CPU = all in the worker;
+// GPU = input-resolution half in the worker, output-resolution half on the GPU.
+async function builtinJob(rgba, w, h, opts, onProgress, device) {
+  if (device !== 'gpu') return runUpscaleJob(rgba, w, h, opts, onProgress);
+  const prep = await runUpscaleJob(rgba, w, h, opts, (f, label) => onProgress(f * 0.45, label), 'prepare');
+  return gpuFinish(prep, f => onProgress(0.45 + f * 0.55, 'Upscaling on the GPU…'), null, true);
+}
+
+// Output-resolution half on the GPU. `asJob` makes it cancellable from the
+// progress panel (runEnhance); previews pass their own isCancelled instead.
+async function gpuFinish(prep, onProgress, isCancelled, asJob) {
+  let cancelled = false;
+  if (asJob) currentJob = { cancel() { cancelled = true; } };
+  try {
+    return await withGpu(r => r.runBuiltin(prep, getMainUpscaler().LANCZOS2, onProgress,
+      () => cancelled || (isCancelled ? isCancelled() : false)));
+  } catch (err) {
+    if (cancelled) throw new CancelledError('Cancelled');
+    throw err;
+  } finally {
+    if (asJob) currentJob = null;
+  }
 }
 
 // Output size for a w×h picture, capped to what browsers can encode.
@@ -3165,10 +3230,10 @@ async function enhanceOne(original, settings, onProgress) {
     if (settings.preset === 'auto') onProgress(0.03, 'Analysing picture…');
     // Measured before the pixels are handed to the worker.
     settings = resolveSettings(settings, { rgba, w, h, jpeg }, size.scale);
-    out = await runUpscaleJob(rgba, w, h, {
+    out = await builtinJob(rgba, w, h, {
       width: size.W, height: size.H, preset: settings.preset, tuning: engineTuning(settings),
       extras: engineExtras(settings), jpegSource: jpeg, flattenWhite: settings.format === 'jpeg',
-    }, (f, label) => onProgress(0.05 + f * 0.85, label));
+    }, (f, label) => onProgress(0.05 + f * 0.85, label), settings.device);
   }
 
   onProgress(0.92, 'Saving ' + (settings.format === 'png' ? 'PNG' : 'JPEG') + '…');
@@ -3183,6 +3248,7 @@ async function enhanceOne(original, settings, onProgress) {
       of: original.id, label: size.label, scale: Math.round(size.scale * 1000) / 1000,
       preset: settings.preset, format: settings.format, tuning: engineTuning(settings), extras: engineExtras(settings),
       auto: !!settings.auto, engine: settings.engine || 'builtin',
+      device: settings.device === 'gpu' && !(isAiEngine(settings) && settings.preset === 'none') ? 'gpu' : 'cpu',
       originalWidth: w, originalHeight: h, width: size.W, height: size.H,
       created: Date.now(),
     },
@@ -3293,6 +3359,7 @@ function readEnhanceForm() {
     scale: scaleVal === 'width' ? null : Number(scaleVal),
     width: Math.max(100, Math.min(MAX_OUTPUT_SIDE, Math.round(Number(enhanceWidth.value) || 1500))),
     engine: f.engine.value,
+    device: f.device.value,
     preset: f.preset.value,
     format: f.format.value,
     flatness: Number(tuneFlatness.value),
@@ -3316,7 +3383,8 @@ function timeEstimate(st) {
   if (x.lines) { lo += 1; hi += 4; }
   if (x.fills) { lo += 0.5; hi += 1; }
   if (x.edges) { lo += 0.5; hi += 1.5; }
-  return Math.round(lo) + '–' + Math.round(hi);
+  if (st.device === 'gpu') { lo = Math.max(0.5, lo * 0.3); hi = Math.max(1, hi * 0.35); }   // output stages on the GPU
+  return (lo < 1 ? '<1' : Math.round(lo)) + '–' + Math.round(hi);
 }
 
 function updateEnhanceSummary() {
@@ -3328,6 +3396,13 @@ function updateEnhanceSummary() {
   if (ai && f.preset.value === 'auto') f.preset.value = 'none';
   if (!ai && f.preset.value === 'none') f.preset.value = 'lumity';
   document.getElementById('cleanup-legend').textContent = ai ? 'Cleanup after AI' : 'Cleanup';
+  // Processing only matters when a built-in step runs.
+  const noBuiltin = ai && f.preset.value === 'none';
+  document.getElementById('device-fields').disabled = noBuiltin;
+  document.getElementById('device-hint').textContent = noBuiltin ? 'Not used: “None” keeps the AI result as it is.'
+    : !gpuBuiltinAvailable() ? 'CPU only: this browser offers no suitable GPU (WebGL2 with float rendering).'
+    : f.device.value === 'gpu' ? 'The upscaling steps run on your graphics card — much faster, especially at 3–4× and with extras. Results match the CPU (apart from tiny dithering differences).'
+    : 'Runs on the processor, in the background.';
   const st = readEnhanceForm();
   document.getElementById('width-row').hidden = st.mode !== 'width';
   document.getElementById('tuning-fields').hidden = st.preset !== 'lumity';
@@ -3372,6 +3447,8 @@ function openEnhanceDialog(targets, mode) {
   f.engine.value = 'builtin';
   aiRefreshUi().then(() => {
     if (saved.engine && saved.engine !== 'builtin' && aiReady(saved.engine)) { f.engine.value = saved.engine; updateEnhanceSummary(); }
+    if (saved.device === 'gpu' && gpuBuiltinAvailable()) f.device.value = 'gpu';
+    updateEnhanceSummary();                      // GPU availability is known now
   });
   if (saved.format === 'png' || saved.format === 'jpeg') f.format.value = saved.format;
   tuneFlatness.value = Number.isFinite(saved.flatness) ? saved.flatness : 50;
@@ -3579,17 +3656,26 @@ function schedulePreview(delay) {
 // Only one preview render at a time; a change while rendering re-runs once
 // the current render finishes (so dragging a slider never queues up work).
 // Built-in engine on a region (preview worker, or main thread as a fallback).
-function previewEngine(region, rw, rh, opts) {
+function previewWorkerRun(region, rw, rh, opts, cmd) {
   if (!preview.worker) preview.worker = createUpscaleWorker();
-  if (!preview.worker) return yieldToBrowser().then(() => getMainUpscaler().upscale(region, rw, rh, opts));
+  if (!preview.worker) return yieldToBrowser().then(() => {
+    const M = getMainUpscaler();
+    return cmd === 'prepare' ? M.prepare(region, rw, rh, opts) : M.upscale(region, rw, rh, opts);
+  });
   return new Promise((resolve, reject) => {
     preview.worker.onmessage = e => {
-      if (e.data.done) resolve(new Uint8ClampedArray(e.data.rgba));
+      if (e.data.done) resolve(e.data.prep || new Uint8ClampedArray(e.data.rgba));
       else if (e.data.error) reject(new Error(e.data.error));
     };
     preview.worker.onerror = ev => { ev.preventDefault(); preview.worker.terminate(); preview.worker = null; reject(new Error('worker failed')); };
-    preview.worker.postMessage({ rgba: region.buffer, w: rw, h: rh, opts }, [region.buffer]);
+    preview.worker.postMessage({ rgba: region.buffer, w: rw, h: rh, opts, cmd }, [region.buffer]);
   });
+}
+
+async function previewEngine(region, rw, rh, opts, device, isCancelled) {
+  if (device !== 'gpu') return previewWorkerRun(region, rw, rh, opts, 'upscale');
+  const prep = await previewWorkerRun(region, rw, rh, opts, 'prepare');
+  return gpuFinish(prep, null, isCancelled, false);
 }
 
 async function runPreview() {
@@ -3657,9 +3743,10 @@ async function runPreview() {
         pct.textContent = Math.round(f * 100) + '%';
         previewEls.status.textContent = 'Rendering AI preview… ' + Math.round(f * 100) + '%';
       }, stale);
-      if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false });
+      if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false }, settings.device, stale);
     } else {
-      out = await previewEngine(region, rw, rh, opts);
+      const stale = () => token !== preview.token || preview.dirty || !enhanceDialog.classList.contains('open');
+      out = await previewEngine(region, rw, rh, opts, settings.device, stale);
     }
     if (token !== preview.token) return;
     const tmp = document.createElement('canvas');
@@ -3891,11 +3978,191 @@ void main(){
   outColor = vec4(clamp(s / float(uN * uN), 0.0, 1.0), 1.0);
 }`;
 
+
+  // ── Built-in engine, output-resolution half, on the GPU ──
+  // Mirrors finish() in upscalerModule step by step; works on a tile region
+  // (output pixels) whose global origin is uOrig. Image borders are where the
+  // CPU code has borders; region edges inside the image are tile overlap.
+  const HEAD2 = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+out vec4 outColor;
+uniform ivec2 uSize;   // region size
+uniform ivec2 uOrig;   // region origin in output pixels
+uniform ivec2 uImg;    // output picture size W×H
+ivec2 P(){ return ivec2(gl_FragCoord.xy); }
+ivec2 G(){ return P() + uOrig; }
+ivec2 C(ivec2 q){ return clamp(q, ivec2(0), uSize - 1); }
+`;
+  const FS_RESAMPLE = HEAD2 + `
+uniform sampler2D uPlanes; uniform sampler2D uField; uniform sampler2D uLut; uniform ivec2 uSrc;
+float lz(float d2){ return texelFetch(uLut, ivec2(int(d2 * 512.0), 0), 0).r; }
+void main(){
+  ivec2 o = G(); int w = uSrc.x, h = uSrc.y;
+  float sx = (float(o.x) + 0.5) * (float(w) / float(uImg.x)) - 0.5;
+  float sy = (float(o.y) + 0.5) * (float(h) / float(uImg.y)) - 0.5;
+  int ix = int(floor(sx)), iy = int(floor(sy)); float fx = sx - float(ix), fy = sy - float(iy);
+  int x0 = clamp(ix, 0, w - 1), x1 = clamp(ix + 1, 0, w - 1), y0 = clamp(iy, 0, h - 1), y1 = clamp(iy + 1, 0, h - 1);
+  float w00 = (1.0 - fx) * (1.0 - fy), w10 = fx * (1.0 - fy), w01 = (1.0 - fx) * fy, w11 = fx * fy;
+  vec2 f = texelFetch(uField, ivec2(x0, y0), 0).rg * w00 + texelFetch(uField, ivec2(x1, y0), 0).rg * w10
+         + texelFetch(uField, ivec2(x0, y1), 0).rg * w01 + texelFetch(uField, ivec2(x1, y1), 0).rg * w11;
+  float len = sqrt(f.x * f.x + f.y * f.y), c = 1.0, s = 0.0;
+  if (len > 1e-4) { float cc = f.x / len; c = sqrt(max(0.0, (1.0 + cc) / 2.0)); s = sqrt(max(0.0, (1.0 - cc) / 2.0)) * (f.y < 0.0 ? -1.0 : 1.0); len = min(len, 1.0); }
+  else len = 0.0;
+  float across = 1.0 + 0.5 * len, along = 1.0 / (1.0 + 1.2 * len);
+  vec3 sum = vec3(0.0); float ws = 0.0;
+  for (int j = -1; j <= 2; j++) {
+    int yy = clamp(iy + j, 0, h - 1); float vy = float(j) - fy;
+    for (int i = -1; i <= 2; i++) {
+      int xx = clamp(ix + i, 0, w - 1); float vx = float(i) - fx;
+      float u = (vx * c + vy * s) * across, v = (vy * c - vx * s) * along, d2 = u * u + v * v;
+      if (d2 >= 4.0) continue;
+      float wt = lz(d2);
+      sum += wt * texelFetch(uPlanes, ivec2(xx, yy), 0).rgb; ws += wt;
+    }
+  }
+  vec3 a = texelFetch(uPlanes, ivec2(x0, y0), 0).rgb, b = texelFetch(uPlanes, ivec2(x1, y0), 0).rgb;
+  vec3 cq = texelFetch(uPlanes, ivec2(x0, y1), 0).rgb, d = texelFetch(uPlanes, ivec2(x1, y1), 0).rgb;
+  vec3 val = ws > 1e-6 ? sum / ws : a;
+  val = clamp(val, min(min(a, b), min(cq, d)), max(max(a, b), max(cq, d)));
+  outColor = vec4(val.r, roundEven(clamp(val.g, 0.0, 255.0)), roundEven(clamp(val.b, 0.0, 255.0)), 0.0);
+}`;
+  // 1-D box mean / max / min of one channel (uMode 0/1/2), partial windows at edges.
+  const FS_LINE = HEAD2 + `
+uniform sampler2D uSrc0; uniform int uCh; uniform ivec2 uDir; uniform int uR; uniform int uMode;
+void main(){
+  ivec2 p = P(); float acc = uMode == 1 ? -1e30 : (uMode == 2 ? 1e30 : 0.0); int n = 0;
+  for (int k = -uR; k <= uR; k++) {
+    ivec2 q = p + uDir * k;
+    if (q.x < 0 || q.y < 0 || q.x >= uSize.x || q.y >= uSize.y) continue;
+    float v = texelFetch(uSrc0, q, 0)[uCh];
+    if (uMode == 0) acc += v; else if (uMode == 1) acc = max(acc, v); else acc = min(acc, v);
+    n++;
+  }
+  outColor = vec4(uMode == 0 ? acc / float(n) : acc);
+}`;
+  const FS_SHOCK = HEAD2 + `
+uniform sampler2D uCur; uniform sampler2D uS; uniform float uDt;
+float Yc(ivec2 q){ return texelFetch(uCur, C(q), 0).r; }
+float Sm(ivec2 q){ return texelFetch(uS, C(q), 0).r; }
+void main(){
+  ivec2 p = P(), g = G(); vec4 cur = texelFetch(uCur, p, 0);
+  outColor = cur;
+  if (g.x < 1 || g.y < 1 || g.x >= uImg.x - 1 || g.y >= uImg.y - 1) return;
+  float gx = (Sm(p + ivec2(1, 0)) - Sm(p - ivec2(1, 0))) / 2.0, gy = (Sm(p + ivec2(0, 1)) - Sm(p - ivec2(0, 1))) / 2.0;
+  float g2 = gx * gx + gy * gy;
+  if (g2 < 4.0) return;
+  float s0 = Sm(p);
+  float ixx = Sm(p + ivec2(1, 0)) - 2.0 * s0 + Sm(p - ivec2(1, 0));
+  float iyy = Sm(p + ivec2(0, 1)) - 2.0 * s0 + Sm(p - ivec2(0, 1));
+  float ixy = (Sm(p + ivec2(1, 1)) - Sm(p + ivec2(-1, 1)) - Sm(p + ivec2(1, -1)) + Sm(p + ivec2(-1, -1))) / 4.0;
+  float vnn = (gx * gx * ixx + 2.0 * gx * gy * ixy + gy * gy * iyy) / g2;
+  float ux = (Yc(p + ivec2(1, 0)) - Yc(p - ivec2(1, 0))) / 2.0, uy = (Yc(p + ivec2(0, 1)) - Yc(p - ivec2(0, 1))) / 2.0;
+  float v = cur.r - (vnn > 1e-3 ? 1.0 : (vnn < -1e-3 ? -1.0 : 0.0)) * sqrt(ux * ux + uy * uy) * uDt;
+  float lo = cur.r, hi = cur.r;
+  for (int k = -1; k <= 1; k++) for (int d = -1; d <= 1; d++) { float q = Yc(p + ivec2(d, k)); lo = min(lo, q); hi = max(hi, q); }
+  outColor.r = clamp(v, lo, hi);
+}`;
+  const FS_SHARPEN = HEAD2 + `
+uniform sampler2D uCur; uniform float uAmount;
+float Yc(ivec2 q){ return texelFetch(uCur, C(q), 0).r; }
+void main(){
+  ivec2 p = P(), g = G(); vec4 cur = texelFetch(uCur, p, 0); outColor = cur;
+  if (g.x < 1 || g.y < 1 || g.x >= uImg.x - 1 || g.y >= uImg.y - 1) return;
+  float c = cur.r, l = Yc(p - ivec2(1, 0)), r = Yc(p + ivec2(1, 0)), u = Yc(p - ivec2(0, 1)), d = Yc(p + ivec2(0, 1));
+  float lo = min(min(min(c, l), min(r, u)), d), hi = max(max(max(c, l), max(r, u)), d);
+  float room = min(lo, 255.0 - hi) / (hi > 0.0 ? max(hi, 1.0) : 1.0);
+  float k = uAmount * sqrt(max(0.0, min(1.0, room + 0.25)));
+  outColor.r = clamp(c + k * (4.0 * c - l - r - u - d) / 4.0, lo, hi);
+}`;
+  const FS_FFLAT = HEAD2 + `
+uniform sampler2D uCur; uniform sampler2D uMean; uniform float uT;
+float Yc(ivec2 q){ return texelFetch(uCur, C(q), 0).r; }
+void main(){
+  ivec2 p = P(), g = G(); vec4 cur = texelFetch(uCur, p, 0); outColor = cur;
+  if (g.x < 1 || g.y < 1 || g.x >= uImg.x - 1 || g.y >= uImg.y - 1) return;
+  float lo = cur.r, hi = cur.r;
+  for (int k = -1; k <= 1; k++) for (int d = -1; d <= 1; d++) { float q = Yc(p + ivec2(d, k)); lo = min(lo, q); hi = max(hi, q); }
+  float range = hi - lo;
+  if (range < uT) { float t = range / uT; outColor.r = texelFetch(uMean, p, 0).r * (1.0 - t) + cur.r * t; }
+}`;
+  const FS_COV = HEAD2 + `
+uniform sampler2D uCur; uniform sampler2D uClose; uniform sampler2D uEro;
+void main(){
+  ivec2 p = P(); float c = texelFetch(uClose, p, 0).r - texelFetch(uEro, p, 0).r;
+  float v = 0.0;
+  if (c >= 24.0) v = clamp((texelFetch(uClose, p, 0).r - texelFetch(uCur, p, 0).r) / c, 0.0, 1.0);
+  outColor = vec4(v);
+}`;
+  const FS_REDRAW = HEAD2 + `
+uniform sampler2D uCur; uniform sampler2D uClose; uniform sampler2D uEro; uniform sampler2D uLs; uniform sampler2D uPeak; uniform sampler2D uLineY; uniform float uSlope;
+void main(){
+  ivec2 p = P(); vec4 cur = texelFetch(uCur, p, 0); outColor = cur;
+  float cl = texelFetch(uClose, p, 0).r, er = texelFetch(uEro, p, 0).r, c = cl - er, pk = texelFetch(uPeak, p, 0).r;
+  if (c < 24.0 || pk < 0.15) return;
+  float t = 0.5 * pk;
+  float Cv = clamp((texelFetch(uLs, p, 0).r - t) / (pk / uSlope) + 0.5, 0.0, 1.0);
+  float core = min(cl, 0.6 * texelFetch(uLineY, p, 0).r + 0.4 * min(cur.r, cl));
+  float target = cl * (1.0 - Cv) + core * Cv;
+  float z = min(1.0, (c - 24.0) / 24.0) * min(1.0, (pk - 0.15) / 0.15);
+  outColor.r = cur.r + (target - cur.r) * z;
+}`;
+  const FS_DARKEN = HEAD2 + `
+uniform sampler2D uCur; uniform sampler2D uClose; uniform float uDarken;
+void main(){
+  ivec2 p = P(); vec4 cur = texelFetch(uCur, p, 0);
+  float hat = max(0.0, texelFetch(uClose, p, 0).r - cur.r);
+  outColor = vec4(max(0.0, cur.r - uDarken * hat), cur.g, cur.b, hat);
+}`;
+  const FS_SNAP = HEAD2 + `
+uniform sampler2D uCur; uniform float uSnapT; uniform float uSat; uniform int uHat;
+void main(){
+  ivec2 p = P(), g = G(); vec4 cur = texelFetch(uCur, p, 0); outColor = cur;
+  if (g.x < 2 || g.y < 2 || g.x >= uImg.x - 2 || g.y >= uImg.y - 2) return;
+  ivec2 lo = p, hi = p; float ylo = cur.r, yhi = cur.r;
+  for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++) {
+    ivec2 q = C(p + ivec2(dx, dy)); float v = texelFetch(uCur, q, 0).r;
+    if (v < ylo) { ylo = v; lo = q; }
+    if (v > yhi) { yhi = v; hi = q; }
+  }
+  float b = cur.g, c = cur.b, range = yhi - ylo;
+  if (range > uSnapT) {
+    float t = clamp((cur.r - ylo) / range * 2.2 - 0.6, 0.0, 1.0);
+    vec4 L = texelFetch(uCur, lo, 0), Hh = texelFetch(uCur, hi, 0);
+    b = L.g * (1.0 - t) + Hh.g * t; c = L.b * (1.0 - t) + Hh.b * t;
+  }
+  float boost = uHat == 1 ? 1.0 + uSat * min(1.0, cur.a / 30.0) : 1.0;
+  outColor.g = roundEven(clamp(128.0 + (b - 128.0) * boost, 0.0, 255.0));
+  outColor.b = roundEven(clamp(128.0 + (c - 128.0) * boost, 0.0, 255.0));
+}`;
+  const FS_OUT = HEAD2 + `
+uniform sampler2D uCur; uniform sampler2D uPlanes; uniform ivec2 uSrc; uniform int uAlpha; uniform int uFlatten;
+float hash(uvec2 v){ uint h = v.x * 1664525u + v.y * 1013904223u; h ^= h >> 16; h *= 2246822519u; h ^= h >> 13; h *= 3266489917u; h ^= h >> 16; return float(h) / 4294967296.0; }
+void main(){
+  ivec2 p = P(), g = G(); vec4 cur = texelFetch(uCur, p, 0);
+  float y = cur.r, cb = cur.g - 128.0, cr = cur.b - 128.0;
+  float dither = (hash(uvec2(g) * 2u) - hash(uvec2(g) * 2u + uvec2(1u, 7u))) * 0.5;
+  vec3 rgb = vec3(y + 1.402 * cr, y - 0.344136 * cb - 0.714136 * cr, y + 1.772 * cb) + dither;
+  float a = 255.0;
+  if (uAlpha == 1) {
+    int w = uSrc.x, h = uSrc.y;
+    float sy = clamp((float(g.y) + 0.5) * float(h) / float(uImg.y) - 0.5, 0.0, float(h - 1));
+    float sx = clamp((float(g.x) + 0.5) * float(w) / float(uImg.x) - 0.5, 0.0, float(w - 1));
+    int y0 = int(floor(sy)), x0 = int(floor(sx)), y1 = min(y0 + 1, h - 1), x1 = min(x0 + 1, w - 1);
+    float fy = sy - float(y0), fx = sx - float(x0);
+    a = (texelFetch(uPlanes, ivec2(x0, y0), 0).a * (1.0 - fx) + texelFetch(uPlanes, ivec2(x1, y0), 0).a * fx) * (1.0 - fy)
+      + (texelFetch(uPlanes, ivec2(x0, y1), 0).a * (1.0 - fx) + texelFetch(uPlanes, ivec2(x1, y1), 0).a * fx) * fy;
+    a = roundEven(clamp(a, 0.0, 255.0));
+    if (uFlatten == 1 && a < 255.0) { float t = a / 255.0; rgb = rgb * t + 255.0 * (1.0 - t); a = 255.0; }
+  }
+  outColor = vec4(roundEven(clamp(rgb, 0.0, 255.0)), a) / 255.0;
+}`;
+
   function createRunner() {
     const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
     const gl = canvas.getContext('webgl2', { antialias: false, depth: false, stencil: false, premultipliedAlpha: false, powerPreference: 'high-performance' });
     if (!gl) throw new Error('WebGL2 is not available');
-    if (!gl.getExtension('EXT_color_buffer_float') && !gl.getExtension('EXT_color_buffer_half_float')) throw new Error('This GPU cannot render to float textures');
+    const float32 = !!gl.getExtension('EXT_color_buffer_float');    // needed by the built-in GPU engine
+    if (!float32 && !gl.getExtension('EXT_color_buffer_half_float')) throw new Error('This GPU cannot render to float textures');
     const maxLayers = gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS), maxSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
 
     const prog = fs => {
@@ -4194,7 +4461,152 @@ void main(){
       return out;
     }
 
-    return { run, gl, lost: () => gl.isContextLost(), maxLayers, maxSize, info: gl.getParameter(gl.VERSION) };
+
+    // ── Built-in engine on the GPU (output-resolution half) ──
+    const B = {
+      resample: prog2(FS_RESAMPLE), line: prog2(FS_LINE), shock: prog2(FS_SHOCK), sharpen: prog2(FS_SHARPEN),
+      fflat: prog2(FS_FFLAT), cov: prog2(FS_COV), redraw: prog2(FS_REDRAW), darken: prog2(FS_DARKEN),
+      snap: prog2(FS_SNAP), out: prog2(FS_OUT),
+    };
+    function prog2(fs) { return prog(fs); }
+    const tex2 = (w, h, fmt, data, type) => {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, fmt, w, h);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      if (data) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, fmt === gl.RG32F ? gl.RG : fmt === gl.R32F ? gl.RED : gl.RGBA, type || gl.FLOAT, data);
+      return { t, w, h };
+    };
+    let bpool = null;
+    function bTextures(rw, rh) {
+      if (bpool && bpool.w >= rw && bpool.h >= rh) return bpool;
+      if (bpool) [...bpool.m, ...bpool.s, bpool.o].forEach(x => gl.deleteTexture(x.t));
+      bpool = { w: rw, h: rh, m: [tex2(rw, rh, gl.RGBA32F), tex2(rw, rh, gl.RGBA32F)], s: [], o: tex2(rw, rh, gl.RGBA8) };
+      for (let i = 0; i < 9; i++) bpool.s.push(tex2(rw, rh, gl.R32F));
+      return bpool;
+    }
+
+    async function runBuiltin(prep, LUT, onProgress, isCancelled) {
+      if (gl.isContextLost()) throw new Error('The GPU was reset — please try again.');
+      const { w, h, W, H, P, extras, scale } = prep;
+      // Inputs: planes (Y, Cb, Cr, alpha) and edge field at input resolution.
+      const planes = new Float32Array(w * h * 4), field = new Float32Array(w * h * 2);
+      for (let i = 0; i < w * h; i++) {
+        planes[i * 4] = prep.Yc[i]; planes[i * 4 + 1] = prep.Cbc[i]; planes[i * 4 + 2] = prep.Crc[i]; planes[i * 4 + 3] = prep.A ? prep.A[i] : 255;
+        field[i * 2] = prep.C2[i]; field[i * 2 + 1] = prep.S2[i];
+      }
+      const tPlanes = tex2(w, h, gl.RGBA32F, planes), tField = tex2(w, h, gl.RG32F, field), tLut = tex2(LUT.length, 1, gl.R32F, LUT);
+      const CORE = 768, HALO = 48;
+      const out = new Uint8ClampedArray(W * H * 4);
+      const tilesX = Math.ceil(W / CORE), tilesY = Math.ceil(H / CORE), total = tilesX * tilesY;
+      const iterations = P.shock + (scale > 2.5 ? 1 : 0), smoothR = scale > 2.5 ? 2 : 1;
+      let done = 0;
+      try {
+        for (let ty = 0; ty < tilesY; ty++) for (let tx = 0; tx < tilesX; tx++) {
+          if (isCancelled && isCancelled()) throw new Error('cancelled');
+          const cx0 = tx * CORE, cy0 = ty * CORE, cx1 = Math.min(W, cx0 + CORE), cy1 = Math.min(H, cy0 + CORE);
+          const rx0 = Math.max(0, cx0 - HALO), ry0 = Math.max(0, cy0 - HALO), rx1 = Math.min(W, cx1 + HALO), ry1 = Math.min(H, cy1 + HALO);
+          const rw = rx1 - rx0, rh = ry1 - ry0;
+          const T = bTextures(Math.min(W, CORE + 2 * HALO), Math.min(H, CORE + 2 * HALO));
+          let m = 0;                                     // current main texture index
+          const M = () => T.m[m], Mo = () => T.m[1 - m], S = T.s;
+          // one full-region pass with program pr into dst
+          const pass = (pr, dst, cost, set) => step(rw * rh * cost, () => {
+            gl.useProgram(pr.p);
+            gl.uniform2i(pr.loc.uSize, rw, rh); gl.uniform2i(pr.loc.uOrig, rx0, ry0); gl.uniform2i(pr.loc.uImg, W, H);
+            let unit = 0;
+            set((name, tex) => { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, tex.t); gl.uniform1i(pr.loc[name], unit); unit++; });
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, dst.t, 0);
+            gl.viewport(0, 0, rw, rh);
+            gl.drawArrays(gl.TRIANGLES, 0, 3);
+          });
+          const line = (src, ch, dir, r, mode, dst) => pass(B.line, dst, 2 * r + 1, bind => {
+            bind('uSrc0', src); const L = B.line.loc;
+            gl.uniform1i(L.uCh, ch); gl.uniform2i(L.uDir, dir[0], dir[1]); gl.uniform1i(L.uR, r); gl.uniform1i(L.uMode, mode);
+          });
+          const box2 = (src, ch, r, tmp, dst) => { line(src, ch, [1, 0], r, 0, tmp); line(tmp, 0, [0, 1], r, 0, dst); };
+          const morph2 = (src, ch, r, isMax, tmp, dst) => { line(src, ch, [1, 0], r, isMax ? 1 : 2, tmp); line(tmp, 0, [0, 1], r, isMax ? 1 : 2, dst); };
+          const gauss = (src, sigma, a, b) => {                 // result ends in a or b (returned)
+            const rb = Math.max(0, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2));
+            if (rb === 0) return src;
+            box2(src, 0, rb, b, a); box2(a, 0, rb, b, a); box2(a, 0, rb, b, a);
+            return a;
+          };
+          const swap = () => { m = 1 - m; };
+
+          pass(B.resample, Mo(), 48, bind => {
+            bind('uPlanes', tPlanes); bind('uField', tField); bind('uLut', tLut); gl.uniform2i(B.resample.loc.uSrc, w, h);
+          }); swap();
+          for (let it = 0; it < iterations; it++) {
+            box2(M(), 0, smoothR, S[0], S[1]);
+            const cur = M();
+            pass(B.shock, Mo(), 20, bind => { bind('uCur', cur); bind('uS', S[1]); gl.uniform1f(B.shock.loc.uDt, P.dt); }); swap();
+          }
+          if (P.sharpen > 0) { const cur = M(); pass(B.sharpen, Mo(), 5, bind => { bind('uCur', cur); gl.uniform1f(B.sharpen.loc.uAmount, P.sharpen); }); swap(); }
+          if (P.finalFlatten) {
+            box2(M(), 0, 2, S[0], S[1]); const cur = M();
+            pass(B.fflat, Mo(), 10, bind => { bind('uCur', cur); bind('uMean', S[1]); gl.uniform1f(B.fflat.loc.uT, P.finalFlatten); }); swap();
+          }
+          if (extras.lines) {
+            const r = Math.max(2, Math.ceil(1.5 * scale)), sigma = 0.4 * scale;
+            morph2(M(), 0, r, true, S[0], S[1]); morph2(S[1], 0, r, false, S[0], S[2]);   // S2 = closing
+            morph2(M(), 0, r, false, S[0], S[3]);                                         // S3 = erosion
+            const cur = M();
+            pass(B.cov, S[4], 3, bind => { bind('uCur', cur); bind('uClose', S[2]); bind('uEro', S[3]); });
+            const Ls = gauss(S[4], sigma, S[5], S[0]);
+            morph2(Ls, 0, r, true, S[0], S[6]);                                           // S6 = peak
+            const lineY = gauss(S[3], Math.max(0.7, sigma * 0.5), S[7], S[8]);
+            pass(B.redraw, Mo(), 8, bind => {
+              bind('uCur', cur); bind('uClose', S[2]); bind('uEro', S[3]); bind('uLs', Ls); bind('uPeak', S[6]); bind('uLineY', lineY);
+              gl.uniform1f(B.redraw.loc.uSlope, 2.5 * sigma);
+            }); swap();
+          }
+          if (P.lines) {
+            const r = Math.max(2, Math.round(scale));
+            morph2(M(), 0, r, true, S[0], S[1]); morph2(S[1], 0, r, false, S[0], S[2]);
+            const cur = M();
+            pass(B.darken, Mo(), 2, bind => { bind('uCur', cur); bind('uClose', S[2]); gl.uniform1f(B.darken.loc.uDarken, P.lines.darken); }); swap();
+            const cur2 = M();
+            pass(B.snap, Mo(), 25, bind => { bind('uCur', cur2); const L = B.snap.loc; gl.uniform1f(L.uSnapT, P.lines.snap); gl.uniform1f(L.uSat, P.lines.saturate); gl.uniform1i(L.uHat, 1); }); swap();
+          } else if (extras.lines) {
+            const cur = M();
+            pass(B.snap, Mo(), 25, bind => { bind('uCur', cur); const L = B.snap.loc; gl.uniform1f(L.uSnapT, 18); gl.uniform1f(L.uSat, 0); gl.uniform1i(L.uHat, 0); }); swap();
+          }
+          const fin = M();
+          pass(B.out, T.o, 6, bind => {
+            bind('uCur', fin); bind('uPlanes', tPlanes); const L = B.out.loc;
+            gl.uniform2i(L.uSrc, w, h); gl.uniform1i(L.uAlpha, prep.A ? 1 : 0); gl.uniform1i(L.uFlatten, prep.flattenWhite ? 1 : 0);
+          });
+          await drain(f => { if (onProgress) onProgress((done + f * 0.97) / total); }, isCancelled);
+          // read the tile core (without the overlap)
+          const tw = cx1 - cx0, th = cy1 - cy0;
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, T.o.t, 0);
+          const buf = gl.createBuffer();
+          gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);
+          gl.bufferData(gl.PIXEL_PACK_BUFFER, tw * th * 4, gl.STREAM_READ);
+          gl.readPixels(cx0 - rx0, cy0 - ry0, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+          gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+          await waitGpu();
+          const px = new Uint8Array(tw * th * 4);
+          gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, px);
+          gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.deleteBuffer(buf);
+          for (let y = 0; y < th; y++) out.set(px.subarray(y * tw * 4, (y + 1) * tw * 4), ((cy0 + y) * W + cx0) * 4);
+          done++;
+          if (onProgress) onProgress(done / total);
+        }
+      } finally {
+        queue = [];
+        gl.deleteTexture(tPlanes.t); gl.deleteTexture(tField.t); gl.deleteTexture(tLut.t);
+      }
+      return out;
+    }
+
+    return { run, runBuiltin, float32, gl, lost: () => gl.isContextLost(), maxLayers, maxSize, info: gl.getParameter(gl.VERSION) };
   }
 
   return { parseParam, compile, cpuForward, createRunner };
@@ -4244,12 +4656,12 @@ async function aiGetModel(id) {
 }
 
 let aiActive = 0;
-async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled) {
-  const model = await aiGetModel(id);
+// Any GPU work (AI or built-in): quiet page while it runs, recover from resets.
+async function withGpu(fn) {
   const runner = aiRunner();
   aiActive++; document.body.classList.add('gpu-busy');
   try {
-    return await runner.run(model, rgba, w, h, W, H, onProgress, isCancelled);
+    return await fn(runner);
   } catch (err) {
     if (runner.lost()) aiState.runner = null;      // GPU reset: start fresh next time
     throw err;
@@ -4257,6 +4669,13 @@ async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled) {
     if (--aiActive === 0) document.body.classList.remove('gpu-busy');
   }
 }
+
+async function aiRun(id, rgba, w, h, W, H, onProgress, isCancelled) {
+  const model = await aiGetModel(id);
+  return withGpu(r => r.run(model, rgba, w, h, W, H, onProgress, isCancelled));
+}
+
+function gpuBuiltinAvailable() { return !aiState.gpuError && !!aiState.runner && aiState.runner.float32; }
 
 // Which supported model a parsed file pair is.
 function aiIdentify(model) {
@@ -4368,6 +4787,8 @@ async function aiRefreshUi() {
     radio.disabled = !aiReady(m.id);
   }
   document.getElementById('ai-load-files').disabled = !!aiState.gpuError;
+  enhanceForm.querySelector('input[name=device][value=gpu]').disabled = !gpuBuiltinAvailable();
+  if (!gpuBuiltinAvailable() && enhanceForm.elements.device.value === 'gpu') enhanceForm.elements.device.value = 'cpu';
   const note = document.getElementById('ai-note');
   note.textContent = '';
   if (aiState.gpuError) note.textContent = 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). The built-in engine still works.';
@@ -4413,10 +4834,10 @@ async function aiUpscale(px, W, H, settings, onProgress) {
     }
   }
   if (!post) return out;
-  return runUpscaleJob(out, W, H, {
+  return builtinJob(out, W, H, {
     width: W, height: H, preset: settings.preset, tuning: engineTuning(settings),
     extras: engineExtras(settings), jpegSource: false, flattenWhite: settings.format === 'jpeg',
-  }, (f, label) => onProgress(0.62 + f * 0.28, 'After AI: ' + label));
+  }, (f, label) => onProgress(0.62 + f * 0.28, 'After AI: ' + label), settings.device);
 }
 
 // ── FAVOURITES ────────────────────────────────────────────────────────────────
