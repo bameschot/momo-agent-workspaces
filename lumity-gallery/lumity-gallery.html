@@ -266,6 +266,25 @@
       letter-spacing: 0.02em;
     }
 
+    /* ── UPSCALE MARKER ── */
+    .upscale-badge {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      z-index: 1;
+      background: linear-gradient(135deg, var(--accent), var(--glow));
+      color: #fff;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      padding: 0.15rem 0.45rem;
+      border-radius: 999px;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.45);
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .thumb.is-upscaled { border-color: var(--accent); }
+
     /* ── LIGHTBOX ── */
     #lightbox {
       display: none;
@@ -283,7 +302,7 @@
 
     #lightbox img {
       max-width: 92vw;
-      max-height: 82vh;
+      max-height: min(82vh, calc(100vh - 14rem));  /* leave room for caption, marker, actions, nav */
       border-radius: 12px;
       border: 2px solid var(--accent);
       box-shadow: 0 0 40px rgba(155,89,182,0.4);
@@ -306,6 +325,21 @@
     }
 
     #lb-counter { color: var(--accent2); font-size: 0.85rem; }
+    #lb-upscale-info {
+      color: #fff;
+      background: var(--surface2);
+      border: 1px solid var(--accent);
+      border-radius: 999px;
+      padding: 0.2rem 0.75rem;
+      font-size: 0.78rem;
+      max-width: 92vw;
+      text-align: center;
+    }
+    #lb-upscale-info[hidden] { display: none; }
+    .lb-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }
+    .lb-actions .lb-btn { font-size: 0.85rem; padding: 0.4rem 0.9rem; }
+    .lb-actions .lb-btn[hidden] { display: none; }
+    .lb-actions .lb-btn.active { background: var(--glow); color: #fff; border-color: var(--accent); }
 
     .lb-nav {
       display: flex;
@@ -389,6 +423,78 @@
       transition: background 0.15s;
     }
     #empty-state button:hover { background: var(--glow); color: #fff; }
+
+    /* ── ENHANCE DIALOG ── */
+    #enhance-dialog {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1400;
+      background: rgba(13,0,16,0.78);
+      backdrop-filter: blur(4px);
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      overflow-y: auto;
+    }
+    #enhance-dialog.open { display: flex; }
+    .dialog-card {
+      width: min(440px, 100%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 0 40px rgba(155,89,182,0.35);
+      padding: 1.2rem 1.3rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      margin: auto;
+    }
+    .dialog-card h2 { font-size: 1.1rem; color: var(--text); }
+    .dialog-sub { color: var(--text-muted); font-size: 0.82rem; line-height: 1.4; }
+    .dialog-card fieldset { border: none; display: flex; flex-direction: column; gap: 0.4rem; }
+    .dialog-card legend { color: var(--accent2); font-size: 0.78rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.35rem; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .chips label { position: relative; cursor: pointer; }
+    .chips input { position: absolute; opacity: 0; pointer-events: none; }
+    .chips span {
+      display: inline-block;
+      padding: 0.4rem 0.8rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.85rem;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .chips input:checked + span { background: var(--glow); border-color: var(--accent2); color: #fff; }
+    .chips input:focus-visible + span { outline: 2px solid var(--accent2); outline-offset: 2px; }
+    .width-row { display: flex; align-items: center; gap: 0.5rem; color: var(--text-muted); font-size: 0.85rem; }
+    .width-row[hidden] { display: none; }
+    .width-row input {
+      width: 7rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.35rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+    .dialog-check { display: flex; gap: 0.5rem; align-items: center; color: var(--text); font-size: 0.85rem; cursor: pointer; }
+    .dialog-check[hidden] { display: none; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 0.6rem; flex-wrap: wrap; }
+    .dialog-actions button, #progress-cancel {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--accent2);
+      padding: 0.5rem 1.1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .dialog-actions button.primary { background: var(--glow); border-color: var(--accent2); color: #fff; font-weight: 600; }
+    .dialog-actions button:hover, #progress-cancel:hover { border-color: var(--accent2); }
+    #progress-cancel[hidden] { display: none; }
 
     /* ── TOAST ── */
     /* ── LOAD PROGRESS ── */
@@ -516,6 +622,14 @@
     </select>
   </label>
   <label>
+    Show
+    <select id="kind-select">
+      <option value="all" selected>All</option>
+      <option value="original">Originals</option>
+      <option value="upscaled">Upscaled ✨</option>
+    </select>
+  </label>
+  <label>
     Fit
     <select id="fit-select">
       <option value="cover">Cropped</option>
@@ -536,6 +650,7 @@
   <button id="sort-ratio-btn" class="ss-btn">⇅ Aspect Ratio</button>
   <button id="sort-date-btn" class="ss-btn">⇅ File Date</button>
   <button id="shuffle-btn" class="ss-btn">🔀 Shuffle</button>
+  <button id="enhance-all-btn" class="ss-btn">✨ Enhance all</button>
   <button id="folder-btn">📁 Open Folder</button>
   <input type="file" id="folder-file-input" webkitdirectory multiple />
   <button id="json-btn">📥 Load JSON</button>
@@ -562,6 +677,11 @@
   <img id="lb-img" src="" alt="" />
   <div id="lb-caption"></div>
   <div id="lb-dim"></div>
+  <div id="lb-upscale-info" hidden></div>
+  <div class="lb-actions">
+    <button class="lb-btn" id="lb-enhance">✨ Enhance</button>
+    <button class="lb-btn" id="lb-compare" hidden>⇄ Show original</button>
+  </div>
   <div class="lb-nav">
     <button class="lb-btn" id="lb-prev">◀</button>
     <span id="lb-counter"></span>
@@ -580,7 +700,52 @@
       <div id="progress-fill"></div>
     </div>
     <div id="progress-count"></div>
+    <button type="button" id="progress-cancel" hidden>Cancel</button>
   </div>
+</div>
+
+<!-- Enhance (upscale) settings -->
+<div id="enhance-dialog" role="dialog" aria-modal="true" aria-labelledby="enhance-title">
+  <form class="dialog-card" id="enhance-form">
+    <h2 id="enhance-title">✨ Enhance picture</h2>
+    <p class="dialog-sub" id="enhance-target"></p>
+    <fieldset>
+      <legend>Size</legend>
+      <div class="chips">
+        <label><input type="radio" name="scale" value="2" checked><span>2×</span></label>
+        <label><input type="radio" name="scale" value="3"><span>3×</span></label>
+        <label><input type="radio" name="scale" value="4"><span>4×</span></label>
+        <label><input type="radio" name="scale" value="width"><span>Target width</span></label>
+      </div>
+      <div class="width-row" id="width-row" hidden>
+        <input type="number" id="enhance-width" min="100" max="8192" step="10" value="1500"> px wide
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Cleanup</legend>
+      <div class="chips">
+        <label><input type="radio" name="preset" value="soft"><span>Soft</span></label>
+        <label><input type="radio" name="preset" value="balanced" checked><span>Balanced</span></label>
+        <label><input type="radio" name="preset" value="strong"><span>Strong</span></label>
+      </div>
+      <p class="dialog-sub" id="preset-hint"></p>
+    </fieldset>
+    <fieldset>
+      <legend>Format</legend>
+      <div class="chips">
+        <label><input type="radio" name="format" value="jpeg" checked><span>JPEG · high quality</span></label>
+        <label><input type="radio" name="format" value="png"><span>PNG · lossless</span></label>
+      </div>
+    </fieldset>
+    <label class="dialog-check" id="skip-row" hidden>
+      <input type="checkbox" id="enhance-skip" checked> Skip pictures that already have an upscaled copy
+    </label>
+    <p class="dialog-sub" id="enhance-summary"></p>
+    <div class="dialog-actions">
+      <button type="button" id="enhance-cancel">Cancel</button>
+      <button type="submit" class="primary" id="enhance-go">✨ Enhance</button>
+    </div>
+  </form>
 </div>
 
 <div id="toast"></div>
@@ -746,13 +911,17 @@ const progress = {
   track:   document.getElementById('progress-track'),
   fill:    document.getElementById('progress-fill'),
   count:   document.getElementById('progress-count'),
+  cancel:  document.getElementById('progress-cancel'),
   showTimer: null,
 };
 
 // delayMs > 0 only reveals the panel if the work is still running by then,
 // so quick operations don't flash it.
-function showProgress(title, delayMs = 0) {
+// onCancel: when given, a Cancel button is shown that calls it.
+function showProgress(title, delayMs = 0, onCancel = null) {
   progress.title.textContent = title;
+  progress.cancel.hidden = !onCancel;
+  progress.cancel.onclick = onCancel;
   setProgress('', null);
   clearTimeout(progress.showTimer);
   if (delayMs > 0) progress.showTimer = setTimeout(() => progress.overlay.classList.add('open'), delayMs);
@@ -774,6 +943,7 @@ function setProgress(stepLabel, done, total, unit = '') {
   progress.track.setAttribute('aria-valuenow', pct);
   progress.count.textContent = unit === 'bytes'
     ? formatBytes(done) + ' / ' + formatBytes(total) + ' · ' + pct + '%'
+    : unit === 'percent' ? pct + '%'
     : done + ' / ' + total + ' · ' + pct + '%';
 }
 
@@ -850,7 +1020,7 @@ function runTx(db, mode, fn) {
   });
 }
 
-// items: [{name, blob, modified}], source: {label, kind}. Clears, then repopulates.
+// items: [{id, name, blob, modified, upscale}], source: {label, kind}. Clears, then repopulates.
 async function replaceStoredImages(items, source, onProgress) {
   const db = await openDb();
   try {
@@ -861,7 +1031,7 @@ async function replaceStoredImages(items, source, onProgress) {
       meta.clear();
       let saved = 0, frame = 0;
       items.forEach((item, i) => {
-        const req = imgs.put({ id: i, name: item.name, blob: item.blob, modified: item.modified ?? null });
+        const req = imgs.put(toRecord(item));
         if (onProgress) req.onsuccess = () => {
           saved++;
           // Batch UI updates to one per animation frame.
@@ -879,6 +1049,22 @@ async function replaceStoredImages(items, source, onProgress) {
   }
 }
 
+// The stored shape of one picture. `upscale` is null for originals.
+function toRecord(item) {
+  return { id: item.id, name: item.name, blob: item.blob, modified: item.modified ?? null, upscale: item.upscale ?? null };
+}
+
+// Add one picture (a new upscaled copy) and optionally remove the copy it
+// replaces, in one transaction, without touching anything else.
+async function storeOnePicture(item, replaceId) {
+  const db = await openDb();
+  await runTx(db, 'readwrite', tx => {
+    const imgs = tx.objectStore(IMG_STORE);
+    imgs.put(toRecord(item));
+    if (replaceId != null) imgs.delete(replaceId);
+  });
+}
+
 async function clearStoredImages() {
   const db = await openDb();
   await runTx(db, 'readwrite', tx => {
@@ -887,7 +1073,7 @@ async function clearStoredImages() {
   });
 }
 
-// → { source, items: [{name, blob, modified}] } or null when nothing is stored.
+// → { source, items: [{id, name, blob, modified, upscale}] } or null when nothing is stored.
 async function readStoredImages() {
   const db = await openDb();
   let items = [], source = null;
@@ -914,15 +1100,120 @@ function requestPersistentStorage() {
 // older set can tell it has been replaced and must not write back.
 let imagesGeneration = 0;
 
+// Every picture has a numeric `id` (its storage key). New upscaled copies
+// get the next free one.
+let nextImageId = 0;
+
 function setImages(images) {
   ALL_IMAGES.forEach(img => URL.revokeObjectURL(img.url));
   dimCache.clear();
   ALL_IMAGES = images;
+  nextImageId = images.reduce((m, img) => Math.max(m, img.id + 1), 0);
   imagesGeneration++;
 }
 
 function blobsToImages(items) {
-  return items.map(item => ({ name: item.name, url: URL.createObjectURL(item.blob), modified: item.modified ?? null }));
+  return items.map((item, i) => ({
+    id: item.id ?? i,
+    name: item.name,
+    url: URL.createObjectURL(item.blob),
+    modified: item.modified ?? null,
+    upscale: item.upscale ?? null,
+  }));
+}
+
+// ── UPSCALE MARKER ────────────────────────────────────────────────────────────
+// Upscaled pictures are separate entries; the original is never changed.
+// Marker: upscale = { of, label, scale, preset, format, originalWidth,
+// originalHeight, width, height, created } — `of` is the original's id (or
+// null when the original isn't in this set). It is stored in IndexedDB,
+// written to and read from JSON exports, and encoded in file names
+// ("name.upscaled-2x.png" / "name.upscaled-1500w.jpg") so ZIP exports and
+// folders keep it too.
+const UPSCALE_NAME_RE = /^(.+)\.upscaled-(\d+(?:\.\d+)?x|\d+w)\.(png|jpe?g|webp|gif)$/i;
+const PRESET_NAMES = { soft: 'Soft', balanced: 'Balanced', strong: 'Strong' };
+
+function stripExt(name) {
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(0, dot) : name;
+}
+
+function upscaleLabelText(label) {
+  if (!label) return '';
+  return /w$/i.test(label) ? label.slice(0, -1) + 'px' : label.replace(/x$/i, '×');
+}
+
+function num(v) { return typeof v === 'number' && isFinite(v) ? v : null; }
+
+// Validate an `upscale` object from an import; returns null if unusable.
+function sanitizeUpscale(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const label = typeof raw.label === 'string' && /^\d+(\.\d+)?x$|^\d+w$/i.test(raw.label) ? raw.label
+    : num(raw.scale) ? Math.round(raw.scale * 100) / 100 + 'x' : 'upscaled';
+  return {
+    of: raw.of ?? null,
+    label,
+    scale: num(raw.scale),
+    preset: PRESET_NAMES[raw.preset] ? raw.preset : null,
+    format: raw.format === 'png' || raw.format === 'jpeg' ? raw.format : null,
+    originalWidth: num(raw.originalWidth), originalHeight: num(raw.originalHeight),
+    width: num(raw.width), height: num(raw.height),
+    created: num(raw.created),
+  };
+}
+
+function upscaleFromName(name) {
+  const m = UPSCALE_NAME_RE.exec(name);
+  if (!m) return null;
+  const scale = /x$/i.test(m[2]) ? parseFloat(m[2]) : null;
+  return { label: m[2].toLowerCase(), scale, format: /png/i.test(m[3]) ? 'png' : /jpe?g/i.test(m[3]) ? 'jpeg' : null };
+}
+
+// After an import: give each upscaled entry its marker and link it to its
+// original — by the exported id when present, else by matching file name.
+// items: [{id, name, …, rawId?, rawUpscale?}] (ids already reassigned).
+function resolveUpscales(items) {
+  const byOldId = new Map();
+  items.forEach(it => { if (it.rawId != null) byOldId.set(it.rawId, it.id); });
+  const originalsByBase = new Map();
+  items.forEach(it => {
+    if (!it.rawUpscale && !UPSCALE_NAME_RE.test(it.name)) originalsByBase.set(stripExt(it.name), it.id);
+  });
+  items.forEach(it => {
+    const fromJson = sanitizeUpscale(it.rawUpscale);
+    const fromName = upscaleFromName(it.name);
+    if (fromJson || fromName) {
+      const meta = fromJson || sanitizeUpscale({ label: fromName.label, scale: fromName.scale, format: fromName.format });
+      let of = fromJson && byOldId.has(fromJson.of) ? byOldId.get(fromJson.of) : null;
+      if (of == null) {
+        const m = UPSCALE_NAME_RE.exec(it.name);
+        if (m && originalsByBase.has(m[1])) of = originalsByBase.get(m[1]);
+      }
+      it.upscale = { ...meta, of };
+    } else {
+      it.upscale = null;
+    }
+    delete it.rawId;
+    delete it.rawUpscale;
+  });
+  return items;
+}
+
+function findImage(id) {
+  return id == null ? null : ALL_IMAGES.find(img => img.id === id) || null;
+}
+
+function upscaledCopyOf(original) {
+  return ALL_IMAGES.find(img => img.upscale && img.upscale.of === original.id) || null;
+}
+
+// Loading a new set clears storage — warn when that would drop upscaled copies.
+function confirmReplaceSet() {
+  const count = ALL_IMAGES.filter(img => img.upscale).length;
+  if (!count) return true;
+  return confirm('This gallery has ' + count + ' upscaled picture' + (count === 1 ? '' : 's') +
+    '. Loading a new folder or JSON replaces the whole set and removes ' + (count === 1 ? 'it' : 'them') +
+    '.\n\nUse "Download JSON" first to keep them.\n\nContinue?');
 }
 
 function base64ToBlob(b64, mime) {
@@ -1003,7 +1294,8 @@ async function loadFromJson(file) {
     showToast('Please drop a .json file.');
     return;
   }
-  if (loadBusy) { showToast('Still loading — please wait…'); return; }
+  if (loadBusy) { showToast('Still busy — please wait…'); return; }
+  if (!confirmReplaceSet()) return;
   loadBusy = true;
   showProgress('Loading ' + file.name);
   try {
@@ -1024,12 +1316,16 @@ async function loadFromJson(file) {
 
     let items;
     try {
-      items = await mapWithProgress(data.files, f => ({
+      items = await mapWithProgress(data.files, (f, i) => ({
+        id: i,
         name: f.filename,
         blob: base64ToBlob(f.data, extMime(f.filename)),
-        modified: parseFileDate(f.modified ?? f.lastModified ?? f.mtime)
+        modified: parseFileDate(f.modified ?? f.lastModified ?? f.mtime),
+        rawId: f.id,
+        rawUpscale: f.upscale,
       }), (done, total) => setProgress('Step 2 of 3 · Decoding images…', done, total));
     } catch { showToast('JSON contains invalid image data.'); return; }
+    resolveUpscales(items);
 
     const folderName = data.folder || file.name.replace('.json','');
     await applyAndStore(items,
@@ -1061,10 +1357,24 @@ const searchInput = document.getElementById('search');
 
 // Images that failed to decode are flagged `broken` and left out of every
 // later filter, so they don't keep reappearing and failing again.
-function applyFilter() {
-  const q = searchInput.value.toLowerCase();
-  filtered = ALL_IMAGES.filter(img => !img.broken && img.name.toLowerCase().includes(q));
+const kindSelect = document.getElementById('kind-select');
+
+function passesFilter(img) {
+  if (img.broken) return false;
+  const kind = kindSelect.value;
+  if (kind === 'original' && img.upscale) return false;
+  if (kind === 'upscaled' && !img.upscale) return false;
+  return img.name.toLowerCase().includes(searchInput.value.toLowerCase());
 }
+
+function applyFilter() {
+  filtered = ALL_IMAGES.filter(passesFilter);
+}
+
+kindSelect.addEventListener('change', () => {
+  applyFilter();
+  rerender();
+});
 
 searchInput.addEventListener('input', () => {
   applyFilter();
@@ -1102,9 +1412,11 @@ const emptyActions = document.getElementById('empty-actions');
 function updateEmptyState() {
   if (filtered.length) { emptyState.hidden = true; return; }
   const usable = ALL_IMAGES.some(img => !img.broken);
-  if (usable && searchInput.value) {
+  if (usable && (searchInput.value || kindSelect.value !== 'all')) {
     emptyTitle.textContent = 'No matches';
-    emptyText.textContent = 'No images match "' + searchInput.value + '".';
+    emptyText.textContent = kindSelect.value === 'upscaled' && !searchInput.value
+      ? 'No upscaled pictures yet. Open a picture and press ✨ Enhance, or use ✨ Enhance all.'
+      : 'No images match the current search or "Show" filter.';
     emptyActions.hidden = true;
   } else if (ALL_IMAGES.length && !usable) {
     emptyTitle.textContent = 'Nothing could be displayed';
@@ -1119,7 +1431,8 @@ function updateEmptyState() {
 }
 
 function updateCount() {
-  countBadge.textContent = filtered.length + ' images';
+  const upscaled = filtered.reduce((n, img) => n + (img.upscale ? 1 : 0), 0);
+  countBadge.textContent = filtered.length + ' images' + (upscaled ? ' · ' + upscaled + ' ✨' : '');
   updateEmptyState();
   loadMore.textContent = rendered < filtered.length
     ? 'Loading more… (' + (filtered.length - rendered) + ' remaining)'
@@ -1128,23 +1441,39 @@ function updateCount() {
 
 // Drop an image that failed to decode, keeping `rendered` and an open
 // lightbox's index aligned with the shortened list.
-function removeBrokenImage(img, thumb) {
-  img.broken = true;
-  thumb.remove();
+// Thumbnail element for each rendered image (so it can be removed later).
+const thumbOf = new WeakMap();
+
+// Take an image out of the visible list and the DOM, keeping `rendered` and
+// an open lightbox's index aligned with the shortened list.
+function removeFromView(img) {
+  const thumb = thumbOf.get(img);
+  if (thumb) thumb.remove();
   const idx = filtered.indexOf(img);
   if (idx === -1) return;
   filtered.splice(idx, 1);
   if (idx < rendered) rendered--;
   if (lb.classList.contains('open') && idx < lbIndex) lbIndex--;
+}
+
+function removeBrokenImage(img) {
+  img.broken = true;
+  removeFromView(img);
   syncLightbox();
   updateCount();
 }
 
 function renderBatch() {
   const batch = filtered.slice(rendered, rendered + PAGE_SIZE);
-  batch.forEach(img => {
+  batch.forEach(img => gallery.appendChild(makeThumb(img)));
+  rendered += batch.length;
+  updateCount();
+}
+
+function makeThumb(img) {
     const div = document.createElement('div');
-    div.className = 'thumb';
+    div.className = 'thumb' + (img.upscale ? ' is-upscaled' : '');
+    thumbOf.set(img, div);
 
     const el = document.createElement('img');
     el.className = 'loading';
@@ -1157,7 +1486,7 @@ function renderBatch() {
       el.classList.remove('loading');
       dimSpan.textContent = el.naturalWidth + ' × ' + el.naturalHeight;
     });
-    el.addEventListener('error', () => removeBrokenImage(img, div));
+    el.addEventListener('error', () => removeBrokenImage(img));
 
     const ov = document.createElement('div');
     ov.className = 'overlay';
@@ -1174,16 +1503,20 @@ function renderBatch() {
 
     div.appendChild(el);
     div.appendChild(ov);
+    if (img.upscale) {
+      const badge = document.createElement('span');
+      badge.className = 'upscale-badge';
+      badge.textContent = '✨ ' + upscaleLabelText(img.upscale.label);
+      badge.title = 'Upscaled copy';
+      div.appendChild(badge);
+    }
     // Look the index up at click time: earlier images may have been removed
     // (failed to decode) since this thumbnail was drawn.
     div.addEventListener('click', () => {
       const idx = filtered.indexOf(img);
       if (idx !== -1) openLightbox(idx);
     });
-    gallery.appendChild(div);
-  });
-  rendered += batch.length;
-  updateCount();
+    return div;
 }
 
 const loadMoreObserver = new IntersectionObserver(entries => {
@@ -1201,15 +1534,59 @@ function openLightbox(idx) {
 
 const lbDim = document.getElementById('lb-dim');
 
+const lbUpscaleInfo = document.getElementById('lb-upscale-info');
+const lbEnhanceBtn  = document.getElementById('lb-enhance');
+const lbCompareBtn  = document.getElementById('lb-compare');
+let lbShowingOriginal = false;
+
+function describeUpscale(u) {
+  const parts = ['✨ Upscaled ' + upscaleLabelText(u.label)];
+  if (u.preset) parts.push(PRESET_NAMES[u.preset]);
+  if (u.format) parts.push(u.format.toUpperCase());
+  if (u.originalWidth && u.width) parts.push(u.originalWidth + '×' + u.originalHeight + ' → ' + u.width + '×' + u.height);
+  if (u.of == null) parts.push('original not in this set');
+  return parts.join(' · ');
+}
+
 function showLb() {
   const img = filtered[lbIndex];
   if (!img) { closeLb(); return; }
+  lbShowingOriginal = false;
   lbDim.textContent = '';
   lbImg.onload = () => { lbDim.textContent = lbImg.naturalWidth + ' × ' + lbImg.naturalHeight + ' px'; };
   lbImg.src = img.url;
   lbCaption.textContent = img.name + (img.modified != null ? ' · ' + formatFileDate(img.modified) : '');
   lbCounter.textContent = (lbIndex + 1) + ' / ' + filtered.length;
+
+  const original = img.upscale ? findImage(img.upscale.of) : img;
+  lbUpscaleInfo.hidden = !img.upscale;
+  if (img.upscale) lbUpscaleInfo.textContent = describeUpscale(img.upscale);
+  lbCompareBtn.hidden = !(img.upscale && original && !original.broken);
+  lbCompareBtn.textContent = '⇄ Show original';
+  lbCompareBtn.classList.remove('active');
+  const canEnhance = original && !original.broken && !original.upscale;
+  lbEnhanceBtn.disabled = !canEnhance;
+  lbEnhanceBtn.title = canEnhance ? '' : 'The original of this picture is not in this set';
+  lbEnhanceBtn.textContent = img.upscale ? '✨ Re-enhance original'
+    : canEnhance && upscaledCopyOf(img) ? '✨ Enhance again' : '✨ Enhance';
 }
+
+lbCompareBtn.addEventListener('click', () => {
+  const img = filtered[lbIndex];
+  const original = img && img.upscale ? findImage(img.upscale.of) : null;
+  if (!original) return;
+  lbShowingOriginal = !lbShowingOriginal;
+  lbImg.src = lbShowingOriginal ? original.url : img.url;
+  lbCompareBtn.textContent = lbShowingOriginal ? '⇄ Show upscaled' : '⇄ Show original';
+  lbCompareBtn.classList.toggle('active', lbShowingOriginal);
+});
+
+lbEnhanceBtn.addEventListener('click', () => {
+  const img = filtered[lbIndex];
+  if (!img) return;
+  const original = img.upscale ? findImage(img.upscale.of) : img;
+  if (original && !original.broken && !original.upscale) openEnhanceDialog([original], 'single');
+});
 
 function closeLb() {
   lb.classList.remove('open');
@@ -1244,6 +1621,11 @@ document.getElementById('lb-next').addEventListener('click', () => stepLb(1));
 lb.addEventListener('click', e => { if (e.target === lb) closeLb(); });
 
 document.addEventListener('keydown', e => {
+  if (enhanceDialog.classList.contains('open')) {
+    if (e.key === 'Escape') closeEnhanceDialog();
+    return;
+  }
+  if (progress.overlay.classList.contains('open')) return;
   if (!lb.classList.contains('open')) return;
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') stepLb(1);
   else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') stepLb(-1);
@@ -1292,7 +1674,8 @@ folderFileInput.addEventListener('change', async e => {
   const files = [...e.target.files].filter(f => IMAGE_EXTS.has(f.name.split('.').pop().toLowerCase()));
   e.target.value = '';
   if (!files.length) { showToast('No images found in folder.'); return; }
-  if (loadBusy) { showToast('Still loading — please wait…'); return; }
+  if (loadBusy) { showToast('Still busy — please wait…'); return; }
+  if (!confirmReplaceSet()) return;
   loadBusy = true;
 
   const folderName = files[0].webkitRelativePath.split('/')[0] || 'Folder';
@@ -1300,11 +1683,13 @@ folderFileInput.addEventListener('change', async e => {
   try {
     // A File is a Blob, so it can go straight into IndexedDB; re-wrap it so
     // the stored record is a plain Blob with a correct image MIME type.
-    const items = await mapWithProgress(files, f => ({
+    const items = await mapWithProgress(files, (f, i) => ({
+      id: i,
       name: f.name,
       blob: new Blob([f], { type: f.type || extMime(f.name) }),
       modified: f.lastModified || null
     }), (done, total) => setProgress('Step 1 of 2 · Preparing images…', done, total));
+    resolveUpscales(items);   // "name.upscaled-2x.png" files keep their marker
 
     await applyAndStore(items,
       '📁 ' + folderName + ' — ' + items.length + ' images',
@@ -1461,8 +1846,9 @@ downloadJsonBtn.addEventListener('click', () => runExport(downloadJsonBtn, '⬇ 
       continue;
     }
     seenHashes.add(hash);
-    const entry = { filename: img.name, data: b64 };
+    const entry = { id: img.id, filename: img.name, data: b64 };
     if (img.modified != null) entry.modified = new Date(img.modified).toISOString();
+    if (img.upscale) entry.upscale = { ...img.upscale };
     files.push(entry);
   }
 
@@ -1543,6 +1929,696 @@ sortDateBtn.addEventListener('click', () => {
   dateSortDir *= -1;
   sortDateBtn.textContent = dateSortDir === 1 ? '⇅ Date ↑' : '⇅ Date ↓';
   rerender();
+});
+
+// ── UPSCALER ENGINE ───────────────────────────────────────────────────────────
+// Pure JS, no libraries. Written as one self-contained function so the exact
+// same code runs inside an inline Web Worker (its source is stringified into a
+// Blob URL) or, if workers are unavailable, on the main thread.
+//
+// Pipeline (works in Y/Cb/Cr so detail and colour are handled separately):
+//   1. Deblock   – soften small steps on the 8×8 JPEG block grid
+//   2. Denoise   – self-guided filter on luma: flattens JPEG "mosquito" noise
+//                  inside flat colour areas, stops at real outlines
+//   3. Chroma    – joint guided filter steered by the cleaned luma, so colour
+//                  edges snap back onto the line art (fixes JPEG colour bleed)
+//   4. Upscale   – edge-adaptive Lanczos-2 (in the spirit of FSR1 "EASU"):
+//                  kernel narrows across edges and widens along them, result
+//                  clamped to the nearest source pixels (no ringing)
+//   5. Refine    – coherence shock filter: steepens soft upscaled edges back
+//                  into crisp lines, then a halo-free contrast-adaptive sharpen
+//   6. Finish    – back to RGB with ±½-level dither so gradients don't band
+function upscalerModule() {
+  const PRESETS = {
+    soft:     { deblock: 6,  r: 1, eps: 49,  chromaR: 2, chromaEps: 120, shock: 1, dt: 0.20, sharpen: 0.20 },
+    balanced: { deblock: 10, r: 2, eps: 110, chromaR: 3, chromaEps: 80,  shock: 2, dt: 0.25, sharpen: 0.35 },
+    strong:   { deblock: 16, r: 2, eps: 260, chromaR: 3, chromaEps: 50,  shock: 3, dt: 0.30, sharpen: 0.50 },
+  };
+
+  // Lanczos-2 weights looked up by squared distance (d² in [0, 4)).
+  const LUT_RES = 512;
+  const LANCZOS2 = new Float32Array(4 * LUT_RES + 1);
+  for (let i = 0; i <= 4 * LUT_RES; i++) {
+    const d = Math.sqrt(i / LUT_RES);
+    if (d === 0) LANCZOS2[i] = 1;
+    else if (d >= 2) LANCZOS2[i] = 0;
+    else {
+      const a = Math.PI * d;
+      LANCZOS2[i] = (Math.sin(a) / a) * (Math.sin(a / 2) / (a / 2));
+    }
+  }
+
+  function toPlanes(rgba, n) {
+    const Y = new Float32Array(n), Cb = new Float32Array(n), Cr = new Float32Array(n);
+    let A = null;
+    for (let i = 0, j = 0; i < n; i++, j += 4) {
+      const r = rgba[j], g = rgba[j + 1], b = rgba[j + 2];
+      Y[i]  =  0.299 * r + 0.587 * g + 0.114 * b;
+      Cb[i] = -0.168736 * r - 0.331264 * g + 0.5 * b + 128;
+      Cr[i] =  0.5 * r - 0.418688 * g - 0.081312 * b + 128;
+      if (rgba[j + 3] !== 255) A = A || true;
+    }
+    if (A) {
+      A = new Uint8ClampedArray(n);
+      for (let i = 0; i < n; i++) A[i] = rgba[i * 4 + 3];
+    }
+    return { Y, Cb, Cr, A };
+  }
+
+  // 1. Deblock: where the step across a block boundary is small and both sides
+  // are locally flat, blend the four pixels around it toward a straight ramp.
+  function deblock(P, w, h, T) {
+    const blend = (i0, i1, i2, i3) => {
+      const p1 = P[i0], p0 = P[i1], q0 = P[i2], q1 = P[i3];
+      if (Math.abs(q0 - p0) >= T || Math.abs(p1 - p0) >= T * 0.5 || Math.abs(q1 - q0) >= T * 0.5) return;
+      const step = (q1 - p1) / 3;
+      P[i1] = p0 + 0.75 * (p1 + step - p0);
+      P[i2] = q0 + 0.75 * (p1 + 2 * step - q0);
+    };
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 8; x + 1 < w; x += 8) blend(row + x - 2, row + x - 1, row + x, row + x + 1);
+    }
+    for (let y = 8; y + 1 < h; y += 8) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        blend(i - 2 * w, i - w, i, i + w);
+      }
+    }
+  }
+
+  // Box mean with radius r (edge windows are averaged over what's inside).
+  function boxMean(src, w, h, r, out, tmp) {
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      let sum = 0;
+      for (let x = 0; x <= Math.min(r, w - 1); x++) sum += src[row + x];
+      for (let x = 0; x < w; x++) {
+        const lo = x - r, hi = x + r;
+        tmp[row + x] = sum / (Math.min(hi, w - 1) - Math.max(lo, 0) + 1);
+        if (hi + 1 < w) sum += src[row + hi + 1];
+        if (lo >= 0) sum -= src[row + lo];
+      }
+    }
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let y = 0; y <= Math.min(r, h - 1); y++) sum += tmp[y * w + x];
+      for (let y = 0; y < h; y++) {
+        const lo = y - r, hi = y + r;
+        out[y * w + x] = sum / (Math.min(hi, h - 1) - Math.max(lo, 0) + 1);
+        if (hi + 1 < h) sum += tmp[(hi + 1) * w + x];
+        if (lo >= 0) sum -= tmp[lo * w + x];
+      }
+    }
+    return out;
+  }
+
+  // Guided filter (He et al.). With I === p it is an edge-preserving smoother;
+  // with a different guide it transfers the guide's edges onto p.
+  function guidedFilter(I, p, w, h, r, eps) {
+    const n = w * h, tmp = new Float32Array(n);
+    const mI = boxMean(I, w, h, r, new Float32Array(n), tmp);
+    const mP = I === p ? mI : boxMean(p, w, h, r, new Float32Array(n), tmp);
+    const prod = new Float32Array(n);
+    for (let i = 0; i < n; i++) prod[i] = I[i] * I[i];
+    const mII = boxMean(prod, w, h, r, new Float32Array(n), tmp);
+    let mIP = mII;
+    if (I !== p) {
+      for (let i = 0; i < n; i++) prod[i] = I[i] * p[i];
+      mIP = boxMean(prod, w, h, r, new Float32Array(n), tmp);
+    }
+    const a = prod, b = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const varI = mII[i] - mI[i] * mI[i];
+      const cov = mIP[i] - mI[i] * mP[i];
+      a[i] = cov / (varI + eps);
+      b[i] = mP[i] - a[i] * mI[i];
+    }
+    const mA = boxMean(a, w, h, r, mII, tmp);
+    const mB = boxMean(b, w, h, r, mI === mP ? new Float32Array(n) : mP, tmp);
+    const q = new Float32Array(n);
+    for (let i = 0; i < n; i++) q[i] = mA[i] * I[i] + mB[i];
+    return q;
+  }
+
+  // Edge field from luma: per source pixel, the doubled-angle edge direction
+  // (cos 2θ, sin 2θ) scaled by edge confidence. Doubled angles can be
+  // interpolated without the θ / θ+π sign ambiguity.
+  function edgeField(Y, w, h) {
+    const n = w * h;
+    const Jxx = new Float32Array(n), Jxy = new Float32Array(n), Jyy = new Float32Array(n);
+    for (let y = 0; y < h; y++) {
+      const ym = Math.max(y - 1, 0) * w, yp = Math.min(y + 1, h - 1) * w, row = y * w;
+      for (let x = 0; x < w; x++) {
+        const xm = Math.max(x - 1, 0), xp = Math.min(x + 1, w - 1);
+        const gx = (Y[ym + xp] + 2 * Y[row + xp] + Y[yp + xp] - Y[ym + xm] - 2 * Y[row + xm] - Y[yp + xm]) / 8;
+        const gy = (Y[yp + xm] + 2 * Y[yp + x] + Y[yp + xp] - Y[ym + xm] - 2 * Y[ym + x] - Y[ym + xp]) / 8;
+        const i = row + x;
+        Jxx[i] = gx * gx; Jxy[i] = gx * gy; Jyy[i] = gy * gy;
+      }
+    }
+    const tmp = new Float32Array(n);
+    boxMean(Jxx, w, h, 1, Jxx, tmp);
+    boxMean(Jxy, w, h, 1, Jxy, tmp);
+    boxMean(Jyy, w, h, 1, Jyy, tmp);
+    const C2 = new Float32Array(n), S2 = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const dxx = Jxx[i] - Jyy[i], dxy = 2 * Jxy[i];
+      const tr = Jxx[i] + Jyy[i];
+      const diff = Math.sqrt(dxx * dxx + dxy * dxy);
+      if (diff < 1e-6) continue;
+      const coherence = diff / (tr + 1e-6);
+      const strength = Math.sqrt((tr + diff) / 2);      // ≈ gradient magnitude
+      const gate = Math.min(1, Math.max(0, (strength - 2) / 10));
+      const len = coherence * gate;
+      C2[i] = (dxx / diff) * len;                       // cos 2θ · len
+      S2[i] = (dxy / diff) * len;                       // sin 2θ · len
+    }
+    return { C2, S2 };
+  }
+
+  // 4. Edge-adaptive Lanczos-2 resample of one plane to W×H. `out` may be a
+  // Float32Array or a Uint8ClampedArray (rounds/clamps on write).
+  function resample(P, w, h, W, H, field, out, onRow) {
+    const { C2, S2 } = field;
+    const sxScale = w / W, syScale = h / H;
+    for (let oy = 0; oy < H; oy++) {
+      const sy = (oy + 0.5) * syScale - 0.5;
+      const iy = Math.floor(sy), fy = sy - iy;
+      for (let ox = 0; ox < W; ox++) {
+        const sx = (ox + 0.5) * sxScale - 0.5;
+        const ix = Math.floor(sx), fx = sx - ix;
+
+        // Bilinear edge field at the sample point.
+        const x0 = ix < 0 ? 0 : ix > w - 1 ? w - 1 : ix, x1 = ix + 1 > w - 1 ? w - 1 : ix + 1 < 0 ? 0 : ix + 1;
+        const y0 = iy < 0 ? 0 : iy > h - 1 ? h - 1 : iy, y1 = iy + 1 > h - 1 ? h - 1 : iy + 1 < 0 ? 0 : iy + 1;
+        const i00 = y0 * w + x0, i10 = y0 * w + x1, i01 = y1 * w + x0, i11 = y1 * w + x1;
+        const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+        const c2 = C2[i00] * w00 + C2[i10] * w10 + C2[i01] * w01 + C2[i11] * w11;
+        const s2 = S2[i00] * w00 + S2[i10] * w10 + S2[i01] * w01 + S2[i11] * w11;
+        let len = Math.sqrt(c2 * c2 + s2 * s2);
+        let c = 1, s = 0;
+        if (len > 1e-4) {
+          const cc = c2 / len;
+          c = Math.sqrt(Math.max(0, (1 + cc) / 2));
+          s = Math.sqrt(Math.max(0, (1 - cc) / 2)) * (s2 < 0 ? -1 : 1);
+          if (len > 1) len = 1;
+        } else len = 0;
+        const across = 1 + 0.5 * len;        // narrower across the edge → crisper
+        const along = 1 / (1 + 1.2 * len);   // wider along the edge → no stair-steps
+
+        let sum = 0, wsum = 0;
+        for (let j = -1; j <= 2; j++) {
+          const yy = iy + j < 0 ? 0 : iy + j > h - 1 ? h - 1 : iy + j;
+          const vy = j - fy, rowOff = yy * w;
+          for (let i = -1; i <= 2; i++) {
+            const xx = ix + i < 0 ? 0 : ix + i > w - 1 ? w - 1 : ix + i;
+            const vx = i - fx;
+            const u = (vx * c + vy * s) * across;
+            const v = (vy * c - vx * s) * along;
+            const d2 = u * u + v * v;
+            if (d2 >= 4) continue;
+            const wt = LANCZOS2[(d2 * LUT_RES) | 0];
+            sum += wt * P[rowOff + xx];
+            wsum += wt;
+          }
+        }
+        let val = wsum > 1e-6 ? sum / wsum : P[i00];
+        // De-ring: stay within the four nearest source pixels.
+        const a = P[i00], b = P[i10], cq = P[i01], d = P[i11];
+        const lo = Math.min(a, b, cq, d), hi = Math.max(a, b, cq, d);
+        out[oy * W + ox] = val < lo ? lo : val > hi ? hi : val;
+      }
+      if (onRow && (oy & 31) === 0) onRow(oy / H);
+    }
+    return out;
+  }
+
+  // 5a. Coherence shock filter: moves each edge pixel toward the dark or light
+  // side depending on the sign of the second derivative along the gradient,
+  // turning soft ramps back into step edges. Clamped to the 3×3 range.
+  function shockFilter(Y, W, H, iterations, dt, smoothR) {
+    const n = W * H;
+    let cur = Y, next = new Float32Array(n);
+    const S = new Float32Array(n), tmp = new Float32Array(n);
+    for (let it = 0; it < iterations; it++) {
+      boxMean(cur, W, H, smoothR, S, tmp);
+      next.set(cur);
+      for (let y = 1; y < H - 1; y++) {
+        for (let x = 1; x < W - 1; x++) {
+          const i = y * W + x;
+          const gx = (S[i + 1] - S[i - 1]) / 2, gy = (S[i + W] - S[i - W]) / 2;
+          const g2 = gx * gx + gy * gy;
+          if (g2 < 4) continue;                        // flat / gradient areas: leave alone
+          const ixx = S[i + 1] - 2 * S[i] + S[i - 1];
+          const iyy = S[i + W] - 2 * S[i] + S[i - W];
+          const ixy = (S[i + W + 1] - S[i + W - 1] - S[i - W + 1] + S[i - W - 1]) / 4;
+          const vnn = (gx * gx * ixx + 2 * gx * gy * ixy + gy * gy * iyy) / g2;
+          const ux = (cur[i + 1] - cur[i - 1]) / 2, uy = (cur[i + W] - cur[i - W]) / 2;
+          const mag = Math.sqrt(ux * ux + uy * uy);
+          let v = cur[i] - (vnn > 0 ? 1 : vnn < 0 ? -1 : 0) * mag * dt;
+          let lo = cur[i], hi = cur[i];
+          for (let k = -1; k <= 1; k++) {
+            const r = i + k * W;
+            const p = cur[r - 1], q = cur[r], t = cur[r + 1];
+            if (p < lo) lo = p; if (p > hi) hi = p;
+            if (q < lo) lo = q; if (q > hi) hi = q;
+            if (t < lo) lo = t; if (t > hi) hi = t;
+          }
+          next[i] = v < lo ? lo : v > hi ? hi : v;
+        }
+      }
+      const swap = cur === Y ? new Float32Array(n) : cur;
+      cur = next; next = swap;
+    }
+    if (cur !== Y) Y.set(cur);
+    return Y;
+  }
+
+  // 5b. Contrast-adaptive sharpen (halo-free: clamped to the cross neighbourhood).
+  function sharpen(Y, W, H, amount) {
+    if (amount <= 0) return Y;
+    const src = Y.slice();
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x;
+        const c = src[i], l = src[i - 1], r = src[i + 1], u = src[i - W], d = src[i + W];
+        const lo = Math.min(c, l, r, u, d), hi = Math.max(c, l, r, u, d);
+        // Less sharpening where the local range is already near-saturated.
+        const room = Math.min(lo, 255 - hi) / (hi > 0 ? Math.max(hi, 1) : 1);
+        const k = amount * Math.sqrt(Math.max(0, Math.min(1, room + 0.25)));
+        const v = c + k * (4 * c - l - r - u - d) / 4;
+        Y[i] = v < lo ? lo : v > hi ? hi : v;
+      }
+    }
+    return Y;
+  }
+
+  function bilinearAlpha(A, w, h, W, H) {
+    const out = new Uint8ClampedArray(W * H);
+    for (let oy = 0; oy < H; oy++) {
+      const sy = Math.min(h - 1, Math.max(0, (oy + 0.5) * h / H - 0.5));
+      const y0 = Math.floor(sy), y1 = Math.min(y0 + 1, h - 1), fy = sy - y0;
+      for (let ox = 0; ox < W; ox++) {
+        const sx = Math.min(w - 1, Math.max(0, (ox + 0.5) * w / W - 0.5));
+        const x0 = Math.floor(sx), x1 = Math.min(x0 + 1, w - 1), fx = sx - x0;
+        out[oy * W + ox] =
+          (A[y0 * w + x0] * (1 - fx) + A[y0 * w + x1] * fx) * (1 - fy) +
+          (A[y1 * w + x0] * (1 - fx) + A[y1 * w + x1] * fx) * fy;
+      }
+    }
+    return out;
+  }
+
+  // rgba: Uint8ClampedArray (w×h). opts: { width, height, preset, jpegSource,
+  // flattenWhite }. onProgress(fraction 0..1, label).
+  function upscale(rgba, w, h, opts, onProgress = () => {}) {
+    const P = PRESETS[opts.preset] || PRESETS.balanced;
+    const W = opts.width, H = opts.height, n = w * h, N = W * H;
+
+    onProgress(0.02, 'Cleaning up compression noise…');
+    const { Y, Cb, Cr, A } = toPlanes(rgba, n);
+    if (opts.jpegSource !== false) {
+      deblock(Y, w, h, P.deblock);
+      deblock(Cb, w, h, P.deblock * 1.5);
+      deblock(Cr, w, h, P.deblock * 1.5);
+    }
+    const Yc = guidedFilter(Y, Y, w, h, P.r, P.eps);
+    onProgress(0.12, 'Snapping colours to the line art…');
+    const Cbc = guidedFilter(Yc, Cb, w, h, P.chromaR, P.chromaEps);
+    const Crc = guidedFilter(Yc, Cr, w, h, P.chromaR, P.chromaEps);
+
+    onProgress(0.22, 'Finding edges…');
+    const field = edgeField(Yc, w, h);
+
+    const Yo = new Float32Array(N);
+    resample(Yc, w, h, W, H, field, Yo, f => onProgress(0.25 + f * 0.3, 'Upscaling…'));
+    const Cbo = resample(Cbc, w, h, W, H, field, new Uint8ClampedArray(N), f => onProgress(0.55 + f * 0.1, 'Upscaling colour…'));
+    const Cro = resample(Crc, w, h, W, H, field, new Uint8ClampedArray(N), f => onProgress(0.65 + f * 0.1, 'Upscaling colour…'));
+
+    onProgress(0.76, 'Sharpening lines…');
+    const scale = W / w;
+    // Bigger scales leave wider soft edges; one extra pass and a wider
+    // derivative window handle that without stair-stepping diagonal lines.
+    const iterations = P.shock + (scale > 2.5 ? 1 : 0);
+    const smoothR = scale > 2.5 ? 2 : 1;
+    shockFilter(Yo, W, H, iterations, P.dt, smoothR);
+    onProgress(0.9, 'Sharpening lines…');
+    sharpen(Yo, W, H, P.sharpen);
+
+    onProgress(0.95, 'Finishing…');
+    const Ao = A ? bilinearAlpha(A, w, h, W, H) : null;
+    const out = new Uint8ClampedArray(N * 4);
+    let seed = 0x9e3779b9;
+    const rand = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
+    for (let i = 0, j = 0; i < N; i++, j += 4) {
+      const y = Yo[i], cb = Cbo[i] - 128, cr = Cro[i] - 128;
+      const dither = rand() - rand();                 // triangular, ±1 level
+      let r = y + 1.402 * cr + dither * 0.5;
+      let g = y - 0.344136 * cb - 0.714136 * cr + dither * 0.5;
+      let b = y + 1.772 * cb + dither * 0.5;
+      let a = Ao ? Ao[i] : 255;
+      if (opts.flattenWhite && a < 255) {
+        const t = a / 255;
+        r = r * t + 255 * (1 - t); g = g * t + 255 * (1 - t); b = b * t + 255 * (1 - t);
+        a = 255;
+      }
+      out[j] = r; out[j + 1] = g; out[j + 2] = b; out[j + 3] = a;
+    }
+    onProgress(1, 'Done');
+    return out;
+  }
+
+  return { upscale, PRESETS };
+}
+
+// ── ENHANCE (UPSCALE) ─────────────────────────────────────────────────────────
+// Runs the engine in an inline Web Worker (built from upscalerModule's own
+// source, so the page stays a single file); falls back to the main thread if
+// workers are unavailable.
+const MAX_OUTPUT_PIXELS = 16000000;   // iOS Safari's canvas area limit (~16.7M)
+const MAX_OUTPUT_SIDE = 8192;
+const ENHANCE_SETTINGS_KEY = 'lumity-enhance-settings';
+const PRESET_HINTS = {
+  soft: 'Light cleanup. Keeps fine texture and thin lines; leaves some JPEG noise.',
+  balanced: 'Removes most JPEG noise and colour bleed; crisp lines. Best for most fan art.',
+  strong: 'Heavy cleanup for very blocky pictures. Flattens texture; can thicken lines.',
+};
+
+let upscaleWorker = null;
+let mainThreadUpscaler = null;
+let currentJob = null;
+
+function getUpscaleWorker() {
+  if (upscaleWorker) return upscaleWorker;
+  try {
+    const src = 'const M = (' + upscalerModule.toString() + ')();\n' +
+      'onmessage = e => {\n' +
+      '  const { rgba, w, h, opts } = e.data;\n' +
+      '  try {\n' +
+      '    let last = 0;\n' +
+      '    const out = M.upscale(new Uint8ClampedArray(rgba), w, h, opts, (f, label) => {\n' +
+      '      const now = Date.now();\n' +
+      '      if (now - last > 60 || f >= 1) { last = now; postMessage({ progress: f, label }); }\n' +
+      '    });\n' +
+      '    postMessage({ done: true, rgba: out.buffer }, [out.buffer]);\n' +
+      '  } catch (err) { postMessage({ error: String((err && err.message) || err) }); }\n' +
+      '};';
+    upscaleWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+  } catch (err) {
+    console.warn('Web Worker unavailable; upscaling on the main thread', err);
+    upscaleWorker = null;
+  }
+  return upscaleWorker;
+}
+
+class CancelledError extends Error {}
+
+// rgba: Uint8ClampedArray (transferred). Resolves to the output Uint8ClampedArray.
+function runUpscaleJob(rgba, w, h, opts, onProgress) {
+  const worker = getUpscaleWorker();
+  if (!worker) {
+    return yieldToBrowser().then(() => {
+      mainThreadUpscaler = mainThreadUpscaler || upscalerModule();
+      return mainThreadUpscaler.upscale(rgba, w, h, opts, onProgress);
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const finish = () => { worker.onmessage = null; worker.onerror = null; currentJob = null; };
+    currentJob = {
+      cancel() {
+        finish();
+        worker.terminate();          // stops it immediately; a fresh one is made next time
+        upscaleWorker = null;
+        reject(new CancelledError('Cancelled'));
+      },
+    };
+    worker.onmessage = e => {
+      const d = e.data;
+      if (d.progress != null) onProgress(d.progress, d.label);
+      else if (d.done) { finish(); resolve(new Uint8ClampedArray(d.rgba)); }
+      else if (d.error) { finish(); reject(new Error(d.error)); }
+    };
+    worker.onerror = e => {
+      e.preventDefault();
+      finish();
+      worker.terminate();
+      upscaleWorker = null;
+      reject(new Error(e.message || 'Upscaler crashed (out of memory?)'));
+    };
+    worker.postMessage({ rgba: rgba.buffer, w, h, opts }, [rgba.buffer]);
+  });
+}
+
+// Output size for a w×h picture, capped to what browsers can encode.
+// Returns null when the picture is already at least that big.
+function targetSize(w, h, settings) {
+  let scale = settings.mode === 'width' ? settings.width / w : settings.scale;
+  if (!(scale > 1.01)) return null;
+  const cap = Math.min(Math.sqrt(MAX_OUTPUT_PIXELS / (w * h)), MAX_OUTPUT_SIDE / Math.max(w, h));
+  const capped = scale > cap;
+  if (capped) scale = cap;
+  if (!(scale > 1.01)) return null;
+  const W = Math.round(w * scale), H = Math.round(h * scale);
+  const label = settings.mode === 'width' && !capped ? W + 'w'
+    : capped ? Math.round(scale * 10) / 10 + 'x' : settings.scale + 'x';
+  return { W, H, scale: W / w, label, capped };
+}
+
+async function decodePixels(img) {
+  const blob = await (await fetch(img.url)).blob();
+  const bmp = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bmp.width; canvas.height = bmp.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(bmp, 0, 0);
+  const data = ctx.getImageData(0, 0, bmp.width, bmp.height).data;
+  const result = { rgba: data, w: bmp.width, h: bmp.height, jpeg: /jpe?g/i.test(blob.type) || /\.jpe?g$/i.test(img.name) };
+  bmp.close();
+  canvas.width = canvas.height = 0;
+  return result;
+}
+
+function encodePixels(rgba, W, H, format) {
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  canvas.getContext('2d').putImageData(new ImageData(rgba, W, H), 0, 0);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      canvas.width = canvas.height = 0;
+      blob ? resolve(blob) : reject(new Error('This browser could not save a picture that large.'));
+    }, format === 'png' ? 'image/png' : 'image/jpeg', 0.92);
+  });
+}
+
+// Upscale one original into a new entry (replacing its previous upscaled copy).
+async function enhanceOne(original, settings, onProgress) {
+  onProgress(0, 'Reading picture…');
+  const { rgba, w, h, jpeg } = await decodePixels(original);
+  const size = targetSize(w, h, settings);
+  if (!size) return { skipped: 'already at least that size' };
+
+  const out = await runUpscaleJob(rgba, w, h, {
+    width: size.W, height: size.H, preset: settings.preset,
+    jpegSource: jpeg, flattenWhite: settings.format === 'jpeg',
+  }, (f, label) => onProgress(0.05 + f * 0.85, label));
+
+  onProgress(0.92, 'Saving ' + (settings.format === 'png' ? 'PNG' : 'JPEG') + '…');
+  const blob = await encodePixels(out, size.W, size.H, settings.format);
+  const previous = upscaledCopyOf(original);
+  const item = {
+    id: nextImageId++,
+    name: stripExt(original.name) + '.upscaled-' + size.label + (settings.format === 'png' ? '.png' : '.jpg'),
+    blob,
+    modified: original.modified ?? null,
+    upscale: {
+      of: original.id, label: size.label, scale: Math.round(size.scale * 1000) / 1000,
+      preset: settings.preset, format: settings.format,
+      originalWidth: w, originalHeight: h, width: size.W, height: size.H,
+      created: Date.now(),
+    },
+  };
+  let saved = true;
+  try { await storeOnePicture(item, previous ? previous.id : null); }
+  catch (err) { console.error('Saving upscaled picture failed', err); saved = false; }
+
+  const img = { id: item.id, name: item.name, url: URL.createObjectURL(blob), modified: item.modified, upscale: item.upscale };
+  addUpscaledToView(img, original, previous);
+  onProgress(1, 'Done');
+  return { img, saved, capped: size.capped };
+}
+
+// Put a new upscaled copy next to its original (in memory and on screen),
+// dropping the copy it replaces.
+function addUpscaledToView(img, original, previous) {
+  let insertAt = -1;
+  if (previous) {
+    insertAt = filtered.indexOf(previous);
+    removeFromView(previous);
+    ALL_IMAGES.splice(ALL_IMAGES.indexOf(previous), 1);
+    URL.revokeObjectURL(previous.url);
+  }
+  ALL_IMAGES.splice(ALL_IMAGES.indexOf(original) + 1, 0, img);
+  if (passesFilter(img)) {
+    const origIdx = filtered.indexOf(original);
+    const idx = origIdx !== -1 ? origIdx + 1 : insertAt !== -1 ? Math.min(insertAt, filtered.length) : filtered.length;
+    filtered.splice(idx, 0, img);
+    if (lb.classList.contains('open') && idx <= lbIndex) lbIndex++;
+    if (idx < rendered) {
+      gallery.insertBefore(makeThumb(img), gallery.children[idx] || null);
+      rendered++;
+    }
+  }
+  updateCount();
+}
+
+async function runEnhance(targets, settings, mode) {
+  if (loadBusy) { showToast('Still busy — please wait…'); return; }
+  loadBusy = true;
+  let cancelled = false;
+  showProgress(mode === 'single' ? 'Enhancing picture' : 'Enhancing ' + targets.length + ' pictures', 0, () => {
+    cancelled = true;
+    if (currentJob) currentJob.cancel();
+    setProgress('Cancelling…', null);
+  });
+  let done = 0, skipped = 0, failed = 0, notSaved = 0, capped = 0, last = null;
+  try {
+    for (let i = 0; i < targets.length && !cancelled; i++) {
+      const original = targets[i];
+      if (!ALL_IMAGES.includes(original) || original.broken) { skipped++; continue; }
+      if (mode === 'batch' && settings.skipExisting && upscaledCopyOf(original)) { skipped++; continue; }
+      const prefix = mode === 'single' ? '' : 'Picture ' + (i + 1) + ' of ' + targets.length + ' · ';
+      try {
+        const r = await enhanceOne(original, settings, (f, label) =>
+          setProgress(prefix + label, Math.round((i + f) / targets.length * 1000), 1000, 'percent'));
+        if (r.skipped) { skipped++; continue; }
+        done++; last = r.img;
+        if (!r.saved) notSaved++;
+        if (r.capped) capped++;
+      } catch (err) {
+        if (err instanceof CancelledError) break;
+        console.error('Enhancing ' + original.name + ' failed', err);
+        failed++;
+      }
+    }
+  } finally {
+    hideProgress();
+    loadBusy = false;
+  }
+  if (mode === 'single' && last && lb.classList.contains('open')) {
+    const idx = filtered.indexOf(last);
+    if (idx !== -1) { lbIndex = idx; ensureRendered(idx); showLb(); }
+  }
+  const bits = [];
+  if (cancelled) bits.push('cancelled');
+  if (skipped) bits.push(skipped + ' skipped');
+  if (failed) bits.push(failed + ' failed');
+  if (capped) bits.push(capped + ' limited to the browser maximum size');
+  if (notSaved) bits.push(notSaved + ' not saved (storage full?)');
+  const enhanced = done + ' picture' + (done === 1 ? '' : 's') + ' enhanced';
+  if (mode === 'single' && skipped && !done) showToast('Already at least that size — nothing to do.');
+  else if (cancelled) showToast('Cancelled · ' + enhanced + (bits.length > 1 ? ' · ' + bits.slice(1).join(' · ') : ''));
+  else showToast('Enhanced ' + done + ' picture' + (done === 1 ? '' : 's') + ' ✨' + (bits.length ? ' · ' + bits.join(' · ') : ''));
+}
+
+// ── ENHANCE DIALOG ────────────────────────────────────────────────────────────
+const enhanceDialog = document.getElementById('enhance-dialog');
+const enhanceForm   = document.getElementById('enhance-form');
+const enhanceWidth  = document.getElementById('enhance-width');
+let enhanceTargets = [], enhanceMode = 'single', enhanceReturnFocus = null;
+
+function loadEnhanceSettings() {
+  try { return JSON.parse(localStorage.getItem(ENHANCE_SETTINGS_KEY)) || {}; } catch { return {}; }
+}
+function saveEnhanceSettings(st) {
+  try { localStorage.setItem(ENHANCE_SETTINGS_KEY, JSON.stringify(st)); } catch {}
+}
+
+function readEnhanceForm() {
+  const f = enhanceForm.elements;
+  const scaleVal = f.scale.value;
+  return {
+    mode: scaleVal === 'width' ? 'width' : 'scale',
+    scale: scaleVal === 'width' ? null : Number(scaleVal),
+    width: Math.max(100, Math.min(MAX_OUTPUT_SIDE, Math.round(Number(enhanceWidth.value) || 1500))),
+    preset: f.preset.value,
+    format: f.format.value,
+    skipExisting: document.getElementById('enhance-skip').checked,
+  };
+}
+
+function updateEnhanceSummary() {
+  const st = readEnhanceForm();
+  document.getElementById('width-row').hidden = st.mode !== 'width';
+  document.getElementById('preset-hint').textContent = PRESET_HINTS[st.preset];
+  const summary = document.getElementById('enhance-summary');
+  if (enhanceMode === 'single') {
+    const t = enhanceTargets[0];
+    const probe = new Image();
+    probe.onload = () => {
+      const size = targetSize(probe.naturalWidth, probe.naturalHeight, readEnhanceForm());
+      summary.textContent = size
+        ? probe.naturalWidth + '×' + probe.naturalHeight + ' → ' + size.W + '×' + size.H +
+          (size.capped ? ' (limited to the browser maximum)' : '') +
+          (upscaledCopyOf(t) ? ' · replaces the current upscaled copy' : '')
+        : 'This picture is already at least that size.';
+    };
+    probe.src = t.url;
+  } else {
+    const existing = enhanceTargets.filter(t => upscaledCopyOf(t)).length;
+    const todo = st.skipExisting ? enhanceTargets.length - existing : enhanceTargets.length;
+    summary.textContent = todo + ' picture' + (todo === 1 ? '' : 's') + ' to enhance' +
+      (existing ? (st.skipExisting ? ' · ' + existing + ' skipped (already upscaled)' : ' · ' + existing + ' upscaled copies will be replaced') : '') +
+      ' · roughly 1–3 s each on a laptop, longer on phones.';
+  }
+}
+
+function openEnhanceDialog(targets, mode) {
+  enhanceTargets = targets;
+  enhanceMode = mode;
+  const saved = loadEnhanceSettings();
+  const f = enhanceForm.elements;
+  if (saved.scale || saved.mode === 'width') f.scale.value = saved.mode === 'width' ? 'width' : String(saved.scale);
+  if (saved.width) enhanceWidth.value = saved.width;
+  if (PRESET_NAMES[saved.preset]) f.preset.value = saved.preset;
+  if (saved.format === 'png' || saved.format === 'jpeg') f.format.value = saved.format;
+  document.getElementById('enhance-title').textContent = mode === 'single' ? '✨ Enhance picture' : '✨ Enhance all';
+  document.getElementById('enhance-target').textContent = mode === 'single'
+    ? targets[0].name + ' — creates a separate upscaled copy; the original is kept.'
+    : targets.length + ' original picture' + (targets.length === 1 ? '' : 's') + ' in the current view. Each gets a separate upscaled copy; originals are kept.';
+  document.getElementById('skip-row').hidden = mode !== 'batch';
+  enhanceReturnFocus = document.activeElement;
+  enhanceDialog.classList.add('open');
+  updateEnhanceSummary();
+  document.getElementById('enhance-go').focus();
+}
+
+function closeEnhanceDialog() {
+  enhanceDialog.classList.remove('open');
+  if (enhanceReturnFocus && enhanceReturnFocus.focus) enhanceReturnFocus.focus();
+}
+
+enhanceForm.addEventListener('change', updateEnhanceSummary);
+enhanceWidth.addEventListener('input', updateEnhanceSummary);
+document.getElementById('enhance-cancel').addEventListener('click', closeEnhanceDialog);
+enhanceDialog.addEventListener('click', e => { if (e.target === enhanceDialog) closeEnhanceDialog(); });
+enhanceForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const st = readEnhanceForm();
+  saveEnhanceSettings(st);
+  closeEnhanceDialog();
+  runEnhance(enhanceTargets.slice(), st, enhanceMode);
+});
+
+document.getElementById('enhance-all-btn').addEventListener('click', () => {
+  // Originals in the current view; an upscaled copy in view stands for its original.
+  const set = new Set();
+  filtered.forEach(img => {
+    const original = img.upscale ? findImage(img.upscale.of) : img;
+    if (original && !original.broken && !original.upscale) set.add(original);
+  });
+  if (!set.size) { showToast('No original pictures in the current view to enhance.'); return; }
+  openEnhanceDialog([...set], 'batch');
 });
 
 // ── COLLAPSIBLE MENU ──────────────────────────────────────────────────────────
