@@ -532,6 +532,9 @@
     .ai-row button, #ai-load-files { background: var(--surface2); border: 1px solid var(--border); color: var(--accent2); border-radius: 6px; padding: 0.2rem 0.6rem; cursor: pointer; font-size: 0.78rem; }
     .ai-row button:disabled { opacity: 0.45; cursor: not-allowed; }
     #ai-note { color: var(--text-muted); font-size: 0.75rem; line-height: 1.4; }
+    #ai-options { margin-top: 0.45rem; }
+    #ai-options[hidden], #ai-pick-hint[hidden], #scale-hint[hidden] { display: none; }
+    #use-ai + span small { display: block; color: var(--text-muted); font-size: 0.72rem; }
     #ai-note a { color: var(--accent2); }
     #auto-note { color: var(--accent2); font-size: 0.8rem; line-height: 1.4; }
     #auto-note[hidden] { display: none; }
@@ -717,7 +720,7 @@
   <button id="shuffle-btn" class="ss-btn">🔀 Shuffle</button>
   <button id="enhance-all-btn" class="ss-btn">✨ Enhance all</button>
   <button id="fav-filter-btn" class="ss-btn" aria-pressed="false" title="Show only favourites">♡ Favourites</button>
-  <button id="upscaled-filter-btn" class="ss-btn kind-btn" data-kind="upscaled" aria-pressed="false" title="Show only upscaled copies">✨ Upscaled</button>
+  <button id="upscaled-filter-btn" class="ss-btn kind-btn" data-kind="upscaled" aria-pressed="false" title="Show only enhanced copies (upscaled or cleaned)">✨ Upscaled</button>
   <button id="original-filter-btn" class="ss-btn kind-btn" data-kind="original" aria-pressed="false" title="Show only originals">🖼 Originals</button>
   <button id="folder-btn">📁 Open Folder</button>
   <input type="file" id="folder-file-input" webkitdirectory multiple />
@@ -780,15 +783,19 @@
     <p class="dialog-sub" id="enhance-target"></p>
     <fieldset id="engine-fields">
       <legend>Engine</legend>
-      <div class="chips">
-        <label><input type="radio" name="engine" value="builtin" checked><span>Built-in</span></label>
-        <label><input type="radio" name="engine" value="animevideov3" disabled><span>🤖 AI · Fast</span></label>
-        <label><input type="radio" name="engine" value="anime6b" disabled><span>🤖 AI · Best</span></label>
+      <label class="dialog-check"><input type="checkbox" id="use-ai"> <span>🤖 Use AI upscaling<small id="use-ai-sub">Optional Real-ESRGAN models, downloaded once and kept offline.</small></span></label>
+      <div id="ai-options" hidden>
+        <div class="chips">
+          <label hidden><input type="radio" name="engine" value="builtin" checked><span>Built-in</span></label>
+          <label><input type="radio" name="engine" value="animevideov3" disabled><span>🤖 AI · Fast</span></label>
+          <label><input type="radio" name="engine" value="anime6b" disabled><span>🤖 AI · Best</span></label>
+        </div>
+        <p class="dialog-sub" id="ai-pick-hint" hidden></p>
+        <div class="ai-models" id="ai-models"></div>
+        <div class="ai-row"><button type="button" id="ai-load-files">Load model files…</button>
+          <input type="file" id="ai-file-input" multiple accept=".param,.bin" hidden></div>
+        <p id="ai-note"></p>
       </div>
-      <div class="ai-models" id="ai-models"></div>
-      <div class="ai-row"><button type="button" id="ai-load-files">Load model files…</button>
-        <input type="file" id="ai-file-input" multiple accept=".param,.bin" hidden></div>
-      <p id="ai-note"></p>
     </fieldset>
     <fieldset id="device-fields">
       <legend>Processing</legend>
@@ -801,11 +808,13 @@
     <fieldset>
       <legend>Size</legend>
       <div class="chips">
+        <label><input type="radio" name="scale" value="1"><span>1× · Clean up</span></label>
         <label><input type="radio" name="scale" value="2" checked><span>2×</span></label>
         <label><input type="radio" name="scale" value="3"><span>3×</span></label>
         <label><input type="radio" name="scale" value="4"><span>4×</span></label>
         <label><input type="radio" name="scale" value="width"><span>Target width</span></label>
       </div>
+      <p class="dialog-sub" id="scale-hint" hidden>Keeps the picture at its size and only cleans it up.</p>
       <div class="width-row" id="width-row" hidden>
         <input type="number" id="enhance-width" min="100" max="8192" step="10" value="1500"> px wide
       </div>
@@ -852,7 +861,7 @@
       </div>
     </fieldset>
     <label class="dialog-check" id="skip-row" hidden>
-      <input type="checkbox" id="enhance-skip" checked> Skip pictures that already have an upscaled copy
+      <input type="checkbox" id="enhance-skip" checked> Skip pictures that already have an enhanced copy
     </label>
     <div class="preview" aria-label="Preview">
       <div class="preview-head">
@@ -1271,7 +1280,8 @@ async function storeFavorite(id, favorite) {
 // written to and read from JSON exports, and encoded in file names
 // ("name.upscaled-2x.png" / "name.upscaled-1500w.jpg") so ZIP exports and
 // folders keep it too.
-const UPSCALE_NAME_RE = /^(.+)\.upscaled-(\d+(?:\.\d+)?x|\d+w)\.(png|jpe?g|webp|gif)$/i;
+// Same-size cleanups use label "cleaned" and "name.cleaned.png".
+const UPSCALE_NAME_RE = /^(.+)\.(?:upscaled-(\d+(?:\.\d+)?x|\d+w)|(cleaned))\.(png|jpe?g|webp|gif)$/i;
 const PRESET_NAMES = { soft: 'Soft', balanced: 'Balanced', strong: 'Strong', lumity: 'Lumity', none: 'No cleanup' };
 const ENGINE_NAMES = { builtin: 'Built-in', animevideov3: 'AI Fast', anime6b: 'AI Best' };
 
@@ -1282,6 +1292,7 @@ function stripExt(name) {
 
 function upscaleLabelText(label) {
   if (!label) return '';
+  if (label === 'cleaned') return 'Cleaned';
   return /w$/i.test(label) ? label.slice(0, -1) + 'px' : label.replace(/x$/i, '×');
 }
 
@@ -1290,7 +1301,7 @@ function num(v) { return typeof v === 'number' && isFinite(v) ? v : null; }
 // Validate an `upscale` object from an import; returns null if unusable.
 function sanitizeUpscale(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  const label = typeof raw.label === 'string' && /^\d+(\.\d+)?x$|^\d+w$/i.test(raw.label) ? raw.label
+  const label = typeof raw.label === 'string' && /^\d+(\.\d+)?x$|^\d+w$|^cleaned$/i.test(raw.label) ? raw.label
     : num(raw.scale) ? Math.round(raw.scale * 100) / 100 + 'x' : 'upscaled';
   return {
     of: raw.of ?? null,
@@ -1316,8 +1327,9 @@ function sanitizeUpscale(raw) {
 function upscaleFromName(name) {
   const m = UPSCALE_NAME_RE.exec(name);
   if (!m) return null;
+  if (m[3]) return { label: 'cleaned', scale: 1, format: /png/i.test(m[4]) ? 'png' : /jpe?g/i.test(m[4]) ? 'jpeg' : null };
   const scale = /x$/i.test(m[2]) ? parseFloat(m[2]) : null;
-  return { label: m[2].toLowerCase(), scale, format: /png/i.test(m[3]) ? 'png' : /jpe?g/i.test(m[3]) ? 'jpeg' : null };
+  return { label: m[2].toLowerCase(), scale, format: /png/i.test(m[4]) ? 'png' : /jpe?g/i.test(m[4]) ? 'jpeg' : null };
 }
 
 // After an import: give each upscaled entry its marker and link it to its
@@ -1717,7 +1729,7 @@ function extrasNames(x) {
 }
 
 function describeUpscale(u) {
-  const parts = ['✨ Upscaled ' + upscaleLabelText(u.label)];
+  const parts = [u.label === 'cleaned' ? '✨ Cleaned up' : '✨ Upscaled ' + upscaleLabelText(u.label)];
   const ai = u.engine && u.engine !== 'builtin';
   if (ai) parts.push('🤖 ' + ENGINE_NAMES[u.engine] + (u.preset && u.preset !== 'none' ? ' → ' + PRESET_NAMES[u.preset] +
     (u.tuning ? ' (flatness ' + u.tuning.flatness + ', lines ' + u.tuning.lines + ')' : '') : ''));
@@ -1729,7 +1741,8 @@ function describeUpscale(u) {
   }
   if (u.device === 'gpu') parts.push('GPU');
   if (u.format) parts.push(u.format.toUpperCase());
-  if (u.originalWidth && u.width) parts.push(u.originalWidth + '×' + u.originalHeight + ' → ' + u.width + '×' + u.height);
+  if (u.originalWidth && u.width) parts.push(u.originalWidth === u.width && u.originalHeight === u.height
+    ? u.width + '×' + u.height : u.originalWidth + '×' + u.originalHeight + ' → ' + u.width + '×' + u.height);
   if (u.of == null) parts.push('original not in this set');
   return parts.join(' · ');
 }
@@ -3177,6 +3190,8 @@ async function gpuFinish(prep, onProgress, isCancelled, asJob) {
 // Output size for a w×h picture, capped to what browsers can encode.
 // Returns null when the picture is already at least that big.
 function targetSize(w, h, settings) {
+  if (settings.mode === 'scale' && settings.scale === 1)      // cleanup only, same size
+    return { W: w, H: h, scale: 1, label: 'cleaned', capped: false };
   let scale = settings.mode === 'width' ? settings.width / w : settings.scale;
   if (isAiEngine(settings) && scale > 4) scale = 4;        // the AI models upscale ×4 at most
   if (!(scale > 1.01)) return null;
@@ -3241,7 +3256,7 @@ async function enhanceOne(original, settings, onProgress) {
   const previous = upscaledCopyOf(original);
   const item = {
     id: nextImageId++,
-    name: stripExt(original.name) + '.upscaled-' + size.label + (settings.format === 'png' ? '.png' : '.jpg'),
+    name: stripExt(original.name) + (size.label === 'cleaned' ? '.cleaned' : '.upscaled-' + size.label) + (settings.format === 'png' ? '.png' : '.jpg'),
     blob,
     modified: original.modified ?? null,
     upscale: {
@@ -3343,6 +3358,7 @@ const enhanceWidth  = document.getElementById('enhance-width');
 const tuneFlatness  = document.getElementById('tune-flatness');
 const tuneLines     = document.getElementById('tune-lines');
 let enhanceTargets = [], enhanceMode = 'single', enhanceReturnFocus = null;
+let lastAiEngine = null;   // the last AI model picked, so switching "Use AI" off and on keeps it
 
 function loadEnhanceSettings() {
   try { return JSON.parse(localStorage.getItem(ENHANCE_SETTINGS_KEY)) || {}; } catch { return {}; }
@@ -3358,7 +3374,9 @@ function readEnhanceForm() {
     mode: scaleVal === 'width' ? 'width' : 'scale',
     scale: scaleVal === 'width' ? null : Number(scaleVal),
     width: Math.max(100, Math.min(MAX_OUTPUT_SIDE, Math.round(Number(enhanceWidth.value) || 1500))),
-    engine: f.engine.value,
+    engine: document.getElementById('use-ai').checked ? f.engine.value : 'builtin',
+    useAi: document.getElementById('use-ai').checked,
+    aiEngine: f.engine.value !== 'builtin' ? f.engine.value : lastAiEngine,
     device: f.device.value,
     preset: f.preset.value,
     format: f.format.value,
@@ -3375,6 +3393,10 @@ function readEnhanceForm() {
 
 // Rough seconds per picture at 2× on a laptop, for the batch summary.
 function timeEstimate(st) {
+  if (st.mode === 'scale' && st.scale === 1 && !isAiEngine(st)) {       // ¼ of the output pixels
+    const t = timeEstimate({ ...st, scale: 2 }).split('–').map(v => v === '<1' ? 0.5 : Number(v));
+    return '<1–' + Math.max(1, Math.round(t[1] * 0.4));
+  }
   if (st.engine === 'animevideov3') return st.preset === 'none' ? '2–10' : '4–20';
   if (st.engine === 'anime6b') return st.preset === 'none' ? '20–90' : '25–100';
   if (st.preset === 'auto') return '2–12';
@@ -3389,6 +3411,13 @@ function timeEstimate(st) {
 
 function updateEnhanceSummary() {
   const f = enhanceForm.elements;
+  const useAi = document.getElementById('use-ai').checked;
+  document.getElementById('ai-options').hidden = !useAi;
+  if (!useAi && f.engine.value !== 'builtin') f.engine.value = 'builtin';
+  const pickHint = document.getElementById('ai-pick-hint');
+  pickHint.hidden = !useAi || f.engine.value !== 'builtin';
+  pickHint.textContent = aiState.gpuError ? 'AI isn’t available in this browser — the built-in engine is used.'
+    : 'Download a model below (or load its files) to use AI. Until then the built-in engine is used.';
   const ai = f.engine.value !== 'builtin';
   // "None" only makes sense after AI; Auto only for the built-in engine.
   document.getElementById('preset-none-chip').hidden = !ai;
@@ -3405,6 +3434,10 @@ function updateEnhanceSummary() {
     : 'Runs on the processor, in the background.';
   const st = readEnhanceForm();
   document.getElementById('width-row').hidden = st.mode !== 'width';
+  document.getElementById('scale-hint').hidden = !(st.mode === 'scale' && st.scale === 1);
+  document.getElementById('scale-hint').textContent = ai
+    ? 'Keeps the picture at its size: the AI works at 4× and the result is scaled back down.'
+    : 'Keeps the picture at its size and only cleans it up.';
   document.getElementById('tuning-fields').hidden = st.preset !== 'lumity';
   document.getElementById('extras-fields').disabled = st.preset === 'auto' || st.preset === 'none';
   const autoNote = document.getElementById('auto-note');
@@ -3420,7 +3453,10 @@ function updateEnhanceSummary() {
     const probe = new Image();
     probe.onload = () => {
       const size = targetSize(probe.naturalWidth, probe.naturalHeight, readEnhanceForm());
-      summary.textContent = size
+      summary.textContent = size && size.label === 'cleaned'
+        ? probe.naturalWidth + '×' + probe.naturalHeight + ' · same size, cleanup only' +
+          (upscaledCopyOf(t) ? ' · replaces the current enhanced copy' : '')
+        : size
         ? probe.naturalWidth + '×' + probe.naturalHeight + ' → ' + size.W + '×' + size.H +
           (size.capped ? ' (limited to the browser maximum)' : '') +
           (upscaledCopyOf(t) ? ' · replaces the current upscaled copy' : '')
@@ -3445,8 +3481,11 @@ function openEnhanceDialog(targets, mode) {
   if (saved.width) enhanceWidth.value = saved.width;
   if (PRESET_NAMES[saved.preset] || saved.preset === 'auto') f.preset.value = saved.preset;
   f.engine.value = 'builtin';
+  // Older saved settings have no useAi: an AI engine choice means it was on.
+  document.getElementById('use-ai').checked = saved.useAi != null ? !!saved.useAi : !!(saved.engine && saved.engine !== 'builtin');
+  if (saved.aiEngine || (saved.engine && saved.engine !== 'builtin')) lastAiEngine = saved.aiEngine || saved.engine;
   aiRefreshUi().then(() => {
-    if (saved.engine && saved.engine !== 'builtin' && aiReady(saved.engine)) { f.engine.value = saved.engine; updateEnhanceSummary(); }
+    if (document.getElementById('use-ai').checked) pickAiEngine();
     if (saved.device === 'gpu' && gpuBuiltinAvailable()) f.device.value = 'gpu';
     updateEnhanceSummary();                      // GPU availability is known now
   });
@@ -3459,8 +3498,8 @@ function openEnhanceDialog(targets, mode) {
   document.getElementById('extra-edges').checked = !!savedExtras.edges;
   document.getElementById('enhance-title').textContent = mode === 'single' ? '✨ Enhance picture' : '✨ Enhance all';
   document.getElementById('enhance-target').textContent = mode === 'single'
-    ? targets[0].name + ' — creates a separate upscaled copy; the original is kept.'
-    : targets.length + ' original picture' + (targets.length === 1 ? '' : 's') + ' in the current view. Each gets a separate upscaled copy; originals are kept.';
+    ? targets[0].name + ' — creates a separate enhanced copy; the original is kept.'
+    : targets.length + ' original picture' + (targets.length === 1 ? '' : 's') + ' in the current view. Each gets a separate enhanced copy; originals are kept.';
   document.getElementById('skip-row').hidden = mode !== 'batch';
   enhanceReturnFocus = document.activeElement;
   enhanceDialog.classList.add('open');
@@ -3475,6 +3514,18 @@ function closeEnhanceDialog() {
   if (enhanceReturnFocus && enhanceReturnFocus.focus) enhanceReturnFocus.focus();
 }
 
+function pickAiEngine() {
+  const f = enhanceForm.elements;
+  const choice = [lastAiEngine, ...AI_MODELS.map(m => m.id)].find(id => id && aiReady(id));
+  f.engine.value = choice || 'builtin';
+}
+document.getElementById('use-ai').addEventListener('change', e => {
+  if (e.target.checked) pickAiEngine();
+  else { if (enhanceForm.elements.engine.value !== 'builtin') lastAiEngine = enhanceForm.elements.engine.value; enhanceForm.elements.engine.value = 'builtin'; }
+});
+enhanceForm.querySelectorAll('input[name=engine]').forEach(r => r.addEventListener('change', () => {
+  if (r.checked && r.value !== 'builtin') lastAiEngine = r.value;
+}));
 enhanceForm.addEventListener('change', updateEnhanceSummary);
 enhanceWidth.addEventListener('input', updateEnhanceSummary);
 tuneFlatness.addEventListener('input', updateEnhanceSummary);
@@ -4796,6 +4847,12 @@ async function aiRefreshUi() {
     note.append('Optional. Models run on your GPU and are stored in this browser. Real-ESRGAN models by Xintao Wang, ');
     const a = document.createElement('a'); a.href = 'models/LICENSE-Real-ESRGAN.txt'; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'BSD-3-Clause';
     note.append(a, '.');
+  }
+  // "Use AI" on but no model was ready yet: pick one as soon as it is.
+  if (document.getElementById('use-ai').checked && enhanceForm.elements.engine.value === 'builtin' &&
+      AI_MODELS.some(m => aiReady(m.id))) {
+    pickAiEngine();
+    if (enhanceDialog.classList.contains('open')) updateEnhanceSummary();
   }
 }
 
