@@ -267,6 +267,21 @@
     }
 
     /* ── UPSCALE MARKER ── */
+    /* ── FAVOURITES ── */
+    .fav-btn {
+      position: absolute; top: 4px; right: 4px; z-index: 1;
+      width: 30px; height: 30px; border-radius: 50%;
+      border: none; background: rgba(13,0,16,0.55); color: #fff;
+      font-size: 1rem; line-height: 30px; text-align: center; cursor: pointer; padding: 0;
+      opacity: 0; transition: opacity 0.15s, transform 0.15s;
+    }
+    .thumb:hover .fav-btn, .fav-btn:focus-visible, .fav-btn.on { opacity: 1; }
+    .fav-btn.on { color: #ff6fa8; }
+    .fav-btn:hover { transform: scale(1.12); }
+    @media (hover: none) { .fav-btn { opacity: 0.75; } }
+    #fav-filter-btn[aria-pressed="true"] { background: var(--glow); color: #fff; border-color: var(--accent); }
+    #lb-fav.on { color: #ff6fa8; }
+
     .upscale-badge {
       position: absolute;
       top: 6px;
@@ -707,6 +722,7 @@
   <button id="sort-date-btn" class="ss-btn">⇅ File Date</button>
   <button id="shuffle-btn" class="ss-btn">🔀 Shuffle</button>
   <button id="enhance-all-btn" class="ss-btn">✨ Enhance all</button>
+  <button id="fav-filter-btn" class="ss-btn" aria-pressed="false" title="Show only favourites">♡ Favourites</button>
   <button id="folder-btn">📁 Open Folder</button>
   <input type="file" id="folder-file-input" webkitdirectory multiple />
   <button id="json-btn">📥 Load JSON</button>
@@ -737,6 +753,7 @@
   <div class="lb-actions">
     <button class="lb-btn" id="lb-enhance">✨ Enhance</button>
     <button class="lb-btn" id="lb-compare" hidden>⇄ Show original</button>
+    <button class="lb-btn" id="lb-fav" title="Favourite (F)">♡ Favourite</button>
   </div>
   <div class="lb-nav">
     <button class="lb-btn" id="lb-prev">◀</button>
@@ -1161,7 +1178,7 @@ async function replaceStoredImages(items, source, onProgress) {
 
 // The stored shape of one picture. `upscale` is null for originals.
 function toRecord(item) {
-  return { id: item.id, name: item.name, blob: item.blob, modified: item.modified ?? null, upscale: item.upscale ?? null };
+  return { id: item.id, name: item.name, blob: item.blob, modified: item.modified ?? null, upscale: item.upscale ?? null, favorite: !!item.favorite };
 }
 
 // Add one picture (a new upscaled copy) and optionally remove the copy it
@@ -1229,7 +1246,17 @@ function blobsToImages(items) {
     url: URL.createObjectURL(item.blob),
     modified: item.modified ?? null,
     upscale: item.upscale ?? null,
+    favorite: !!item.favorite,
   }));
+}
+
+// Change one stored picture's favourite flag (read-modify-write of its record).
+async function storeFavorite(id, favorite) {
+  const db = await openDb();
+  await runTx(db, 'readwrite', tx => {
+    const st = tx.objectStore(IMG_STORE), req = st.get(id);
+    req.onsuccess = () => { if (req.result) { req.result.favorite = favorite; st.put(req.result); } };
+  });
 }
 
 // ── UPSCALE MARKER ────────────────────────────────────────────────────────────
@@ -1442,6 +1469,7 @@ async function loadFromJson(file) {
         modified: parseFileDate(f.modified ?? f.lastModified ?? f.mtime),
         rawId: f.id,
         rawUpscale: f.upscale,
+        favorite: f.favorite === true,
       }), (done, total) => setProgress('Step 2 of 3 · Decoding images…', done, total));
     } catch { showToast('JSON contains invalid image data.'); return; }
     resolveUpscales(items);
@@ -1478,8 +1506,12 @@ const searchInput = document.getElementById('search');
 // later filter, so they don't keep reappearing and failing again.
 const kindSelect = document.getElementById('kind-select');
 
+const favFilterBtn = document.getElementById('fav-filter-btn');
+let favOnly = false;
+
 function passesFilter(img) {
   if (img.broken) return false;
+  if (favOnly && !img.favorite) return false;
   const kind = kindSelect.value;
   if (kind === 'original' && img.upscale) return false;
   if (kind === 'upscaled' && !img.upscale) return false;
@@ -1531,9 +1563,13 @@ const emptyActions = document.getElementById('empty-actions');
 function updateEmptyState() {
   if (filtered.length) { emptyState.hidden = true; return; }
   const usable = ALL_IMAGES.some(img => !img.broken);
-  if (usable && (searchInput.value || kindSelect.value !== 'all')) {
+  if (usable && favOnly && !ALL_IMAGES.some(img => img.favorite && !img.broken)) {
+    emptyTitle.textContent = 'No favourites yet';
+    emptyText.textContent = 'Tap ♡ on a picture (or press F in the full-screen view) to add it to your favourites.';
+    emptyActions.hidden = true;
+  } else if (usable && (searchInput.value || kindSelect.value !== 'all' || favOnly)) {
     emptyTitle.textContent = 'No matches';
-    emptyText.textContent = kindSelect.value === 'upscaled' && !searchInput.value
+    emptyText.textContent = kindSelect.value === 'upscaled' && !searchInput.value && !favOnly
       ? 'No upscaled pictures yet. Open a picture and press ✨ Enhance, or use ✨ Enhance all.'
       : 'No images match the current search or "Show" filter.';
     emptyActions.hidden = true;
@@ -1551,7 +1587,8 @@ function updateEmptyState() {
 
 function updateCount() {
   const upscaled = filtered.reduce((n, img) => n + (img.upscale ? 1 : 0), 0);
-  countBadge.textContent = filtered.length + ' images' + (upscaled ? ' · ' + upscaled + ' ✨' : '');
+  const favs = filtered.reduce((n, img) => n + (img.favorite ? 1 : 0), 0);
+  countBadge.textContent = filtered.length + ' images' + (upscaled ? ' · ' + upscaled + ' ✨' : '') + (favs ? ' · ' + favs + ' ♥' : '');
   updateEmptyState();
   loadMore.textContent = rendered < filtered.length
     ? 'Loading more… (' + (filtered.length - rendered) + ' remaining)'
@@ -1629,6 +1666,12 @@ function makeThumb(img) {
       badge.title = 'Upscaled copy';
       div.appendChild(badge);
     }
+    const fav = document.createElement('button');
+    fav.type = 'button';
+    fav.className = 'fav-btn';
+    setFavButton(fav, img.favorite);
+    fav.addEventListener('click', e => { e.stopPropagation(); toggleFavorite(img); });
+    div.appendChild(fav);
     // Look the index up at click time: earlier images may have been removed
     // (failed to decode) since this thumbnail was drawn.
     div.addEventListener('click', () => {
@@ -1694,6 +1737,7 @@ function showLb() {
   lbUpscaleInfo.hidden = !img.upscale;
   if (img.upscale) lbUpscaleInfo.textContent = describeUpscale(img.upscale);
   lbCompareBtn.hidden = !(img.upscale && original && !original.broken);
+  setFavButton(lbFavBtn, img.favorite, true);
   lbCompareBtn.textContent = '⇄ Show original';
   lbCompareBtn.classList.remove('active');
   const canEnhance = original && !original.broken && !original.upscale;
@@ -1762,6 +1806,10 @@ document.addEventListener('keydown', e => {
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') stepLb(1);
   else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') stepLb(-1);
   else if (e.key === 'Escape') closeLb();
+  else if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const img = filtered[lbIndex];
+    if (img) toggleFavorite(img);
+  }
 });
 
 // ── SLIDESHOW ─────────────────────────────────────────────────────────────────
@@ -1981,6 +2029,7 @@ downloadJsonBtn.addEventListener('click', () => runExport(downloadJsonBtn, '⬇ 
     const entry = { id: img.id, filename: img.name, data: b64 };
     if (img.modified != null) entry.modified = new Date(img.modified).toISOString();
     if (img.upscale) entry.upscale = { ...img.upscale };
+    if (img.favorite) entry.favorite = true;
     files.push(entry);
   }
 
@@ -3142,7 +3191,7 @@ async function enhanceOne(original, settings, onProgress) {
   try { await storeOnePicture(item, previous ? previous.id : null); }
   catch (err) { console.error('Saving upscaled picture failed', err); saved = false; }
 
-  const img = { id: item.id, name: item.name, url: URL.createObjectURL(blob), modified: item.modified, upscale: item.upscale };
+  const img = { id: item.id, name: item.name, url: URL.createObjectURL(blob), modified: item.modified, upscale: item.upscale, favorite: false };
   addUpscaledToView(img, original, previous);
   onProgress(1, 'Done');
   return { img, saved, capped: size.capped };
@@ -4369,6 +4418,44 @@ async function aiUpscale(px, W, H, settings, onProgress) {
     extras: engineExtras(settings), jpegSource: false, flattenWhite: settings.format === 'jpeg',
   }, (f, label) => onProgress(0.62 + f * 0.28, 'After AI: ' + label));
 }
+
+// ── FAVOURITES ────────────────────────────────────────────────────────────────
+// A favourite is a flag on the picture: stored with it in IndexedDB and in
+// JSON exports. Upscaled copies have their own flag. The "♥ Favourites"
+// toggle combines with Show / search; unfavouriting a picture while the
+// toggle is on keeps it on screen until the view is next refreshed.
+const lbFavBtn = document.getElementById('lb-fav');
+
+function setFavButton(btn, on, withLabel) {
+  btn.classList.toggle('on', !!on);
+  btn.textContent = withLabel ? (on ? '♥ Favourite' : '♡ Favourite') : (on ? '♥' : '♡');
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.setAttribute('aria-label', on ? 'Remove from favourites' : 'Add to favourites');
+  btn.title = on ? 'Remove from favourites' : 'Add to favourites';
+}
+
+async function toggleFavorite(img) {
+  img.favorite = !img.favorite;
+  const thumb = thumbOf.get(img);
+  if (thumb) { const b = thumb.querySelector('.fav-btn'); if (b) setFavButton(b, img.favorite); }
+  if (lb.classList.contains('open') && filtered[lbIndex] === img) setFavButton(lbFavBtn, img.favorite, true);
+  updateCount();
+  try { await storeFavorite(img.id, img.favorite); }
+  catch (err) { console.error('Saving favourite failed', err); showToast('Could not save the favourite (storage unavailable).'); }
+}
+
+lbFavBtn.addEventListener('click', () => {
+  const img = filtered[lbIndex];
+  if (img) toggleFavorite(img);
+});
+
+favFilterBtn.addEventListener('click', () => {
+  favOnly = !favOnly;
+  favFilterBtn.setAttribute('aria-pressed', favOnly ? 'true' : 'false');
+  favFilterBtn.textContent = favOnly ? '♥ Favourites' : '♡ Favourites';
+  applyFilter();
+  rerender();
+});
 
 // ── COLLAPSIBLE MENU ──────────────────────────────────────────────────────────
 document.getElementById('controls-toggle').addEventListener('click', () => {
