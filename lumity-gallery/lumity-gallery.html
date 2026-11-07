@@ -3967,22 +3967,30 @@ void main(){
       check();
     });
 
-    // Submit queued steps ~SLICE_MS of GPU work at a time, learning how much
-    // work fits in a slice on this GPU, and giving the browser a turn between.
-    const SLICE_MS = 12;
-    let costPerMs = 2e6;
+    // Submit queued steps in slices of GPU work, giving the browser a turn
+    // between slices so the page keeps responding and drawing.
+    //  • GPU speed is the BEST throughput seen (work ÷ time): slice times also
+    //    contain the browser's own drawing, so averaging would make slices
+    //    shrink until they are single draws.
+    //  • The browser's per-slice overhead is tracked separately; when it is
+    //    large (slow or software GPUs) slices grow, up to 150 ms, so the AI
+    //    still gets most of the GPU. On normal GPUs slices stay ≈12 ms.
+    let bestRate = 0, overhead = 2;
     async function drain(onFrac, isCancelled) {
       const steps = queue; queue = [];
       const total = steps.reduce((n, st) => n + st.cost, 0) || 1;
       let done = 0, i = 0;
       while (i < steps.length) {
         if (isCancelled && isCancelled()) throw new Error('cancelled');
+        const targetMs = Math.min(150, Math.max(12, 3 * overhead));
+        const budget = bestRate > 0 ? bestRate * targetMs : 2.4e7;
         let slice = 0;
         const t0 = performance.now();
-        while (i < steps.length && (slice === 0 || slice < costPerMs * SLICE_MS)) { steps[i].fn(); slice += steps[i].cost; i++; }
+        while (i < steps.length && (slice === 0 || slice < budget)) { steps[i].fn(); slice += steps[i].cost; i++; }
         await waitGpu();
-        const ms = Math.max(1, performance.now() - t0);
-        costPerMs = Math.min(1e10, Math.max(1e4, 0.7 * costPerMs + 0.3 * (slice / ms)));
+        const ms = Math.max(0.5, performance.now() - t0);
+        bestRate = Math.max(slice / ms, bestRate * 0.98);          // slow decay follows GPU throttling
+        overhead = 0.8 * overhead + 0.2 * Math.max(0, ms - slice / bestRate);
         done += slice;
         if (onFrac) onFrac(done / total);
       }
