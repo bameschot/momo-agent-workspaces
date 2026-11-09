@@ -416,6 +416,10 @@
     .st-actions button { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 0.4rem 0.75rem; cursor: pointer; font-size: 0.8rem; }
     .st-actions button:hover:not(:disabled) { border-color: #e74c3c; color: #ff8a80; }
     .st-actions button:disabled { opacity: 0.45; cursor: default; }
+    #gpu-diag-dialog .dialog-card { width: min(600px, 100%); gap: 0.75rem; }
+    #gpu-diag-dialog .dialog-sub { margin-top: -0.4rem; }
+    #gpu-diag-report { margin: 0; max-height: 55vh; overflow: auto; padding: 0.6rem 0.7rem; border-radius: 8px; background: var(--surface2);
+      border: 1px solid var(--border); color: var(--text); font: 0.72rem/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
     .dialog-card {
       width: min(440px, 100%);
       background: var(--surface);
@@ -765,6 +769,7 @@
         <button id="download-json-btn" class="menu-item">📄 Download JSON<small>Pictures in view, can be loaded again</small></button>
         <hr>
         <button id="storage-btn" class="menu-item">💾 Storage…<small>Space used in this browser</small></button>
+        <button id="gpu-diag-btn" class="menu-item">🩺 GPU diagnostics…<small>What WebGPU does on this device</small></button>
       </div>
     </div>
     <div class="menu">
@@ -1012,6 +1017,20 @@
       <button type="button" id="st-remove-models">Remove AI models</button>
     </div>
     <div class="dialog-actions"><button type="button" class="primary" id="storage-close">Close</button></div>
+  </div>
+</div>
+
+<!-- GPU diagnostics -->
+<div id="gpu-diag-dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="gpu-diag-title">
+  <div class="dialog-card">
+    <h2 id="gpu-diag-title">🩺 GPU diagnostics</h2>
+    <p class="dialog-sub">What WebGPU reports on this device, how the AI was tuned for it and how the last WebGPU AI jobs went. ▶ Run test upscales a preview-sized and a photo-sized test picture on WebGPU and checks the result is not blank.</p>
+    <pre id="gpu-diag-report">Collecting…</pre>
+    <div class="dialog-actions">
+      <button type="button" id="gpu-diag-test">▶ Run test</button>
+      <button type="button" id="gpu-diag-copy">Copy report</button>
+      <button type="button" class="primary" id="gpu-diag-close">Close</button>
+    </div>
   </div>
 </div>
 
@@ -6620,7 +6639,7 @@ async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, op
     try {
       const model = await aiGetModel(settings.engine, { denoise: settings.denoise }), size = { iw: W, ih: H, W, H, x: 0, y: 0 };
       const r = await gpuAttempt(async () => { const e = await gpuCompact(); return e && !e.lost ? e : null; },
-        eng => { eng.run(model, rgba, w, h, size, false, !!settings.aiFast); lastAiFast = !!settings.aiFast && eng.fastKernel; return eng.read(size); },
+        eng => { lastAiFast = !!settings.aiFast && eng.fastKernel; return gpuAiPictureJob(eng, model, rgba, w, h, size, !!settings.aiFast, opts && opts.seFrom ? 'preview' : 'picture'); },
         w + '×' + h + ' → ' + W + '×' + H, isCancelled);
       if (r) {
         if (onProgress) onProgress(1);
@@ -6632,10 +6651,47 @@ async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, op
     } catch (err) {
       if (isCancelled && isCancelled()) throw err;
       console.warn('WebGPU AI failed', err);
+      gpuDiagLogAdd({ at: new Date().toISOString(), kind: 'fallback', result: 'WebGPU AI gave up, WebGL used: ' + (err.message || err) });
       gpuNote('The WebGPU AI failed (' + (err.message || err) + '), so it runs on WebGL.');
     }
   }
   return aiRun(settings.engine, rgba, w, h, W, H, onProgress, isCancelled, opts);
+}
+
+// One WebGPU AI run on a picture (pictureAi, the diagnostics test) → RGBA.
+// The output pass draws every pixel opaque, so a read-back with any pixel
+// that isn't is GPU work that was dropped (some phone drivers reset the GPU on
+// a long job without reporting the device lost, and the read-back is then all
+// zeros, which the cleanup turns white for a JPEG). That device is given up
+// as lost, so gpuAttempt retries in safe mode (smaller bands) and then WebGL.
+// Each run is logged for 🩺 GPU diagnostics.
+const gpuBlankPixels = px => { let n = 0; for (let i = 3; i < px.length; i += 4) if (px[i] !== 255) n++; return n; };
+async function gpuAiPictureJob(eng, model, rgba, w, h, size, fast, kind) {
+  const t0 = performance.now();
+  const entry = { at: new Date().toISOString(), kind, size: w + '×' + h + ' → ' + size.W + '×' + size.H,
+    kernel: fast && eng.fastKernel ? 'fast' : 'exact', engine: eng.info, budgetMB: Math.round(gpuBudget() / 2 ** 20), safeMode: gpuSafeMode };
+  gpuDiagLogAdd(entry);
+  try {
+    const pl = eng.run(model, rgba, w, h, size, false, fast);
+    entry.bands = pl.bands.length + ' × ≤' + Math.max(...pl.bands.map(b => b.bh)) + ' rows';
+    const out = await eng.read(size);
+    entry.ms = Math.round(performance.now() - t0);
+    const blank = gpuBlankPixels(out);
+    if (blank) {
+      await new Promise(r => setTimeout(r, 100));          // (a device loss is reported a moment later)
+      const why = 'the GPU returned a blank picture (' + (blank / (out.length / 4) * 100).toFixed(1) + '% not drawn)' +
+        (eng.lost ? ', device lost: ' + eng.lost : ', treated as a lost device');
+      entry.result = 'BLANK — ' + why;
+      try { eng.device.destroy(); } catch { /* lost already */ }
+      throw new Error(why);
+    }
+    entry.result = 'ok';
+    return out;
+  } catch (err) {
+    if (!entry.result) entry.result = 'failed — ' + (err.message || err) + (eng.lost ? ' (device lost: ' + eng.lost + ')' : '');
+    if (entry.ms == null) entry.ms = Math.round(performance.now() - t0);
+    throw err;
+  }
 }
 
 // Picture → AI ×4 → requested size (GPU), then optional built-in cleanup.
@@ -7149,6 +7205,8 @@ function gpuTuneModel() {
     bias: new Float32Array(outC), ...(prelu ? { prelu: new Float32Array(outC).fill(0.1) } : {}) });
   return { arch: 'compact', scale: 4, pad: 16, version: 0, convs: [conv(3, 64, true), ...Array.from({ length: 16 }, () => conv(64, 64, true)), conv(64, 48, false)] };
 }
+// The tuning record of a GPU (adapter.info) in localStorage.
+const gpuTuneKey = ai => [ai.vendor, ai.architecture, ai.device, ai.description].join('|') + '|k' + GPU_KERNEL_VERSION;
 let gpuTunePromise = null;
 function gpuTune() { return gpuTunePromise || (gpuTunePromise = gpuTuneRun()); }
 async function gpuTuneRun() {
@@ -7158,7 +7216,7 @@ async function gpuTuneRun() {
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) return null;
   const ai = adapter.info || {};
-  const key = [ai.vendor, ai.architecture, ai.device, ai.description].join('|') + '|k' + GPU_KERNEL_VERSION;
+  const key = gpuTuneKey(ai);
   const hasF16 = adapter.features.has('shader-f16');
   let rec = gpuTuneStore()[key] || { bad: [], ms: {} };
   if (rec.done) return rec;
@@ -9410,6 +9468,123 @@ document.getElementById('storage-btn').addEventListener('click', openStorage);
 document.getElementById('storage-close').addEventListener('click', closeStorage);
 storageDialog.addEventListener('click', e => { if (e.target === storageDialog) closeStorage(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && storageDialog.classList.contains('open')) closeStorage(); });
+
+// ── GPU DIAGNOSTICS ───────────────────────────────────────────────────────────
+// A plain-text report to copy and send: the adapter, its limits, the memory
+// budget, the kernel tuning record, the last WebGPU AI jobs (gpuAiPictureJob)
+// and, on ▶ Run test, a preview-sized and a photo-sized AI run.
+const gpuDiagDialog = document.getElementById('gpu-diag-dialog'), gpuDiagPre = document.getElementById('gpu-diag-report');
+const gpuDiagLog = [];
+let gpuDiagTestLines = null;
+function gpuDiagLogAdd(entry) { gpuDiagLog.push(entry); if (gpuDiagLog.length > 12) gpuDiagLog.shift(); }
+
+async function gpuDiagReport() {
+  const L = [], mb = n => Math.round(n / 2 ** 20) + ' MB';
+  L.push('Lumity Gallery · GPU diagnostics · ' + new Date().toISOString());
+  L.push('Browser: ' + navigator.userAgent);
+  L.push('Phone mode: ' + (GPU_MOBILE ? 'yes' : 'no') + ' · device memory: ' + (navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'not reported') +
+    ' · GPU budget: ' + mb(gpuBudget()) + (gpuBudgetScale < 1 ? ' (cut to ' + gpuBudgetScale + '× after running out of memory)' : ''));
+  L.push('WebGPU this visit: ' + (gpuOff ? 'OFF — ' + gpuOff : gpuSafeMode ? 'safe mode (32-bit maths, smaller bands) after a GPU failure' : 'normal'));
+  if (!navigator.gpu) L.push('WebGPU: not available in this browser');
+  else {
+    const a = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }).catch(() => null);
+    if (!a) L.push('WebGPU: no adapter');
+    else {
+      const ai = a.info || {};
+      L.push('Adapter: ' + (['vendor', 'architecture', 'device', 'description'].map(k => ai[k] ? k + ' ' + ai[k] : '').filter(Boolean).join(' · ') || 'no info'));
+      L.push('16-bit maths (shader-f16): ' + (a.features.has('shader-f16') ? 'supported' : 'not supported') + ' · features: ' + [...a.features].sort().join(', '));
+      L.push('Limits: ' + ['maxTextureDimension2D', 'maxBufferSize', 'maxStorageBufferBindingSize', 'maxComputeWorkgroupStorageSize', 'maxComputeInvocationsPerWorkgroup']
+        .map(k => k.replace(/^max/, '') + ' ' + (/Size$/.test(k) && a.limits[k] > 2 ** 20 ? mb(a.limits[k]) : a.limits[k])).join(' · '));
+      const rec = gpuTuneStore()[gpuTuneKey(ai)];
+      L.push('Kernel tuning: ' + (!GPU_MOBILE ? 'not used (desktop)' : !rec ? 'not run yet' : !rec.done ? 'unfinished' + (rec.trying ? ' (was trying ' + rec.trying + ')' : '')
+        : (rec.off ? 'NO SHAPE WORKED' : (rec.f16 ? '16-bit' : '32-bit') + ', exact ' + gpuShapeName(rec.exact) + ', fast ' + (rec.fast ? gpuShapeName(rec.fast) : 'none')) +
+          (rec.bad.length ? ' · failed: ' + rec.bad.join(', ') : '') + ' · ms: ' + Object.entries(rec.ms).map(([k, v]) => k + '=' + v).join(', ')));
+    }
+  }
+  L.push('', 'Recent WebGPU AI jobs (newest last):');
+  if (!gpuDiagLog.length) L.push('  none this visit');
+  for (const e of gpuDiagLog) {
+    L.push('  ' + e.at.slice(11, 19) + ' ' + e.kind + (e.size ? ' ' + e.size : '') + (e.kernel ? ' · ' + e.kernel + ' kernel' : '') + (e.bands ? ' · ' + e.bands : '') +
+      (e.ms != null ? ' · ' + e.ms + ' ms' : '') + (e.budgetMB ? ' · budget ' + e.budgetMB + ' MB' : '') + (e.safeMode ? ' · safe mode' : '') +
+      ' → ' + (e.result || 'running…') + (e.engine ? '\n      engine: ' + e.engine : ''));
+  }
+  if (gpuDiagTestLines) L.push('', ...gpuDiagTestLines);
+  return L.join('\n');
+}
+
+async function gpuDiagRefresh() { gpuDiagPre.textContent = await gpuDiagReport().catch(err => 'The report failed: ' + (err.message || err)); }
+
+// Runs the AI on WebGPU directly (no retries or fallback, so a failure shows)
+// on a preview-sized and a photo-sized test picture, with the model and
+// ⚡ Fast AI maths setting last used in ✨ Enhance.
+async function gpuDiagTest() {
+  const st = loadEnhanceSettings();
+  const id = VIDEO_GPU_MODELS.has(st.engine) && aiReady(st.engine) ? st.engine : [...VIDEO_GPU_MODELS].find(aiReady);
+  const model = id ? await aiGetModel(id, { denoise: st.denoise }) : gpuTuneModel(), fast = !!st.aiFast;
+  const lines = ['Test (' + new Date().toISOString().slice(11, 19) + '): ' + (id ? (AI_MODELS.find(m => m.id === id) || { title: id }).title
+    : 'synthetic network (no AI model downloaded; same layer shapes as AI · Fast)') + ' · ' + (fast ? '⚡ fast maths' : 'exact maths')];
+  gpuDiagTestLines = [...lines, '  running…'];
+  await gpuDiagRefresh();
+  for (const [w, h, kind] of [[160, 120, 'test · preview size'], [1000, 750, 'test · photo size']]) {
+    const rgba = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4, line = (x + y) % 37 < 2;
+      rgba[i] = line ? 20 : x * 255 / w; rgba[i + 1] = line ? 20 : y * 255 / h; rgba[i + 2] = line ? 20 : 200 - x * 100 / w; rgba[i + 3] = 255;
+    }
+    const size = { iw: w * 4, ih: h * 4, W: w * 4, H: h * 4, x: 0, y: 0 };
+    try {
+      await gpuExclusive(async () => {
+        const eng = await gpuCompact();
+        if (!eng || eng.lost) throw new Error(gpuOff ? 'WebGPU is off this visit: ' + gpuOff : 'no WebGPU engine');
+        gpuFreeWebGL();
+        const dev = eng.device;
+        dev.pushErrorScope('out-of-memory'); dev.pushErrorScope('validation');
+        let fail = null;
+        try { await gpuAiPictureJob(eng, model, rgba, w, h, size, fast, kind); } catch (err) { fail = err; }
+        const v = await dev.popErrorScope().catch(() => null), o = await dev.popErrorScope().catch(() => null);
+        eng.release();
+        if (fail) throw fail;
+        if (v || o) {
+          const msg = (v ? 'validation: ' : 'out of memory: ') + (v || o).message;
+          const last = gpuDiagLog[gpuDiagLog.length - 1];
+          if (last && last.kind === kind) last.result = 'GPU error — ' + msg;
+          throw new Error(msg);
+        }
+      });
+      lines.push('  ' + kind + ': ok');
+    } catch (err) { lines.push('  ' + kind + ': FAILED — ' + (err.message || err)); }
+    gpuDiagTestLines = lines;
+    await gpuDiagRefresh();
+  }
+}
+
+function openGpuDiag() {
+  gpuDiagDialog.classList.add('open');
+  gpuDiagPre.textContent = 'Collecting…';
+  gpuDiagRefresh();
+  document.getElementById('gpu-diag-close').focus();
+}
+function closeGpuDiag() { gpuDiagDialog.classList.remove('open'); }
+document.getElementById('gpu-diag-btn').addEventListener('click', openGpuDiag);
+document.getElementById('gpu-diag-close').addEventListener('click', closeGpuDiag);
+gpuDiagDialog.addEventListener('click', e => { if (e.target === gpuDiagDialog) closeGpuDiag(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && gpuDiagDialog.classList.contains('open')) closeGpuDiag(); });
+document.getElementById('gpu-diag-test').addEventListener('click', async e => {
+  const btn = e.currentTarget;
+  btn.disabled = true; btn.textContent = '⏳ Testing…';
+  try { await gpuDiagTest(); }
+  catch (err) { gpuDiagTestLines = ['Test failed: ' + (err.message || err)]; await gpuDiagRefresh(); }
+  finally { btn.disabled = false; btn.textContent = '▶ Run test'; }
+});
+document.getElementById('gpu-diag-copy').addEventListener('click', async () => {
+  const text = gpuDiagPre.textContent;
+  try { await navigator.clipboard.writeText(text); showToast('GPU report copied'); }
+  catch {                                       // (no clipboard access: select it for a manual copy)
+    const r = document.createRange(); r.selectNodeContents(gpuDiagPre);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    showToast('Select all and copy the report');
+  }
+});
 document.getElementById('st-remove-enhanced').addEventListener('click', async () => {
   const copies = ALL_IMAGES.filter(img => img.upscale);
   if (!confirm('Remove all ' + copies.length + ' enhanced copies? The originals are kept.')) return;
