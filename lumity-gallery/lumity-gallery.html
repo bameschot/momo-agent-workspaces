@@ -582,6 +582,27 @@
     #video-clip { width: 100%; border-radius: 6px; border: 1px solid var(--border); background: #000; }
     #video-clip[hidden] { display: none; }
     #video-status { color: var(--text-muted); font-size: 0.75rem; min-height: 1em; }
+    #video-card > #video-queue-fs { border-top: none; padding-top: 0.4rem; }
+    #video-queue { display: flex; flex-direction: column; gap: 0.35rem; max-height: 280px; overflow-y: auto; }
+    #video-queue:empty::before { content: 'No videos yet — add one or more MP4 files.'; color: var(--text-muted); font-size: 0.8rem; }
+    .vq-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 0.2rem 0.6rem;
+      padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); cursor: pointer; font-size: 0.82rem; color: var(--text); }
+    .vq-row.sel { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2) inset; }
+    .vq-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .vq-name small, .vq-detail { color: var(--text-muted); font-size: 0.72rem; font-weight: normal; }
+    .vq-detail { grid-column: 1 / -1; font-variant-numeric: tabular-nums; }
+    .vq-bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--bg); overflow: hidden; }
+    .vq-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+    .vq-state { font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; }
+    .vq-state.converting { color: var(--accent2); border-color: var(--accent2); }
+    .vq-state.done { color: #7bd88f; border-color: #7bd88f; }
+    .vq-state.failed { color: #ff8a80; border-color: #ff8a80; }
+    .vq-state.needs-file { color: #ffcc80; border-color: #ffcc80; }
+    .vq-actions { display: flex; gap: 0.3rem; }
+    .vq-actions button, .vq-tools button { background: var(--surface); border: 1px solid var(--border); color: var(--accent2); border-radius: 6px; padding: 0.15rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
+    .vq-actions button:disabled, .vq-tools button:disabled { opacity: 0.45; cursor: default; }
+    .vq-tools { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+    #video-stop[hidden], #video-cancel[hidden], #video-go[hidden], #video-clip-btn[hidden] { display: none; }
     .dialog-actions button:disabled { opacity: 0.45; cursor: default; }
 
     /* ── TOAST ── */
@@ -723,7 +744,7 @@
   <span class="count-badge" id="count-badge">— images</span>
   <button id="enhance-all-btn" class="tb-btn accent" title="Enhance all original pictures in view"><span class="ic">✨</span><span class="lbl">Enhance all</span></button>
   <button id="video-btn" class="tb-btn" title="Upscale an MP4 video to full HD"><span class="ic">🎬</span><span class="lbl">Video</span></button>
-  <input type="file" id="video-file-input" accept="video/mp4,.mp4,.m4v" hidden />
+  <input type="file" id="video-file-input" accept="video/mp4,.mp4,.m4v" multiple hidden />
   <nav class="tb-menus" aria-label="Menus">
     <div class="menu">
       <button type="button" class="tb-btn menu-btn" aria-haspopup="true" aria-expanded="false" title="Open pictures"><span class="ic">📂</span><span class="lbl">Open</span></button>
@@ -989,7 +1010,16 @@
 <!-- Video upscale -->
 <div id="video-dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="video-title">
   <div class="dialog-card" id="video-card">
-    <h2 id="video-title">🎬 Upscale video</h2>
+    <h2 id="video-title">🎬 Upscale videos</h2>
+    <fieldset id="video-queue-fs">
+      <legend>Queue</legend>
+      <div id="video-queue"></div>
+      <div class="vq-tools">
+        <button type="button" id="video-add">＋ Add videos…</button>
+        <button type="button" id="video-clear">Clear finished</button>
+      </div>
+      <p class="dialog-sub" id="video-qsum"></p>
+    </fieldset>
     <p class="dialog-sub" id="video-info"></p>
     <fieldset>
       <legend>Engine</legend>
@@ -1068,7 +1098,9 @@
       <div class="dialog-actions">
         <button type="button" id="video-close">Close</button>
         <button type="button" id="video-clip-btn">▶ Preview 5 s</button>
-        <button type="button" class="primary" id="video-go">🎬 Convert</button>
+        <button type="button" id="video-stop" hidden>⏸ Stop after this video</button>
+        <button type="button" id="video-cancel" hidden>✕ Cancel</button>
+        <button type="button" class="primary" id="video-go">🎬 Convert all</button>
       </div>
     </div>
   </div>
@@ -8212,7 +8244,8 @@ const videoDialog = document.getElementById('video-dialog');
 const vEls = Object.fromEntries(['info', 'engines', 'denoise-row', 'denoise', 'denoise-out', 'models-hint', 'dl', 'out', 'time', 'time-out',
   'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close', 'rates', 'fit-label', 'box-label',
   'presets', 'preset-none', 'tuning', 'flatness', 'flatness-out', 'lines', 'lines-out', 'extras', 'x-lines', 'x-fills', 'x-edges', 'x-aa',
-  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text']
+  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text',
+  'queue', 'add', 'clear', 'qsum', 'stop', 'cancel']
   .map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('video-' + k)]));
 const vid = { file: null, info: null, frame: null, after: null, afterKey: '', ms: {}, busy: false, dirty: false, timer: null, job: null, clipUrl: null };
 
@@ -8339,8 +8372,8 @@ function videoTexts() {
   vEls.summary.textContent = !size ? '' : !st.engine ? 'Download an AI model above to preview and convert.'
     : ms ? 'About ' + Math.round(ms) + ' ms per frame here, so the whole video takes ' + formatEta(v.samples.length * (ms + 10) / 1000) + '.'
     : 'The time per frame is measured with the frame preview.';
-  const ok = !!size && !!st.engine && !vid.job;
-  vEls.clipBtn.disabled = !ok; vEls.go.disabled = !ok;
+  vEls.clipBtn.disabled = !size || !st.engine || !!vid.job || vq.running;
+  queueRender();
 }
 function videoUpdate() { videoTexts(); videoSchedulePreview(200); }
 function videoSchedulePreview(delay) { clearTimeout(vid.timer); vid.timer = setTimeout(videoRenderPreview, delay); }
@@ -8364,7 +8397,7 @@ function videoDraw() {
 
 // One render at a time; a change while rendering re-runs once it finishes.
 async function videoRenderPreview() {
-  if (!vid.info || vid.job || !videoDialog.classList.contains('open')) return;
+  if (!vid.info || vid.job || vq.running || !videoDialog.classList.contains('open')) return;
   if (vid.busy) { vid.dirty = true; return; }
   vid.busy = true;
   const file = vid.file, gone = () => vid.file !== file || !videoDialog.classList.contains('open');
@@ -8406,24 +8439,35 @@ async function videoRenderPreview() {
   }
 }
 
-async function openVideo(file) {
-  showProgress('Reading video…', 300);
-  let info;
-  try {
-    info = await mp4Demux(file);
-    const support = await VideoDecoder.isConfigSupported(info.video.config).catch(() => ({ supported: false }));
-    if (!support.supported) throw new Error('This browser cannot decode this video (' + info.video.codec + ').');
-  } catch (err) {
-    hideProgress(); console.error('Opening video failed', err); showToast(err.message || String(err));
+// The selected queue item drives the frame preview and the 5 s clip.
+async function selectVideo(item) {
+  if (!item) return;
+  vq.sel = item.id;
+  queueRender();
+  if (!item.file && item.handle) {
+    try {
+      if ((await item.handle.queryPermission({ mode: 'read' })) !== 'granted') await item.handle.requestPermission({ mode: 'read' });
+      item.file = await item.handle.getFile();
+      if (item.state === 'needs-file') { item.state = 'waiting'; vqSave(item); queueRender(); }
+    } catch { showToast('Allow access to ' + item.name + ' to preview it.'); return; }
+  }
+  if (!item.file || item.state === 'failed' && !item.demux) {
+    Object.assign(vid, { file: null, info: null, frame: null, after: null, afterKey: '' });
+    vEls.info.textContent = item.file ? '' : 'Add ' + item.name + ' again to preview it.';
     return;
   }
-  hideProgress();
-  Object.assign(vid, { file, info, frame: null, after: null, afterKey: '', ms: {} });
+  let info = item.demux;
+  if (!info) {
+    try { info = item.demux = await mp4Demux(item.file); }
+    catch (err) { showToast(err.message || String(err)); return; }
+  }
+  if (vq.sel !== item.id) return;
+  Object.assign(vid, { file: item.file, info, frame: null, after: null, afterKey: '', ms: {} });
   vid.audioBytes = info.audio ? info.audio.samples.reduce((n, s) => n + s.size, 0) : 0;
   videoClearClip();
   const v = info.video;
-  vEls.info.textContent = [file.name, Math.round(v.width) + '×' + Math.round(v.height), v.fps.toFixed(2).replace(/\.?0+$/, '') + ' fps',
-    videoClock(info.duration), v.format.startsWith('avc') ? 'H.264' : v.format === 'av01' ? 'AV1' : 'HEVC', info.audio ? 'audio copied as-is' : 'no audio', formatBytes(file.size)].join(' · ');
+  vEls.info.textContent = [item.name, Math.round(v.width) + '×' + Math.round(v.height), v.fps.toFixed(2).replace(/\.?0+$/, '') + ' fps',
+    videoClock(info.duration), v.format.startsWith('avc') ? 'H.264' : v.format === 'av01' ? 'AV1' : 'HEVC', info.audio ? 'audio copied as-is' : 'no audio', formatBytes(item.file.size)].join(' · ');
   vEls.origText.textContent = 'Original (' + Math.round(v.height) + 'p)';
   vEls.time.max = Math.max(0, info.duration - 1 / v.fps);
   vEls.time.value = info.duration * 0.1;                         // past the usual black intro frames
@@ -8431,10 +8475,16 @@ async function openVideo(file) {
   vEls.canvas.width = Math.round(v.width); vEls.canvas.height = Math.round(v.height);
   vEls.canvas.getContext('2d').clearRect(0, 0, vEls.canvas.width, vEls.canvas.height);
   vEls.status.textContent = '';
+  videoUpdate();
+}
+
+async function openVideoDialog() {
   videoDialog.classList.add('open');
   await aiRefreshUi();
   videoRefreshModels();
+  if (vq.restoredSettings) { videoApplySettings(vq.restoredSettings); vq.restoredSettings = null; }
   videoUpdate();
+  queueRender();
 }
 
 function videoClearClip() {
@@ -8442,62 +8492,35 @@ function videoClearClip() {
   if (vid.clipUrl) { URL.revokeObjectURL(vid.clipUrl); vid.clipUrl = null; }
 }
 
+// Closing doesn't stop a running queue; the 🎬 button shows its progress.
 function closeVideo() {
   if (vid.job) return;
   videoDialog.classList.remove('open');
   clearTimeout(vid.timer);
   videoClearClip();
-  Object.assign(vid, { file: null, info: null, frame: null, after: null, afterKey: '' });
+  Object.assign(vid, { frame: null, after: null, afterKey: '' });
 }
 
-// kind 'clip': 5 s from the preview time, played in the dialog.
-// kind 'full': the whole video, streamed to a file where the browser allows.
-async function videoRun(kind) {
-  const st = videoSettings(), size = videoSize();
-  if (!st.engine || !size || vid.job) return;
-  const clip = kind === 'clip';
-  const start = clip ? Math.round(+vEls.time.value * 1e6) : 0;
-  const range = { start, end: clip ? start + 5e6 : Infinity };
-  const name = stripExt(vid.file.name) + (st.res === 'orig' ? '.cleaned-' + size.ih + 'p.mp4' : '.upscaled-' + st.res + 'p.mp4');
-  let handle = null;
-  if (!clip) {
-    if (window.showSaveFilePicker) {
-      try { handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4'] } }] }); }
-      catch (err) { if (err.name === 'AbortError') return; console.warn('Save picker unavailable', err); }
-    }
-    const est = st.bitrate / 8 * vid.info.duration + vid.audioBytes;
-    if (!handle && est > 1e9 && !confirm('This browser can only save the video once it is finished, so the whole file (about ' +
-      formatBytes(est) + ') is kept in memory until then. Continue?')) return;
-  }
-  let cancelled = false, sink = null;
+// 5 s from the preview time of the selected video, played in the dialog.
+async function videoRun() {
+  const st = videoSettings(), size = vid.info && videoSize();
+  if (!st.engine || !size || vid.job || vq.running) return;
+  const start = Math.round(+vEls.time.value * 1e6), range = { start, end: start + 5e6 };
+  let cancelled = false;
+  const sink = blobSink();
   vid.job = { cancel() { cancelled = true; } };
   videoTexts();
-  showProgress(clip ? 'Rendering a 5 s preview…' : 'Upscaling video…', 0, () => {
-    cancelled = true; setProgress('Cancelling…', null); setProgressEta(null);
-  });
+  showProgress('Rendering a 5 s preview…', 0, () => { cancelled = true; setProgress('Cancelling…', null); setProgressEta(null); });
   setProgress('Starting…', null);
-  const t0 = performance.now();
   try {
-    sink = handle ? await fileSink(handle) : blobSink();
-    const result = await videoUpscale(vid, st, range, sink, (done, total) => {
-      if (cancelled) return;
-      setProgress('Frame ' + done + ' of ' + total, done, total);
-      const fps = done / ((performance.now() - t0) / 1000);
-      if (done >= 3) setProgressEta(formatEta((total - done) / fps) + ' left · ' + fps.toFixed(1) + ' frames/s');
-    }, () => cancelled);
-    if (clip) {
-      videoClearClip();
-      vid.clipUrl = URL.createObjectURL(result);
-      vEls.clip.src = vid.clipUrl; vEls.clip.hidden = false;
-      vEls.clip.play().catch(() => {});
-    } else {
-      if (result) downloadBlob(result, name);
-      showToast('🎬 Saved ' + name + (result ? ' · ' + formatBytes(result.size) : ''));
-    }
+    const result = await videoUpscale(vid, st, range, sink, (done, total) => { if (!cancelled) setProgress('Frame ' + done + ' of ' + total, done, total); }, () => cancelled);
+    videoClearClip();
+    vid.clipUrl = URL.createObjectURL(result);
+    vEls.clip.src = vid.clipUrl; vEls.clip.hidden = false;
+    vEls.clip.play().catch(() => {});
   } catch (err) {
-    if (sink) await sink.abort();
     if (cancelled || err instanceof CancelledError) showToast('Cancelled');
-    else { console.error('Video upscale failed', err); showToast('Video failed: ' + (err.message || err)); }
+    else { console.error('Video preview failed', err); showToast('Preview failed: ' + (err.message || err)); }
   } finally {
     vid.job = null;
     hideProgress();
@@ -8505,18 +8528,321 @@ async function videoRun(kind) {
   }
 }
 
-document.getElementById('video-btn').addEventListener('click', () => {
+// Puts saved queue settings back into the dialog controls.
+function videoApplySettings(st) {
+  const set = (name, value) => { const el = videoDialog.querySelector('input[name=' + name + '][value="' + value + '"]'); if (el && !el.disabled) el.checked = true; };
+  set('vengine', st.engine); set('vpreset', st.preset); set('von', st.cleanupOn); set('vres', st.res); set('vmode', st.mode);
+  vEls.denoise.value = st.denoise; vEls.flatness.value = st.flatness; vEls.lines.value = st.lines;
+  const x = st.extras || {};
+  vEls.xLines.checked = !!x.lines; vEls.xFills.checked = !!x.fills; vEls.xEdges.checked = !!x.edges; vEls.xAa.checked = !!x.aa;
+  if (x.aa) vEls.aa.value = x.aa;
+  videoRefreshRes();
+  set('vbitrate', st.bitrate / 1e6);
+}
+
+// ── VIDEO: QUEUE ──────────────────────────────────────────────────────────────
+// Several videos converted one after another with the same settings, each
+// with its state: waiting → converting → done / skipped / failed, or
+// needs-file (restored without access to the file). Results stream into one
+// output folder (Chrome/Edge: picked once, remembered) or are downloaded.
+// The queue is kept in its own IndexedDB database with the files' handles
+// where the browser gives them, so it can continue after a reload; a file
+// that was being converted then starts again from the beginning.
+const vq = { items: [], sel: null, running: false, stopAfter: false, cancelled: false, job: null, dir: null, settings: null, restored: false, restoredSettings: null, lock: null };
+const VQ_DB = 'lumity-video-queue';
+function vqDb() {
+  return vqDb.p || (vqDb.p = new Promise((resolve, reject) => {
+    const r = indexedDB.open(VQ_DB, 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore('items', { keyPath: 'id' }); r.result.createObjectStore('meta'); };
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  }));
+}
+async function vqTx(store, mode, fn) {
+  try {
+    const db = await vqDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(store, mode); let result;
+      const req = fn(tx.objectStore(store));
+      if (req) req.onsuccess = () => { result = req.result; };
+      tx.oncomplete = () => resolve(result);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) { console.warn('Video queue storage', err); return null; }
+}
+const VQ_FIELDS = ['id', 'order', 'name', 'size', 'lastModified', 'handle', 'info', 'state', 'done', 'total', 'outName', 'outBytes', 'note', 'error', 'elapsedMs', 'finishedAt'];
+const vqSave = it => vqTx('items', 'readwrite', st => st.put(Object.fromEntries(VQ_FIELDS.map(k => [k, it[k] ?? null]))));
+const vqSaveMeta = () => vqTx('meta', 'readwrite', st => st.put({ settings: vq.settings, dir: vq.dir }, 'queue'));
+const vqKey = x => x.name + '|' + x.size + '|' + x.lastModified;
+
+async function queueLoad() {
+  const [items, meta] = await Promise.all([vqTx('items', 'readonly', st => st.getAll()), vqTx('meta', 'readonly', st => st.get('queue'))]);
+  if (!items || !items.length) return;
+  vq.items = items.sort((a, b) => a.order - b.order);
+  for (const it of vq.items) {
+    if (it.state === 'converting') { it.state = 'waiting'; it.done = 0; }        // interrupted: starts again
+    if (it.state === 'waiting' && !it.handle) it.state = 'needs-file';
+  }
+  vq.restored = vq.items.some(it => it.state === 'waiting' || it.state === 'needs-file');
+  if (meta) { vq.settings = meta.settings; vq.dir = meta.dir || null; vq.restoredSettings = meta.settings; }
+  queueRender();
+}
+
+// files: [{ file, handle? }]. Checks each video once; unsupported ones are
+// listed as failed with the reason. Re-added files reconnect to their item.
+async function queueAdd(entries) {
+  let first = null;
+  for (const { file, handle } of entries) {
+    const known = vq.items.find(it => vqKey(it) === vqKey(file));
+    if (known) {
+      if (!known.file) { known.file = file; known.handle = handle || known.handle; if (known.state === 'needs-file') known.state = 'waiting'; vqSave(known); }
+      first = first || known;
+      continue;
+    }
+    const it = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), order: Date.now() + vq.items.length,
+      name: file.name, size: file.size, lastModified: file.lastModified, handle: handle || null, file, state: 'waiting', done: 0, total: 0 };
+    try {
+      const info = it.demux = await mp4Demux(file), v = info.video;
+      const support = await VideoDecoder.isConfigSupported(v.config).catch(() => ({ supported: false }));
+      if (!support.supported) throw new Error('This browser cannot decode this video (' + v.codec + ').');
+      it.info = { w: Math.round(v.width), h: Math.round(v.height), fps: v.fps, duration: info.duration, frames: v.samples.length,
+        codec: v.format.startsWith('avc') ? 'H.264' : v.format === 'av01' ? 'AV1' : 'HEVC' };
+      it.total = v.samples.length;
+    } catch (err) { it.state = 'failed'; it.error = err.message || String(err); }
+    vq.items.push(it);
+    vqSave(it);
+    first = first || it;
+  }
+  queueRender();
+  if (first && (!vid.info || !vq.items.some(it => it.id === vq.sel))) selectVideo(first);
+}
+
+function queueOutName(name, st, size) {
+  return stripExt(name) + (st.res === 'orig' ? '.cleaned-' + size.ih + 'p.mp4' : '.upscaled-' + st.res + 'p.mp4');
+}
+
+// Remaining work in seconds: frames left at the current (or measured) rate.
+function queueEta() {
+  const cur = vq.items.find(it => it.state === 'converting');
+  let fps = cur && cur.fps;
+  if (!fps && vid.info) {
+    const st = videoSettings(), size = videoSize(), ms = size && vid.ms[videoChainKey(st, size)];
+    if (ms) fps = 1000 / (ms + 10);
+  }
+  if (!fps) return null;
+  const frames = vq.items.reduce((n, it) => n + (it.state === 'waiting' || it.state === 'needs-file' ? it.total || 0 : it.state === 'converting' ? (it.total || 0) - (it.done || 0) : 0), 0);
+  return frames / fps;
+}
+
+const VQ_LABEL = { waiting: 'Waiting', converting: 'Converting', done: 'Done', skipped: 'Skipped', failed: 'Failed', 'needs-file': 'Needs file' };
+function queueRender() {
+  const box = vEls.queue;
+  const rows = new Map([...box.children].map(r => [r.dataset.id, r]));
+  vq.items.forEach((it, k) => {
+    let row = rows.get(it.id);
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'vq-row'; row.dataset.id = it.id;
+      row.innerHTML = '<div class="vq-name"><b></b> <small></small></div><span class="vq-state"></span>' +
+        '<span class="vq-actions"><button type="button" data-act="retry" title="Convert again">↻</button><button type="button" data-act="remove" title="Remove from the queue">✕</button></span>' +
+        '<div class="vq-bar"><i></i></div><div class="vq-detail"></div>';
+      row.querySelector('b').textContent = it.name;
+    }
+    if (box.children[k] !== row) box.insertBefore(row, box.children[k] || null);
+    rows.delete(it.id);
+    const I = it.info;
+    row.querySelector('small').textContent = I ? I.w + '×' + I.h + ' · ' + videoClock(I.duration) + ' · ' + I.codec : '';
+    const chip = row.querySelector('.vq-state');
+    chip.className = 'vq-state ' + it.state; chip.textContent = VQ_LABEL[it.state] || it.state;
+    row.classList.toggle('sel', it.id === vq.sel);
+    const pct = it.state === 'done' ? 100 : it.total ? Math.min(100, (it.done || 0) / it.total * 100) : 0;
+    row.querySelector('.vq-bar i').style.width = pct + '%';
+    row.querySelector('.vq-detail').textContent =
+      it.state === 'converting' ? 'Frame ' + (it.done || 0) + ' of ' + it.total + (it.fps ? ' · ' + it.fps.toFixed(1) + ' frames/s · ' + formatEta((it.total - it.done) / it.fps) + ' left' : ' · starting…')
+      : it.state === 'done' ? '✓ ' + (it.outName || '') + (it.outBytes ? ' · ' + formatBytes(it.outBytes) : '') + (it.elapsedMs ? ' · took ' + formatEta(it.elapsedMs / 1000).replace('about ', '') : '')
+      : it.state === 'skipped' ? 'Skipped: ' + (it.note || '')
+      : it.state === 'failed' ? it.error || 'Failed'
+      : it.state === 'needs-file' ? (it.handle ? 'Click to allow access to this file again.' : 'Add this file again to continue it.')
+      : 'Waiting';
+    row.querySelector('[data-act=retry]').hidden = it.state !== 'failed';
+    row.querySelector('[data-act=remove]').disabled = it.state === 'converting';
+  });
+  rows.forEach(r => r.remove());
+  // Summary, buttons and the 🎬 button's progress
+  const count = st => vq.items.filter(it => it.state === st).length;
+  const waiting = count('waiting') + count('needs-file'), done = count('done'), conv = vq.items.find(it => it.state === 'converting');
+  const eta = waiting || conv ? queueEta() : null;
+  vEls.qsum.textContent = !vq.items.length ? '' : [waiting && waiting + ' waiting', conv && '1 converting', done && done + ' done',
+    count('skipped') && count('skipped') + ' skipped', count('failed') && count('failed') + ' failed'].filter(Boolean).join(' · ') +
+    (eta ? ' · ' + formatEta(eta) + ' left' : '') +
+    (vq.dir ? ' · saving to “' + vq.dir.name + '”' : window.showDirectoryPicker ? '' : ' · finished videos are downloaded');
+  vEls.go.hidden = vq.running; vEls.stop.hidden = !vq.running; vEls.cancel.hidden = !vq.running;
+  vEls.go.textContent = (vq.restored ? '▶ Continue' : '🎬 Convert all') + (waiting ? ' (' + waiting + ')' : '');
+  vEls.go.disabled = !waiting || !!vid.job;
+  vEls.stop.disabled = vq.stopAfter;
+  vEls.clear.disabled = vq.running || !vq.items.some(it => ['done', 'skipped', 'failed'].includes(it.state));
+  const lbl = document.querySelector('#video-btn .lbl');
+  if (lbl) {
+    const total = vq.items.filter(it => it.state !== 'failed' && it.state !== 'skipped').length;
+    lbl.textContent = vq.running && conv ? 'Video ' + (done + 1) + '/' + total + ' · ' + Math.floor((conv.done || 0) / (conv.total || 1) * 100) + '%' : 'Video';
+  }
+  // Settings are fixed while the queue runs.
+  for (const fs of videoDialog.querySelectorAll('#video-card > fieldset:not(#video-queue-fs)')) fs.disabled = vq.running;
+}
+
+async function queueWakeLock(on) {
+  try {
+    if (on && navigator.wakeLock && document.visibilityState === 'visible' && !vq.lock) vq.lock = await navigator.wakeLock.request('screen');
+    if (!on && vq.lock) { await vq.lock.release(); vq.lock = null; }
+  } catch { /* not allowed now: the Mac may sleep */ }
+}
+document.addEventListener('visibilitychange', () => { if (vq.running) { vq.lock = null; queueWakeLock(true); } });
+
+// Runs the waiting items with the dialog's settings. opts.dir: an output
+// folder to use without asking (tests); otherwise the remembered folder, a
+// folder picker (Chrome/Edge), or downloads.
+async function queueRun(opts = {}) {
+  if (vq.running) return;
+  const st = videoSettings();
+  let dir = opts.dir || vq.dir;
+  if (!opts.dir && window.showDirectoryPicker) {
+    try {
+      if (dir && (await dir.queryPermission({ mode: 'readwrite' })) !== 'granted' && (await dir.requestPermission({ mode: 'readwrite' })) !== 'granted') dir = null;
+    } catch { dir = null; }
+    if (!dir) {
+      try { dir = await window.showDirectoryPicker({ id: 'lumity-video-out', mode: 'readwrite' }); }
+      catch (err) { if (err.name === 'AbortError') return; console.warn('Folder picker unavailable', err); dir = null; }
+    }
+  }
+  // Files restored from an earlier visit need their access allowed again.
+  for (const it of vq.items) {
+    if ((it.state !== 'waiting' && it.state !== 'needs-file') || it.file) continue;
+    if (!it.handle) { it.state = 'needs-file'; continue; }
+    try {
+      if ((await it.handle.queryPermission({ mode: 'read' })) !== 'granted' && (await it.handle.requestPermission({ mode: 'read' })) !== 'granted') throw 0;
+      it.file = await it.handle.getFile();
+      it.state = 'waiting';
+    } catch { it.state = 'needs-file'; }
+  }
+  if (!dir) {
+    const big = vq.items.filter(it => it.state === 'waiting').map(it => st.bitrate / 8 * ((it.info && it.info.duration) || 0)).filter(b => b > 1e9);
+    if (big.length && !confirm('This browser can only save each video once it is finished, so a whole file (up to about ' +
+      formatBytes(Math.max(...big)) + ') is kept in memory at a time. Continue?')) return;
+  }
+  Object.assign(vq, { running: true, stopAfter: false, cancelled: false, restored: false, settings: st, dir });
+  vqSaveMeta();
+  queueWakeLock(true);
+  queueRender();
+  let finished = 0;
+  try {
+    for (;;) {
+      const it = vq.items.find(x => x.state === 'waiting' && x.file);
+      if (!it || vq.stopAfter || vq.cancelled) break;
+      await queueOne(it, st, dir);
+      if (it.state === 'done') finished++;
+    }
+  } finally {
+    vq.running = false; vq.job = null;
+    queueWakeLock(false);
+    queueRender(); videoTexts();
+    const left = vq.items.filter(it => it.state === 'waiting' || it.state === 'needs-file').length;
+    showToast('🎬 ' + (vq.cancelled ? 'Cancelled' : vq.stopAfter ? 'Stopped' : 'Queue finished') + ' · ' + finished + ' converted' + (left ? ' · ' + left + ' left' : ''));
+  }
+}
+
+async function queueOne(it, st, dir) {
+  let info = it.demux;
+  try { if (!info) info = it.demux = await mp4Demux(it.file); }
+  catch (err) { Object.assign(it, { state: 'failed', error: err.message || String(err) }); vqSave(it); queueRender(); return; }
+  const v = info.video, size = videoTargetSize(v.width, v.height, st.mode, st.res);
+  if (!size) { Object.assign(it, { state: 'skipped', note: 'already ' + st.res + 'p or larger' }); vqSave(it); queueRender(); return; }
+  const name = it.outName = queueOutName(it.name, st, size);
+  if (dir) {
+    try {
+      const existing = await (await dir.getFileHandle(name)).getFile();
+      if (existing.size > 0) { Object.assign(it, { state: 'skipped', note: '“' + name + '” is already in the folder', outBytes: existing.size }); vqSave(it); queueRender(); return; }
+    } catch { /* not there yet */ }
+  }
+  Object.assign(it, { state: 'converting', done: 0, total: v.samples.length, fps: 0, error: null, note: null });
+  vqSave(it); queueRender();
+  let sink = null, fh = null, cancelled = false, lastSave = 0, lastDraw = 0;
+  vq.job = { cancel() { cancelled = true; } };
+  const t0 = performance.now();
+  try {
+    if (dir) { fh = await dir.getFileHandle(name, { create: true }); sink = await fileSink(fh); }
+    else sink = blobSink();
+    const result = await videoUpscale({ file: it.file, info }, st, { start: 0, end: Infinity }, sink, (done, total) => {
+      const now = performance.now();
+      it.done = done; it.total = total; it.fps = done / ((now - t0) / 1000);
+      if (now - lastDraw > 500) { lastDraw = now; queueRender(); }
+      if (now - lastSave > 5000) { lastSave = now; vqSave(it); }
+    }, () => cancelled || vq.cancelled);
+    if (!dir && result) downloadBlob(result, name);
+    Object.assign(it, { state: 'done', outBytes: dir ? (await fh.getFile()).size : result.size, elapsedMs: performance.now() - t0, finishedAt: Date.now() });
+  } catch (err) {
+    if (sink) await sink.abort();
+    // getFileHandle(create) leaves an empty file; don't let it count as done later.
+    if (fh) { try { if ((await fh.getFile()).size === 0) await dir.removeEntry(name); } catch { /* gone already */ } }
+    if (cancelled || vq.cancelled || err instanceof CancelledError) Object.assign(it, { state: 'waiting', done: 0 });
+    else { console.error('Video ' + it.name + ' failed', err); Object.assign(it, { state: 'failed', error: err.message || String(err) }); }
+  } finally {
+    vq.job = null;
+    vqSave(it); queueRender();
+  }
+}
+
+async function queuePick() {
+  if (window.showOpenFilePicker) {
+    try {
+      const handles = await window.showOpenFilePicker({ multiple: true, id: 'lumity-video-in', types: [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4', '.m4v'] } }] });
+      const entries = [];
+      for (const handle of handles) entries.push({ file: await handle.getFile(), handle });
+      return entries;
+    } catch (err) { if (err.name === 'AbortError') return []; console.warn('File picker unavailable', err); }
+  }
+  document.getElementById('video-file-input').click();          // results arrive via its change event
+  return null;
+}
+
+document.getElementById('video-btn').addEventListener('click', async () => {
   if (typeof VideoDecoder === 'undefined' || typeof VideoEncoder === 'undefined' || typeof OffscreenCanvas === 'undefined') {
     showToast('Video upscaling needs a browser with WebCodecs (Chrome, Edge or Safari 17+).');
     return;
   }
-  document.getElementById('video-file-input').click();
+  if (vq.items.length) { openVideoDialog(); return; }
+  const entries = await queuePick();
+  if (entries && entries.length) { await openVideoDialog(); queueAdd(entries); }
 });
-document.getElementById('video-file-input').addEventListener('change', e => {
-  const file = e.target.files[0];
+document.getElementById('video-file-input').addEventListener('change', async e => {
+  const files = [...e.target.files];
   e.target.value = '';
-  if (file) openVideo(file);
+  if (!files.length) return;
+  if (!videoDialog.classList.contains('open')) await openVideoDialog();
+  queueAdd(files.map(file => ({ file })));
 });
+vEls.add.addEventListener('click', async () => { const entries = await queuePick(); if (entries && entries.length) queueAdd(entries); });
+vEls.clear.addEventListener('click', () => {
+  for (const it of vq.items.filter(x => ['done', 'skipped', 'failed'].includes(x.state))) vqTx('items', 'readwrite', st => st.delete(it.id));
+  vq.items = vq.items.filter(x => !['done', 'skipped', 'failed'].includes(x.state));
+  queueRender();
+});
+vEls.queue.addEventListener('click', e => {
+  const row = e.target.closest('.vq-row'), it = row && vq.items.find(x => x.id === row.dataset.id);
+  if (!it) return;
+  const act = e.target.closest('button') && e.target.closest('button').dataset.act;
+  if (act === 'remove') {
+    vq.items = vq.items.filter(x => x !== it);
+    vqTx('items', 'readwrite', st => st.delete(it.id));
+    if (vq.sel === it.id) { vq.sel = null; Object.assign(vid, { file: null, info: null, frame: null, after: null }); vEls.info.textContent = ''; }
+    queueRender();
+  } else if (act === 'retry') {
+    Object.assign(it, { state: it.file || it.handle ? 'waiting' : 'needs-file', done: 0, error: null, note: null });
+    vqSave(it); queueRender();
+  } else selectVideo(it);
+});
+vEls.go.addEventListener('click', () => queueRun());
+vEls.stop.addEventListener('click', () => { vq.stopAfter = true; queueRender(); });
+vEls.cancel.addEventListener('click', () => { vq.cancelled = true; if (vq.job) vq.job.cancel(); queueRender(); });
 vEls.engines.addEventListener('change', videoUpdate);
 vEls.presets.addEventListener('change', videoUpdate);
 vEls.on.addEventListener('change', videoUpdate);
@@ -8530,11 +8856,12 @@ videoRefreshRes();
 vEls.time.addEventListener('input', () => { vEls.timeOut.textContent = videoClock(+vEls.time.value); videoSchedulePreview(350); });
 vEls.split.addEventListener('input', () => { vEls.splitOut.textContent = vEls.split.value + '%'; videoDraw(); });
 vEls.zoom.addEventListener('change', () => vEls.wrap.classList.toggle('zoom', vEls.zoom.checked));
-vEls.clipBtn.addEventListener('click', () => videoRun('clip'));
-vEls.go.addEventListener('click', () => videoRun('full'));
+vEls.clipBtn.addEventListener('click', () => videoRun());
 vEls.close.addEventListener('click', closeVideo);
 videoDialog.addEventListener('click', e => { if (e.target === videoDialog) closeVideo(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && videoDialog.classList.contains('open')) closeVideo(); });
+queueLoad();
+window.addEventListener('beforeunload', e => { if (vq.running) { e.preventDefault(); e.returnValue = ''; } });
 
 // ── FAVOURITES ────────────────────────────────────────────────────────────────
 // A favourite is a flag on the picture: stored with it in IndexedDB and in
