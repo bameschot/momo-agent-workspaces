@@ -1031,6 +1031,12 @@
       <legend>Engine</legend>
       <div class="chips even" id="video-engines"></div>
       <div class="slider-row" id="video-denoise-row" hidden><span>Denoise</span><input type="range" id="video-denoise" min="0" max="100" value="50"><output id="video-denoise-out">50</output></div>
+      <div class="opt-row" id="video-aion-row" hidden><span>AI runs on</span>
+        <div class="chips" id="video-aion">
+          <label title="The WebGPU engine: several times faster; with a 🚀 WebGPU cleanup the frame never leaves the graphics card"><input type="radio" name="vaion" value="webgpu" checked><span>🚀 WebGPU</span></label>
+          <label title="The original WebGL engine"><input type="radio" name="vaion" value="webgl"><span>WebGL</span></label>
+        </div>
+      </div>
       <p class="dialog-sub" id="video-models-hint"></p>
       <div id="video-dl"></div>
     </fieldset>
@@ -8301,7 +8307,7 @@ async function videoGpuFor(engine, denoise) {
 // is already in gpu.eng.canvas, ready for the encoder.
 async function videoChain(st, w, h, size, direct) {
   const ai = st.engine !== 'builtin';
-  const gpu = ai ? await videoGpuFor(st.engine, st.denoise) : null;
+  const gpu = ai && st.aiOn !== 'webgl' ? await videoGpuFor(st.engine, st.denoise) : null;
   const cleanup = !ai || st.preset !== 'none' ? {
     width: size.iw, height: size.ih, preset: st.preset, tuning: engineTuning(st), extras: engineExtras(st),
     jpegSource: false, flattenWhite: false, ...(ai ? { lineScale: size.iw / w } : {}),
@@ -8452,7 +8458,7 @@ const videoDialog = document.getElementById('video-dialog');
 const vEls = Object.fromEntries(['info', 'engines', 'denoise-row', 'denoise', 'denoise-out', 'models-hint', 'dl', 'out', 'time', 'time-out',
   'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close', 'rates', 'fit-label', 'box-label',
   'presets', 'preset-none', 'tuning', 'flatness', 'flatness-out', 'lines', 'lines-out', 'extras', 'x-lines', 'x-fills', 'x-edges', 'x-aa',
-  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text',
+  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text', 'aion', 'aion-row',
   'queue', 'add', 'clear', 'qsum', 'stop', 'cancel']
   .map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('video-' + k)]));
 const vid = { file: null, info: null, frame: null, after: null, afterKey: '', ms: {}, busy: false, dirty: false, timer: null, job: null, clipUrl: null };
@@ -8470,14 +8476,14 @@ function videoSettings() {
   if (engine === 'builtin' && preset === 'none') preset = 'lumity';     // the built-in engine always cleans up
   return { engine, denoise: +vEls.denoise.value, preset, flatness: +vEls.flatness.value, lines: +vEls.lines.value,
     extras: { lines: vEls.xLines.checked, fills: vEls.xFills.checked, edges: vEls.xEdges.checked, aa: vEls.xAa.checked ? +vEls.aa.value : 0 },
-    cleanupOn: pick('von') || 'original',
+    cleanupOn: pick('von') || 'original', aiOn: pick('vaion') || 'webgpu',
     res, mode: pick('vmode') || 'fit', bitrate: (+pick('vbitrate') || VIDEO_RES[res].rates[1]) * 1e6 };
 }
 
 // Everything that changes the picture (not the time or file settings).
 function videoChainKey(st, size) {
   return JSON.stringify([st.engine, st.engine === 'generalv3' ? st.denoise : 0, st.preset,
-    st.preset === 'lumity' ? [st.flatness, st.lines] : 0, engineExtras(st), st.preset === 'none' ? '' : st.cleanupOn, size.iw, size.ih]);
+    st.preset === 'lumity' ? [st.flatness, st.lines] : 0, engineExtras(st), st.preset === 'none' ? '' : st.cleanupOn, VIDEO_GPU_MODELS.has(st.engine) ? st.aiOn : '', size.iw, size.ih]);
 }
 // "AI · Fast on WebGPU → Lumity · flat fills on WebGPU"
 function videoDescribe(st, backend, cleanBackend) {
@@ -8546,7 +8552,7 @@ function videoRefreshModels() {
   vEls.engines.querySelector('input[value="' + pick + '"]').checked = true;
   vEls.modelsHint.textContent = (aiState.gpuError
     ? 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). '
-    : AI_MODELS.some(m => aiReady(m.id)) ? 'AI · Fast is made for anime video and is the quickest AI. AI · Fast and Balanced run on WebGPU where the browser has it; Best and Anime+ use the slower WebGL engine. '
+    : AI_MODELS.some(m => aiReady(m.id)) ? 'AI · Fast is made for anime video and is the quickest AI. AI · Fast and Balanced can run on WebGPU (“AI runs on”); Best and Anime+ use the slower WebGL engine. '
     : 'Download an AI model for the best result — it runs on your GPU and is kept in this browser. ') +
     'Built-in needs no AI model.';
 }
@@ -8556,6 +8562,9 @@ function videoTexts() {
   if (!vid.info) return;
   const st = videoSettings(), v = vid.info.video, size = videoSize();
   vEls.denoiseRow.hidden = st.engine !== 'generalv3';
+  vEls.aionRow.hidden = !VIDEO_GPU_MODELS.has(st.engine);            // AI · Best / Anime+ always use WebGL
+  vEls.aion.querySelector('input[value=webgpu]').disabled = !navigator.gpu || !!gpuOff;
+  if (vEls.aion.querySelector('input:checked').disabled) vEls.aion.querySelector('input[value=webgl]').checked = true;
   vEls.denoiseOut.textContent = vEls.denoise.value;
   // Cleanup: "Off" only after AI; Lumity has its sliders; extras need a preset.
   const isBuiltin = st.engine === 'builtin';
@@ -8740,6 +8749,7 @@ async function videoRun() {
 function videoApplySettings(st) {
   const set = (name, value) => { const el = videoDialog.querySelector('input[name=' + name + '][value="' + value + '"]'); if (el && !el.disabled) el.checked = true; };
   set('vengine', st.engine); set('vpreset', st.preset); set('von', st.cleanupOn); set('vres', st.res); set('vmode', st.mode);
+  set('vaion', st.aiOn || 'webgpu');
   vEls.denoise.value = st.denoise; vEls.flatness.value = st.flatness; vEls.lines.value = st.lines;
   const x = st.extras || {};
   vEls.xLines.checked = !!x.lines; vEls.xFills.checked = !!x.fills; vEls.xEdges.checked = !!x.edges; vEls.xAa.checked = !!x.aa;
@@ -9052,6 +9062,7 @@ vEls.go.addEventListener('click', () => queueRun());
 vEls.stop.addEventListener('click', () => { vq.stopAfter = true; queueRender(); });
 vEls.cancel.addEventListener('click', () => { vq.cancelled = true; if (vq.job) vq.job.cancel(); queueRender(); });
 vEls.engines.addEventListener('change', videoUpdate);
+vEls.aion.addEventListener('change', videoUpdate);
 vEls.presets.addEventListener('change', videoUpdate);
 vEls.on.addEventListener('change', videoUpdate);
 vEls.extras.addEventListener('change', videoUpdate);
