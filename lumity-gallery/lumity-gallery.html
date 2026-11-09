@@ -3630,17 +3630,44 @@ function runUpscaleJob(rgba, w, h, opts, onProgress, cmd = 'upscale') {
 // 'webgl'; 'webgl' falls back to null (→ the original processing). Each
 // fallback is told once. → { out: RGBA width×height, backend } or null.
 const GPU_CLEANUP_MAX_PIXELS = 8e6;     // input pixels; bigger pictures use the original engine
+// Phones share a few GB between everything, so the WebGPU paths get a GPU
+// memory budget there (desktop: 2 GB): the AI splits a picture into smaller
+// bands, and a cleanup that wouldn't fit runs its anti-aliasing on the CPU or
+// moves on to the original engine, instead of failing to allocate.
+const GPU_MOBILE = !!(navigator.userAgentData && navigator.userAgentData.mobile) || /Android|iPhone|iPad|Mobi/i.test(navigator.userAgent);
+// (localStorage 'lumity-gpu-budget-mb' overrides it, e.g. for a phone with more to spare.)
+const GPU_BUDGET = (Number((() => { try { return localStorage.getItem('lumity-gpu-budget-mb'); } catch { return null; } })()) ||
+  (GPU_MOBILE ? Math.min(512, (navigator.deviceMemory || 4) * 64) : 2048)) * 2 ** 20;
+const GPU_TILE = GPU_MOBILE ? 384 : 768;       // output-half tile size of the WebGPU cleanup
+// Rough GPU memory of the full-GPU cleanup: prepare's float textures, the
+// output-half tiles, the result, flat fills and (gpuAA) anti-aliasing.
+function cleanupBytes(w, h, W, H, extras, gpuAA) {
+  const t = GPU_TILE + 96;
+  return 7 * w * h * 16 + 12 * Math.min(W, t) * Math.min(H, t) * 16 + W * H * 4 +
+    (extras && extras.fills ? w * h * 40 : 0) + (gpuAA ? 8 * W * H * 16 : 0);
+}
 let gpuCleanupNotes = new Set(), lastCleanupBackend = null;
 async function gpuCleanup(rgba, w, h, opts, device, onProgress, isCancelled) {
   lastCleanupBackend = null;
   const M = getMainUpscaler(), P = M.tunePreset(M.PRESETS[opts.preset] || M.PRESETS.balanced, opts.tuning);
   const note = msg => { if (!gpuCleanupNotes.has(msg)) { gpuCleanupNotes.add(msg); showToast(msg); } };
   const stopped = () => isCancelled && isCancelled();
+  const ex = opts.extras || {};
+  // A same-size cleanup (after the AI) can run on WebGPU in bands of rows when
+  // the whole picture doesn't fit (not with flat fills, which needs whole regions).
+  const fullFits = cleanupBytes(w, h, opts.width, opts.height, ex, false) <= GPU_BUDGET;
+  const bandable = device === 'webgpu' && opts.width === w && opts.height === h && !ex.fills;
+  if (!fullFits && !bandable) {
+    note('This picture needs more GPU memory than this device can spare for the full-GPU cleanup, so the original engine is used.');
+    return null;
+  }
+  // Anti-aliasing on WebGPU only when it fits too; otherwise the worker does it.
+  const gpuAA = !!ex.aa && opts.width * opts.height <= 4.2e6 && cleanupBytes(w, h, opts.width, opts.height, ex, true) <= GPU_BUDGET;
   if (device === 'webgpu') {
     try {
       const eng = await gpuCleanupEngine();
       if (eng) {
-        const r = await eng.cleanup(rgba, w, h, opts, P, M.LANCZOS2, onProgress, isCancelled);
+        const r = await eng.cleanup(rgba, w, h, { ...opts, gpuAA }, P, M.LANCZOS2, onProgress, isCancelled);
         lastCleanupBackend = 'WebGPU';
         return { out: r.out, aaDone: r.aaDone, backend: 'WebGPU' };
       }
@@ -3651,7 +3678,7 @@ async function gpuCleanup(rgba, w, h, opts, device, onProgress, isCancelled) {
       note('The WebGPU cleanup failed (' + (err.message || err) + '), so it runs on WebGL.');
     }
   }
-  if (w * h > GPU_CLEANUP_MAX_PIXELS) { note('This picture is too large for the full-GPU cleanup, so the original engine is used.'); return null; }
+  if (w * h > GPU_CLEANUP_MAX_PIXELS || !fullFits) { note('This picture is too large for the full-GPU cleanup on WebGL, so the original engine is used.'); return null; }
   try {
     const out = await withGpu(r => r.runCleanup(rgba, w, h, opts, P, M.LANCZOS2, M.flatFills, onProgress, isCancelled), isCancelled);
     lastCleanupBackend = 'WebGL';
@@ -6477,9 +6504,15 @@ async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, op
       const gpu = await videoGpuFor(settings.engine, settings.denoise);
       if (gpu) {
         const bmp = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba), w, h), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
-        const size = { iw: W, ih: H, W, H, x: 0, y: 0 };
-        try { gpu.eng.run(gpu.model, bmp, w, h, size); } finally { bmp.close(); }
-        const out = await gpu.eng.read(size);
+        const size = { iw: W, ih: H, W, H, x: 0, y: 0 }, dev = gpu.eng.device;
+        // WebGPU reports a failed allocation later instead of throwing: catch it here.
+        dev.pushErrorScope('out-of-memory'); dev.pushErrorScope('validation');
+        let out, gpuErr;
+        try { gpu.eng.run(gpu.model, bmp, w, h, size); out = await gpu.eng.read(size); }
+        catch (err) { gpu.eng.release(); throw err; }
+        finally { bmp.close(); gpuErr = (await dev.popErrorScope()) || (await dev.popErrorScope()); }
+        if (gpuErr) { gpu.eng.release(); throw new Error(gpuErr.message); }
+        if (GPU_MOBILE) gpu.eng.release();
         if (onProgress) onProgress(1);
         lastAiBackend = 'WebGPU';
         return out;
@@ -7164,10 +7197,12 @@ fn t4(u: i32, v: i32) -> vec3f {
     if (plan && plan.pk === pk && plan.key === key) return plan;
     if (plan) plan.destroy();
     const halo = pk.convs.length, maxC4 = Math.max(...pk.convs.map(L => L.outC4));
-    const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize, 1 << 30);
+    // Each activation buffer stays within the binding limits and a share of the
+    // GPU memory budget (two of them plus the input are alive at once).
+    const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize, 1 << 30, GPU_BUDGET / 6);
     const fitRows = Math.floor(limit / (w * maxC4 * VS));
     const core = fitRows >= h ? h : Math.max(8, fitRows - 2 * halo);
-    if (fitRows < 2 * halo + 8) throw new Error('This video is too large for the GPU’s buffer limits.');
+    if (fitRows < 2 * halo + 8) throw new Error('This picture is too wide for the GPU memory available here.');
     const bandRows = Math.min(h, core + 2 * halo);
     const buf = c4 => device.createBuffer({ size: w * bandRows * c4 * VS, usage: GPUBufferUsage.STORAGE });
     const inp = buf(1), A = buf(maxC4), B = buf(maxC4);
@@ -7237,8 +7272,10 @@ fn t4(u: i32, v: i32) -> vec3f {
     device.queue.copyExternalImageToTexture({ source }, { texture: inTex }, [sw, sh]);
     if (canvas.width !== size.W || canvas.height !== size.H) { canvas.width = size.W; canvas.height = size.H; }
     if (!ctx.configured) { ctx.configure({ device, format: 'rgba8unorm', alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST }); ctx.configured = true; }
-    const enc = device.createCommandEncoder();
+    // One submit per band, so each piece of GPU work stays short (phones end
+    // GPU work that runs for more than a few seconds).
     pl.bands.forEach((b, k) => {
+      const enc = device.createCommandEncoder();
       const cp = enc.beginComputePass();
       cp.setPipeline(inputPipe); cp.setBindGroup(0, b.input);
       cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(b.bh / 8));
@@ -7252,10 +7289,18 @@ fn t4(u: i32, v: i32) -> vec3f {
       rp.setScissorRect(0, y0, size.W, y1 - y0);
       rp.draw(3);
       rp.end();
+      device.queue.submit([enc.finish()]);
     });
+    const enc = device.createCommandEncoder();
     enc.copyTextureToTexture({ texture: pl.outTex }, { texture: ctx.getCurrentTexture() }, [size.W, size.H]);
     device.queue.submit([enc.finish()]);
     return pl;
+  }
+
+  // Frees the activation buffers and textures (pictures on phones, or after a failure).
+  function release() {
+    if (plan) { plan.destroy(); plan = null; }
+    if (inTex) { inTex.destroy(); inTex = null; }
   }
 
   // The last result as RGBA bytes (W×H×4), e.g. for the preview.
@@ -7284,7 +7329,7 @@ fn t4(u: i32, v: i32) -> vec3f {
     device.queue.submit([enc.finish()]);
   }
 
-  return { f16, canvas, run, read, present, device, result: () => plan && plan.outTex,
+  return { f16, canvas, run, read, present, release, device, result: () => plan && plan.outTex,
     done: () => device.queue.onSubmittedWorkDone(), destroy: () => device.destroy(), get lost() { return lost; },
     info: (f16 ? 'f16' : 'f32') + ' · ' + (adapter.info ? [adapter.info.vendor, adapter.info.architecture].filter(Boolean).join(' ') : '') };
 }
@@ -7870,7 +7915,7 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
   // The output half, tile by tile as runBuiltin, into outTex (W×H rgba8unorm).
   function finish(planes, fieldT, meta, outTex, isCancelled) {
     const { w, h, W, H, P, extras, scale } = meta;
-    const CORE = 768, HALO = 48;
+    const CORE = GPU_TILE, HALO = 48;
     const T = pool('fin', Math.min(W, CORE + 2 * HALO), Math.min(H, CORE + 2 * HALO), mk => {
       const tw = Math.min(W, CORE + 2 * HALO), th = Math.min(H, CORE + 2 * HALO);
       return { m: [mk(tw, th), mk(tw, th)], s: Array.from({ length: 9 }, () => mk(tw, th)), o: mk(tw, th, 'rgba8unorm') };
@@ -7972,7 +8017,7 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
     finish(planes, field, { w, h, W, H, scale: W / w, P, extras, flattenWhite: !!opts.flattenWhite,
       lineScale: opts.lineScale || W / w, A: !!opts.alpha }, out, isCancelled);
     if (onProgress) onProgress(0.9);
-    if (extras.aa && W * H <= AA_MAX_PIXELS) return { tex: antialias(out, W, H, opts.lineScale || W / w, extras.aa), aaDone: true };
+    if (extras.aa && W * H <= AA_MAX_PIXELS && opts.gpuAA !== false) return { tex: antialias(out, W, H, opts.lineScale || W / w, extras.aa), aaDone: true };
     return { tex: out, aaDone: !extras.aa };
   }
 
@@ -7998,17 +8043,58 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
     return up;
   }
 
-  // Pictures: RGBA in, RGBA out. → { out, aaDone }
+  // Frees the working textures and buffers (pictures on phones, or after a failure).
+  function release() {
+    for (const [k, p] of Object.entries(pools)) { p.all.forEach(t => t.destroy()); delete pools[k]; }
+  }
+
+  // Pictures: RGBA in, RGBA out. → { out, aaDone }. GPU allocation and
+  // validation errors (reported later by WebGPU, not thrown) become an
+  // exception here, so the caller can fall back.
   async function cleanup(rgba, w, h, opts, P, LUT, onProgress, isCancelled) {
     let alpha = false;
     for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) { alpha = true; break; }
-    const r = await cleanupTex(upload(rgba, w, h), w, h, { ...opts, alpha }, P, LUT, isCancelled, onProgress);
-    const out = await read(r.tex, opts.width, opts.height);
+    const ex = opts.extras || {};
+    if (opts.width === w && opts.height === h && cleanupBytes(w, h, w, h, ex, opts.gpuAA) > GPU_BUDGET) {
+      // Too big for the GPU memory budget: bands of rows with an overlap wider
+      // than any step reaches, each cleaned as its own picture; the overlap is
+      // dropped again, so the result matches a whole-picture run.
+      const HALO = 96;
+      let rows = h;
+      while (rows > 64 && cleanupBytes(w, rows + 2 * HALO, w, rows + 2 * HALO, ex, opts.gpuAA) > GPU_BUDGET) rows = Math.ceil(rows / 2);
+      if (cleanupBytes(w, rows + 2 * HALO, w, rows + 2 * HALO, ex, opts.gpuAA) > GPU_BUDGET) throw new Error('Not enough GPU memory for this picture.');
+      const out = new Uint8ClampedArray(w * h * 4);
+      let aaDone = true;
+      for (let y0 = 0; y0 < h; y0 += rows) {
+        check(isCancelled);
+        const a = Math.max(0, y0 - HALO), b = Math.min(h, y0 + rows + HALO), keep = Math.min(rows, h - y0);
+        const r = await cleanupOne(rgba.subarray(a * w * 4, b * w * 4), w, b - a, { ...opts, width: w, height: b - a, alpha }, P, LUT, isCancelled);
+        out.set(r.out.subarray((y0 - a) * w * 4, (y0 - a + keep) * w * 4), y0 * w * 4);
+        aaDone = aaDone && r.aaDone;
+        if (onProgress) onProgress((y0 + keep) / h);
+      }
+      if (GPU_MOBILE) release();
+      return { out, aaDone };
+    }
+    const r = await cleanupOne(rgba, w, h, { ...opts, alpha }, P, LUT, isCancelled, onProgress);
+    if (GPU_MOBILE) release();
     if (onProgress) onProgress(1);
+    return r;
+  }
+
+  async function cleanupOne(rgba, w, h, opts, P, LUT, isCancelled, onProgress) {
+    device.pushErrorScope('out-of-memory'); device.pushErrorScope('validation');
+    let r, out, gpuErr;
+    try {
+      r = await cleanupTex(upload(rgba, w, h), w, h, opts, P, LUT, isCancelled, onProgress);
+      out = await read(r.tex, opts.width, opts.height);
+    } catch (err) { release(); throw err; }
+    finally { gpuErr = (await device.popErrorScope()) || (await device.popErrorScope()); }
+    if (gpuErr) { release(); throw new Error(gpuErr.message); }
     return { out, aaDone: r.aaDone };
   }
 
-  return { ai, cleanup, cleanupTex, upload, read };
+  return { ai, cleanup, cleanupTex, upload, read, release };
 }
 
 // ── VIDEO: PIPELINE ───────────────────────────────────────────────────────────
