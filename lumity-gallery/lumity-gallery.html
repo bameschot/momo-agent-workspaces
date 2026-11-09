@@ -882,6 +882,12 @@
           <input type="range" id="ai-denoise" min="0" max="100" step="5" value="50">
           <output id="ai-denoise-out">50</output>
         </label>
+        <div class="opt-row" id="ai-device-row" hidden><span>AI runs on</span>
+          <div class="chips">
+            <label title="The WebGPU engine: several times faster (AI · Fast and Balanced)"><input type="radio" name="aiDevice" value="webgpu"><span>🚀 WebGPU</span></label>
+            <label title="The original WebGL engine"><input type="radio" name="aiDevice" value="webgl" checked><span>WebGL</span></label>
+          </div>
+        </div>
         <p class="dialog-sub" id="ai-pick-hint" hidden></p>
         <details class="ai-manage" id="ai-manage">
           <summary>Manage AI models <span id="ai-manage-count"></span></summary>
@@ -893,7 +899,7 @@
       </div>
     </fieldset>
     <fieldset id="device-fields">
-      <legend>Processing</legend>
+      <legend id="device-legend">Processing</legend>
       <div class="chips">
         <label title="Original: everything on the processor"><input type="radio" name="device" value="cpu" checked><span>CPU</span></label>
         <label title="Original: preparation on the processor, upscaling on the graphics card"><input type="radio" name="device" value="gpu" disabled><span>⚡ GPU</span></label>
@@ -1546,6 +1552,7 @@ function sanitizeUpscale(raw) {
     denoise: raw.engine === 'generalv3' && num(raw.denoise) != null ? Math.max(0, Math.min(100, raw.denoise)) : null,
     cuganMode: raw.engine === 'cugan' && CUGAN_MODES[raw.cuganMode] ? raw.cuganMode : null,
     device: ['gpu', 'webgpu', 'webgl'].includes(raw.device) ? raw.device : null,
+    aiDevice: ['webgpu', 'webgl'].includes(raw.aiDevice) ? raw.aiDevice : null,
     extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges || num(raw.extras.aa))
       ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges,
           ...(num(raw.extras.aa) ? { aa: Math.max(10, Math.min(100, raw.extras.aa)) } : {}) }
@@ -1972,7 +1979,9 @@ function describeUpscale(u) {
     const names = extrasNames(u.extras);
     if (names) parts.push(names);
   }
-  if (u.device) parts.push({ gpu: 'GPU', webgpu: 'WebGPU', webgl: 'WebGL' }[u.device] || '');
+  if (u.aiDevice === 'webgpu') parts.push('AI on WebGPU');
+  const devName = { gpu: 'GPU', webgpu: 'WebGPU', webgl: 'WebGL' }[u.device];
+  if (devName) parts.push(u.aiDevice ? 'cleanup on ' + devName : devName);
   if (u.format) parts.push(u.format.toUpperCase());
   if (u.originalWidth && u.width) parts.push(u.originalWidth === u.width && u.originalHeight === u.height
     ? u.width + '×' + u.height : u.originalWidth + '×' + u.originalHeight + ' → ' + u.width + '×' + u.height);
@@ -3850,7 +3859,8 @@ async function enhanceOne(original, settings, onProgress) {
       auto: !!settings.auto, engine: settings.engine || 'builtin',
       ...(settings.engine === 'generalv3' ? { denoise: settings.denoise } : {}),
       ...(settings.engine === 'cugan' ? { cuganMode: settings.cuganMode } : {}),
-      device: isAiEngine(settings) && settings.preset === 'none' ? (lastAiBackend === 'WebGPU' ? 'webgpu' : 'cpu')
+      ...(isAiEngine(settings) ? { aiDevice: lastAiBackend === 'WebGPU' ? 'webgpu' : 'webgl' } : {}),
+      device: isAiEngine(settings) && settings.preset === 'none' ? 'cpu'
         : settings.device === 'webgpu' || settings.device === 'webgl' ? (lastCleanupBackend ? lastCleanupBackend.toLowerCase() : gpuBuiltinAvailable() ? 'gpu' : 'cpu')
         : settings.device === 'gpu' ? 'gpu' : 'cpu',
       originalWidth: w, originalHeight: h, width: size.W, height: size.H,
@@ -3916,7 +3926,7 @@ const ETA_KEY = 'lumity-gallery-eta-v1';
 function etaSignature(st) {
   const x = st.extras || {};
   return [st.engine || 'builtin', st.device, st.preset, x.lines ? 'L' : '', x.fills ? 'F' : '', x.edges ? 'E' : '', x.aa ? 'A' : '',
-    st.mode === 'width' ? 'w' : st.scale].join('|');
+    st.mode === 'width' ? 'w' : st.scale].join('|') + (st.aiDevice === 'webgpu' && isAiEngine(st) ? '|aiwebgpu' : '');
 }
 function loadEtaRates() { try { return JSON.parse(localStorage.getItem(ETA_KEY)) || {}; } catch { return {}; } }
 
@@ -4070,6 +4080,7 @@ function readEnhanceForm() {
     useAi: document.getElementById('use-ai').checked,
     aiEngine: f.engine.value !== 'builtin' ? f.engine.value : lastAiEngine,
     device: f.device.value,
+    aiDevice: f.aiDevice.value,                 // where AI · Fast / Balanced run; Processing is the cleanup
     preset: f.preset.value,
     format: f.format.value,
     denoise: Number(document.getElementById('ai-denoise').value),
@@ -4104,7 +4115,7 @@ function timeEstimate(st) {
     const t = timeEstimate({ ...st, scale: 2 }).split('–').map(v => v === '<1' ? 0.5 : Number(v));
     return '<1–' + Math.max(1, Math.round(t[1] * 0.4));
   }
-  if (st.device === 'webgpu' && (st.engine === 'animevideov3' || st.engine === 'generalv3')) return st.preset === 'none' ? '<1–2' : '<1–4';
+  if (st.aiDevice === 'webgpu' && (st.engine === 'animevideov3' || st.engine === 'generalv3')) return st.preset === 'none' ? '<1–2' : st.device === 'cpu' ? '2–8' : '<1–4';
   if (st.engine === 'animevideov3') return st.preset === 'none' ? '2–10' : '4–20';
   if (st.engine === 'generalv3') return st.preset === 'none' ? '4–20' : '6–30';
   if (st.engine === 'cugan') return st.preset === 'none' ? '8–40' : '10–50';
@@ -4133,6 +4144,9 @@ function updateEnhanceSummary() {
     : 'Download a model below (or load its files) to use AI. Until then the built-in engine is used.';
   const ai = f.engine.value !== 'builtin';
   document.getElementById('denoise-row').hidden = f.engine.value !== 'generalv3';
+  document.getElementById('ai-device-row').hidden = !(f.engine.value === 'animevideov3' || f.engine.value === 'generalv3');
+  enhanceForm.querySelector('input[name=aiDevice][value=webgpu]').disabled = !navigator.gpu || !!gpuOff;
+  if (enhanceForm.querySelector('input[name=aiDevice]:checked').disabled) f.aiDevice.value = 'webgl';
   document.getElementById('cugan-row').hidden = f.engine.value !== 'cugan';
   document.getElementById('ai-denoise-out').textContent = document.getElementById('ai-denoise').value;
   // "None" only makes sense after AI; Auto only for the built-in engine.
@@ -4141,17 +4155,15 @@ function updateEnhanceSummary() {
   if (ai && f.preset.value === 'auto') f.preset.value = 'none';
   if (!ai && f.preset.value === 'none') f.preset.value = 'lumity';
   document.getElementById('cleanup-legend').textContent = ai ? 'Cleanup after AI' : 'Cleanup';
-  // Processing matters when a built-in step runs — and for the AI step of
-  // AI · Fast / Balanced, which 🚀 WebGPU runs on the WebGPU engine.
+  // Processing = where the built-in steps run (with AI: the cleanup after it;
+  // where the AI itself runs is chosen with the AI model).
   const noBuiltin = ai && f.preset.value === 'none';
-  const gpuAi = ai && (f.engine.value === 'animevideov3' || f.engine.value === 'generalv3');
-  document.getElementById('device-fields').disabled = noBuiltin && !gpuAi;
-  document.getElementById('device-hint').textContent = noBuiltin && !gpuAi ? 'Not used: “None” keeps the AI result as it is.'
-    : noBuiltin ? (f.device.value === 'webgpu' ? 'Only the AI runs (“None”): on WebGPU — several times faster than WebGL.'
-      : 'Only the AI runs (“None”), on WebGL. Choose 🚀 WebGPU to run AI · Fast / Balanced on WebGPU, several times faster.')
+  document.getElementById('device-legend').textContent = ai ? 'Cleanup runs on' : 'Processing';
+  document.getElementById('device-fields').disabled = noBuiltin;
+  document.getElementById('device-hint').textContent = noBuiltin ? 'Not used: “None” keeps the AI result as it is.'
     : !gpuBuiltinAvailable() ? 'CPU only: this browser offers no suitable GPU (WebGL2 with float rendering).'
     : f.device.value === 'gpu' ? 'Original: the upscaling steps run on your graphics card — much faster, especially at 3–4× and with extras. Results match the CPU (apart from tiny dithering differences).'
-    : f.device.value === 'webgpu' ? 'Everything runs on your graphics card with WebGPU, the preparation too — the fastest; AI · Fast and Balanced also run on WebGPU. Uses WebGL where WebGPU is missing. Results match the original to within rounding; flat fills can differ slightly.'
+    : f.device.value === 'webgpu' ? 'Everything runs on your graphics card with WebGPU, the preparation too — the fastest. Uses WebGL where WebGPU is missing. Results match the original to within rounding; flat fills can differ slightly.'
     : f.device.value === 'webgl' ? 'Everything runs on your graphics card with WebGL (flat fills on the processor). Results match the original to within rounding.'
     : 'Original: runs on the processor, in the background.';
   const st = readEnhanceForm();
@@ -4216,6 +4228,9 @@ function openEnhanceDialog(targets, mode) {
     if (saved.preset === 'none' && f.engine.value !== 'builtin') f.preset.value = 'none';
     if ((saved.device === 'gpu' || saved.device === 'webgl') && gpuBuiltinAvailable()) f.device.value = saved.device;
     if (saved.device === 'webgpu' && navigator.gpu) f.device.value = 'webgpu';
+    // Before the AI got its own choice, 🚀 WebGPU under Processing meant both.
+    const aiDev = saved.aiDevice || (saved.device === 'webgpu' ? 'webgpu' : 'webgl');
+    if (aiDev === 'webgpu' && navigator.gpu) f.aiDevice.value = 'webgpu';
     updateEnhanceSummary();                      // GPU availability is known now
   });
   if (saved.format === 'png' || saved.format === 'jpeg') f.format.value = saved.format;
@@ -6527,7 +6542,7 @@ document.getElementById('ai-file-input').addEventListener('change', e => { aiLoa
 let lastAiBackend = null;
 async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, opts) {
   lastAiBackend = 'WebGL';
-  if (settings.device === 'webgpu' && VIDEO_GPU_MODELS.has(settings.engine) && w * h <= GPU_CLEANUP_MAX_PIXELS) {
+  if (settings.aiDevice === 'webgpu' && VIDEO_GPU_MODELS.has(settings.engine) && w * h <= GPU_CLEANUP_MAX_PIXELS) {
     const note = msg => { if (!gpuCleanupNotes.has(msg)) { gpuCleanupNotes.add(msg); showToast(msg); } };
     try {
       let gpu = await videoGpuFor(settings.engine, settings.denoise);
