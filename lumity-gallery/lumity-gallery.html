@@ -6839,16 +6839,47 @@ function videoTargetSize(w, h, mode, res = 1080) {
   return { iw, ih, W, H, x: (W - iw) >> 1, y: (H - ih) >> 1 };
 }
 
+// H.264 High profile first, in latencyMode 'quality' where that works and
+// 'realtime' where it doesn't: Safari 27's encoder takes High and Main
+// profile frames in 'quality' mode but holds them all until a flush, which
+// stalls a running job. Each config is tried before it is used.
 async function videoEncoderConfig(W, H, fps, bitrate, res = 1080) {
   const level = VIDEO_RES[res].levels[fps > 30.5 ? 1 : 0];
-  const base = { width: W, height: H, bitrate, framerate: fps, bitrateMode: 'variable', latencyMode: 'quality', avc: { format: 'avc' } };
+  const base = { width: W, height: H, bitrate, framerate: fps, bitrateMode: 'variable', avc: { format: 'avc' } };
   for (const codec of ['avc1.6400' + level, 'avc1.4d00' + level, 'avc1.42e0' + level]) {
-    for (const hardwareAcceleration of ['prefer-hardware', 'no-preference']) {
-      const cfg = { ...base, codec, hardwareAcceleration };
-      try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg; } catch { /* try the next */ }
+    for (const latencyMode of ['quality', 'realtime']) {
+      for (const hardwareAcceleration of ['prefer-hardware', 'no-preference']) {
+        const cfg = { ...base, latencyMode, codec, hardwareAcceleration };
+        try { if ((await VideoEncoder.isConfigSupported(cfg)).supported && await videoEncoderWorks(cfg)) return cfg; } catch { /* try the next */ }
+      }
     }
   }
   throw new Error('This browser cannot encode H.264 video at ' + W + '×' + H + '.');
+}
+
+// Once per config and page: encodes 8 frames *without* a flush, as a running
+// job does, and checks that output starts coming back within 2 s. (Safari's
+// 'quality' mode does return frames on a flush, so a flush would hide it.)
+const videoEncoderChecks = new Map();
+function videoEncoderWorks(cfg) {
+  const key = JSON.stringify(cfg);
+  if (!videoEncoderChecks.has(key)) videoEncoderChecks.set(key, (async () => {
+    let out = 0;
+    const enc = new VideoEncoder({ output: () => { out++; }, error: () => {} });
+    try {
+      enc.configure(cfg);
+      const c = new OffscreenCanvas(cfg.width, cfg.height), x = c.getContext('2d');
+      for (let i = 0; i < 8; i++) {
+        x.fillStyle = 'hsl(' + i * 40 + ',60%,50%)'; x.fillRect(0, 0, cfg.width, cfg.height);
+        const f = new VideoFrame(c, { timestamp: i * 40000 });
+        enc.encode(f, { keyFrame: i === 0 }); f.close();
+      }
+      for (let t = 0; t < 40 && !out; t++) await new Promise(r => setTimeout(r, 50));
+      return out > 0;
+    } catch { return false; }
+    finally { try { enc.close(); } catch { /* already closed */ } }
+  })());
+  return videoEncoderChecks.get(key);
 }
 
 // Draw a decoded frame at the video's display size and return its pixels.
@@ -6928,10 +6959,14 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
   const scale = v.scale >= 600 ? v.scale : 90000;
   const A = info.audio;
   const mux = mp4Muxer(sink, { width: size.W, height: size.H, scale, audio: A && { stsd: A.stsd, scale: A.scale } });
-  let encError = null, wake = null;
+  let encError = null, wake = null, lastOutput = performance.now();
   const poke = () => { if (wake) { const f = wake; wake = null; f(); } };
+  // An encoder that holds frames without ever returning any would otherwise
+  // leave the job waiting forever.
+  const STALL_MS = 30000, stalled = () => new Error('The video encoder stopped responding. Please try again or use another browser.');
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
+      lastOutput = performance.now();
       if (meta && meta.decoderConfig) mux.setConfig(meta.decoderConfig);
       const data = new Uint8Array(chunk.byteLength);
       chunk.copyTo(data);
@@ -6974,7 +7009,10 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
       if (origin === null) origin = ts;
       const px = await chain.run(inCanvas, isCancelled);
       if (px) out.putImageData(new ImageData(new Uint8ClampedArray(px.buffer, px.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), size.x, size.y);
-      while (encoder.encodeQueueSize > 2 && !encError) await new Promise(r => { wake = r; setTimeout(r, 30); });
+      while (encoder.encodeQueueSize > 2 && !encError) {
+        if (performance.now() - lastOutput > STALL_MS) throw stalled();
+        await new Promise(r => { wake = r; setTimeout(r, 30); });
+      }
       if (encError) throw encError;
       const t = ts - origin, keyFrame = t >= nextKey;
       if (keyFrame) nextKey = t + 2e6;                            // a keyframe every 2 s, for seeking
@@ -6985,7 +7023,11 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
       onProgress(++done, total);
     }
     if (origin === null) throw new Error('No frames in that part of the video.');
-    await encoder.flush();
+    let flushed = false;
+    await Promise.race([encoder.flush().finally(() => { flushed = true; }), new Promise((_, reject) => {
+      const check = () => { if (flushed) return; if (performance.now() - lastOutput > STALL_MS) reject(stalled()); else setTimeout(check, 1000); };
+      check();
+    })]);
     if (encError) throw encError;
     await copyAudio(Infinity);
     return await mux.finish(lastDur);
