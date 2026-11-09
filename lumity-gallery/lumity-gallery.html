@@ -6645,7 +6645,7 @@ async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, op
     try {
       const model = await aiGetModel(settings.engine, { denoise: settings.denoise }), size = { iw: W, ih: H, W, H, x: 0, y: 0 };
       const r = await gpuAttempt(async () => { const e = await gpuCompact(); return e && !e.lost ? e : null; },
-        eng => { lastAiFast = !!settings.aiFast && eng.fastKernel; return gpuAiPictureJob(eng, model, rgba, w, h, size, !!settings.aiFast, opts && opts.seFrom ? 'preview' : 'picture'); },
+        eng => { lastAiFast = !!settings.aiFast && eng.fastKernel; return gpuAiPictureJob(eng, model, rgba, w, h, size, !!settings.aiFast, opts && opts.seFrom ? 'preview' : 'picture', onProgress); },
         w + '×' + h + ' → ' + W + '×' + H, isCancelled);
       if (r) {
         if (onProgress) onProgress(1);
@@ -6665,39 +6665,49 @@ async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, op
 }
 
 // One WebGPU AI run on a picture (pictureAi, the diagnostics test) → RGBA.
-// The output pass draws every pixel opaque, so a read-back with any pixel
-// that isn't is GPU work that was dropped (some phone drivers reset the GPU on
-// a long job without reporting the device lost, and the read-back is then all
-// zeros, which the cleanup turns white for a JPEG). That device is given up
-// as lost, so gpuAttempt retries in safe mode (smaller bands) and then WebGL.
-// Each run is logged for 🩺 GPU diagnostics.
+// Paced (runPaced): on phones in bands of at most GPU_AI_BAND_PX input
+// pixels, one submit per conv layer, the GPU drained after each band, so no
+// submission runs long enough for a driver to reset the GPU.
+// WebGPU's own error reports are read first (out of memory → gpuAttempt
+// halves the budget and retries). Then the result is checked: the output
+// pass draws every pixel opaque, so a read-back with any pixel that isn't is
+// GPU work that was dropped (a driver reset that Chrome reports late or not
+// at all; the read-back is then all zeros, which the cleanup turns white for
+// a JPEG). That device is given up as lost, so gpuAttempt retries in safe
+// mode and then WebGL. Each run is logged for 🩺 GPU diagnostics.
+const GPU_AI_BAND_PX = GPU_MOBILE ? 65536 : Infinity;
 const gpuBlankPixels = px => { let n = 0; for (let i = 3; i < px.length; i += 4) if (px[i] !== 255) n++; return n; };
-async function gpuAiPictureJob(eng, model, rgba, w, h, size, fast, kind) {
-  const t0 = performance.now();
+async function gpuAiPictureJob(eng, model, rgba, w, h, size, fast, kind, onProgress) {
+  const t0 = performance.now(), dev = eng.device;
   const entry = { at: new Date().toISOString(), kind, size: w + '×' + h + ' → ' + size.W + '×' + size.H,
     kernel: fast && eng.fastKernel ? 'fast' : 'exact', engine: eng.info, budgetMB: Math.round(gpuBudget() / 2 ** 20), safeMode: gpuSafeMode };
   gpuDiagLogAdd(entry);
+  const fail = why => { entry.result = why; if (entry.ms == null) entry.ms = Math.round(performance.now() - t0); return new Error(why); };
+  dev.pushErrorScope('out-of-memory'); dev.pushErrorScope('validation');
+  let out = null, err = null;
   try {
-    const pl = eng.run(model, rgba, w, h, size, false, fast);
-    entry.bands = pl.bands.length + ' × ≤' + Math.max(...pl.bands.map(b => b.bh)) + ' rows';
-    const out = await eng.read(size);
+    const pl = await eng.runPaced(model, rgba, w, h, size, fast, GPU_AI_BAND_PX, (k, n) => {
+      entry.bands = k + '/' + n + ' bands done';
+      if (onProgress) onProgress(k / n);
+    });
+    entry.bands = pl.bands.length + ' bands of ≤' + Math.max(...pl.bands.map(b => b.bh)) + ' rows';
+    out = await eng.read(size);
     entry.ms = Math.round(performance.now() - t0);
-    const blank = gpuBlankPixels(out);
-    if (blank) {
-      await new Promise(r => setTimeout(r, 100));          // (a device loss is reported a moment later)
-      const why = 'the GPU returned a blank picture (' + (blank / (out.length / 4) * 100).toFixed(1) + '% not drawn)' +
-        (eng.lost ? ', device lost: ' + eng.lost : ', treated as a lost device');
-      entry.result = 'BLANK — ' + why;
-      try { eng.device.destroy(); } catch { /* lost already */ }
-      throw new Error(why);
-    }
-    entry.result = 'ok';
-    return out;
-  } catch (err) {
-    if (!entry.result) entry.result = 'failed — ' + (err.message || err) + (eng.lost ? ' (device lost: ' + eng.lost + ')' : '');
-    if (entry.ms == null) entry.ms = Math.round(performance.now() - t0);
-    throw err;
+  } catch (e) { err = e; }
+  const v = await dev.popErrorScope().catch(() => null), o = await dev.popErrorScope().catch(() => null);
+  if (o) throw fail('out of memory: ' + o.message);
+  if (v) throw fail('GPU validation error: ' + v.message);
+  if (err) throw fail('failed — ' + (err.message || err) + (eng.lost && !String(err.message).includes(eng.lost) ? ' (device lost: ' + eng.lost + ')' : ''));
+  const blank = gpuBlankPixels(out);
+  if (blank) {
+    await new Promise(r => setTimeout(r, 300));          // (a device loss is reported a moment later)
+    const why = 'the GPU returned a blank picture (' + (blank / (out.length / 4) * 100).toFixed(1) + '% not drawn)' +
+      (eng.lost ? ', device lost: ' + eng.lost : ', treated as a lost device');
+    try { dev.destroy(); } catch { /* lost already */ }
+    throw fail('BLANK — ' + why);
   }
+  entry.result = 'ok';
+  return out;
 }
 
 // Picture → AI ×4 → requested size (GPU), then optional built-in cleanup.
@@ -7343,6 +7353,10 @@ async function createGpuCompact(opts = {}) {
       .map(k => [k, adapter.limits[k]])),
   });
   let lost = null;
+  if (!opts.tuning) device.addEventListener('uncapturederror', e => {
+    console.warn('WebGPU error', e.error);
+    gpuDiagLogAdd({ at: new Date().toISOString(), kind: 'GPU error', result: (e.error && e.error.constructor.name) + ': ' + (e.error && e.error.message) });
+  });
   device.lost.then(info => {
     lost = (info.reason && info.reason !== 'unknown' ? info.reason + ': ' : '') + (info.message || 'the GPU was reset');
     if (!opts.tuning) gpuDeviceLost(device, lost);              // (a tuning device only rules out its shape)
@@ -7554,8 +7568,10 @@ fn t4(u: i32, v: i32) -> vec3f {
 
   // Buffers, uniforms and bind groups for one geometry (model × size).
   let plan = null;
-  function planFor(pk, w, h, size) {
-    const key = [w, h, size.iw, size.ih, size.W, size.H, size.x, size.y].join(',');
+  // maxBandPx: at most this many input pixels per band (pictures on phones,
+  // so each band's GPU work stays short — see runPaced).
+  function planFor(pk, w, h, size, maxBandPx = Infinity) {
+    const key = [w, h, size.iw, size.ih, size.W, size.H, size.x, size.y, maxBandPx].join(',');
     if (plan && plan.pk === pk && plan.key === key) return plan;
     if (plan) plan.destroy();
     const halo = pk.convs.length, maxC4 = Math.max(...pk.convs.map(L => L.outC4));
@@ -7563,7 +7579,7 @@ fn t4(u: i32, v: i32) -> vec3f {
     // GPU memory budget (two of them plus the input are alive at once).
     const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize, 1 << 30, gpuBudget() / 6);
     const fitRows = Math.floor(limit / (w * maxC4 * VS));
-    const core = fitRows >= h ? h : Math.max(8, fitRows - 2 * halo);
+    const core = Math.min(fitRows >= h ? h : Math.max(8, fitRows - 2 * halo), Math.max(32, Math.floor(maxBandPx / w)));
     if (fitRows < 2 * halo + 8) throw new Error('This picture is too wide for the GPU memory available here.');
     const bandRows = Math.min(h, core + 2 * halo);
     const buf = c4 => device.createBuffer({ size: w * bandRows * c4 * VS, usage: GPUBufferUsage.STORAGE });
@@ -7603,7 +7619,7 @@ fn t4(u: i32, v: i32) -> vec3f {
     }
     const outTex = device.createTexture({ size: [size.W, size.H], format: 'rgba8unorm',
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING });
-    plan = { pk, key, bands, inp, inTex: null, outTex,
+    plan = { pk, key, w, bands, inp, inTex: null, outTex,
       destroy() { inp.destroy(); A.destroy(); B.destroy(); outTex.destroy(); bands.forEach(b => b.uniforms.forEach(u => u.destroy())); } };
     return plan;
   }
@@ -7620,9 +7636,48 @@ fn t4(u: i32, v: i32) -> vec3f {
   // black around it. The result is in result() for read() or the cleanup, and
   // with toCanvas also in `canvas` (for a VideoFrame). Work is queued, not awaited.
   function run(model, source, w, h, size, toCanvas = false, fast = false) {
+    const { pl, kern } = setup(model, source, w, h, size, fast);
+    // One submit per band, so each piece of GPU work stays short (phones end
+    // GPU work that runs for more than a few seconds).
+    pl.bands.forEach((b, k) => {
+      const enc = device.createCommandEncoder();
+      encodeBand(enc, pl, b, k, kern, size, 'all');
+      device.queue.submit([enc.finish()]);
+    });
+    if (toCanvas) {
+      const enc = device.createCommandEncoder();
+      enc.copyTextureToTexture({ texture: pl.outTex }, { texture: configure(size) }, [size.W, size.H]);
+      device.queue.submit([enc.finish()]);
+    }
+    return pl;
+  }
+
+  // run() for pictures, paced: bands of at most maxBandPx input pixels, every
+  // conv layer its own submit, and the GPU drained after each band. Some phone
+  // drivers (Adreno) reset the GPU when one submission — or a long queue of
+  // them — runs too long, and the read-back is then blank; a preview-sized
+  // run is fine there. → the plan (result in result() / read()).
+  async function runPaced(model, source, w, h, size, fast = false, maxBandPx = Infinity, onBand = null) {
+    const { pl, kern } = setup(model, source, w, h, size, fast, maxBandPx);
+    for (let k = 0; k < pl.bands.length; k++) {
+      const b = pl.bands[k];
+      for (const part of ['input', ...b.convs.map((_, i) => i), 'output']) {
+        const enc = device.createCommandEncoder();
+        encodeBand(enc, pl, b, k, kern, size, part);
+        device.queue.submit([enc.finish()]);
+      }
+      await device.queue.onSubmittedWorkDone();
+      if (lost) throw new Error(lost);
+      if (onBand) onBand(k + 1, pl.bands.length);
+    }
+    return pl;
+  }
+
+  // Packs the model, makes the plan and uploads `source` into inTex.
+  function setup(model, source, w, h, size, fast, maxBandPx = Infinity) {
     if (lost) throw new Error(lost);
     const kern = fast && kernels.fast ? 'fast' : 'exact';
-    const pk = pack(model), pl = planFor(pk, w, h, size);
+    const pk = pack(model), pl = planFor(pk, w, h, size, maxBandPx);
     const bytes = ArrayBuffer.isView(source);
     const sw = bytes ? w : source.displayWidth || source.width, sh = bytes ? h : source.displayHeight || source.height;
     if (!inTex || inTex.width !== sw || inTex.height !== sh) {
@@ -7641,16 +7696,24 @@ fn t4(u: i32, v: i32) -> vec3f {
     }
     if (bytes) device.queue.writeTexture({ texture: inTex }, source, { bytesPerRow: w * 4 }, [w, h]);
     else device.queue.copyExternalImageToTexture({ source }, { texture: inTex }, [sw, sh]);
-    // One submit per band, so each piece of GPU work stays short (phones end
-    // GPU work that runs for more than a few seconds).
-    pl.bands.forEach((b, k) => {
-      const enc = device.createCommandEncoder();
+    return { pl, kern };
+  }
+
+  // Encodes band k of a plan: 'all', or one part — 'input', a conv index or 'output'.
+  function encodeBand(enc, pl, b, k, kern, size, part) {
+    if (part !== 'output') {
       const cp = enc.beginComputePass();
-      cp.setPipeline(inputPipe); cp.setBindGroup(0, b.input);
-      cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(b.bh / 8));
-      cp.setPipeline(kernels[kern].pipe);
-      for (const c of b.convs) { cp.setBindGroup(0, c.bg); cp.dispatchWorkgroups(...c.groups[kern]); }
+      if (part === 'all' || part === 'input') {
+        cp.setPipeline(inputPipe); cp.setBindGroup(0, b.input);
+        cp.dispatchWorkgroups(Math.ceil(pl.w / 8), Math.ceil(b.bh / 8));
+      }
+      if (part !== 'input') {
+        cp.setPipeline(kernels[kern].pipe);
+        for (const c of part === 'all' ? b.convs : [b.convs[part]]) { cp.setBindGroup(0, c.bg); cp.dispatchWorkgroups(...c.groups[kern]); }
+      }
       cp.end();
+    }
+    if (part === 'all' || part === 'output') {
       const rp = enc.beginRenderPass({ colorAttachments: [{ view: pl.outTex.createView(), loadOp: k ? 'load' : 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
       rp.setPipeline(outputPipe); rp.setBindGroup(0, b.output);
       // Picture rows of this band; the first and last band also draw the bars.
@@ -7658,14 +7721,7 @@ fn t4(u: i32, v: i32) -> vec3f {
       rp.setScissorRect(0, y0, size.W, y1 - y0);
       rp.draw(3);
       rp.end();
-      device.queue.submit([enc.finish()]);
-    });
-    if (toCanvas) {
-      const enc = device.createCommandEncoder();
-      enc.copyTextureToTexture({ texture: pl.outTex }, { texture: configure(size) }, [size.W, size.H]);
-      device.queue.submit([enc.finish()]);
     }
-    return pl;
   }
 
   // Frees the activation buffers and textures (pictures on phones, or after a failure).
@@ -7688,7 +7744,7 @@ fn t4(u: i32, v: i32) -> vec3f {
     device.queue.submit([enc.finish()]);
   }
 
-  return { f16, fastKernel: !!kernels.fast, canvas, run, read, present, release, device, result: () => plan && plan.outTex,
+  return { f16, fastKernel: !!kernels.fast, canvas, run, runPaced, read, present, release, device, result: () => plan && plan.outTex,
     done: () => device.queue.onSubmittedWorkDone(), get lost() { return lost; },
     info: (f16 ? 'f16' : 'f32') + ' · ' + (adapter.info ? [adapter.info.vendor, adapter.info.architecture].filter(Boolean).join(' ') : '') +
       (opts.tuned ? ' · tuned ' + gpuShapeName(opts.tuned.exact) + (opts.tuned.fast ? ', fast ' + gpuShapeName(opts.tuned.fast) : ', no fast') : '') };
@@ -9543,19 +9599,8 @@ async function gpuDiagTest() {
         const eng = await gpuCompact();
         if (!eng || eng.lost) throw new Error(gpuOff ? 'WebGPU is off this visit: ' + gpuOff : 'no WebGPU engine');
         gpuFreeWebGL();
-        const dev = eng.device;
-        dev.pushErrorScope('out-of-memory'); dev.pushErrorScope('validation');
-        let fail = null;
-        try { await gpuAiPictureJob(eng, model, rgba, w, h, size, fast, kind); } catch (err) { fail = err; }
-        const v = await dev.popErrorScope().catch(() => null), o = await dev.popErrorScope().catch(() => null);
-        eng.release();
-        if (fail) throw fail;
-        if (v || o) {
-          const msg = (v ? 'validation: ' : 'out of memory: ') + (v || o).message;
-          const last = gpuDiagLog[gpuDiagLog.length - 1];
-          if (last && last.kind === kind) last.result = 'GPU error — ' + msg;
-          throw new Error(msg);
-        }
+        try { await gpuAiPictureJob(eng, model, rgba, w, h, size, fast, kind); }
+        finally { eng.release(); }
       });
       lines.push('  ' + kind + ': ok');
     } catch (err) { lines.push('  ' + kind + ': FAILED — ' + (err.message || err)); }
