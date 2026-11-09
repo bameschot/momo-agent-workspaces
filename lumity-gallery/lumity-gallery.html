@@ -1040,9 +1040,10 @@
         <div class="chips">
           <label title="Full HD, 1920×1080"><input type="radio" name="vres" value="1080" checked><span>1080p</span></label>
           <label title="HD, 1280×720: same AI work, smaller files"><input type="radio" name="vres" value="720"><span>720p</span></label>
+          <label title="The video's own size: no enlarging, only the cleanup (or the AI at 1×)"><input type="radio" name="vres" value="orig"><span id="video-orig-text">Original</span></label>
         </div>
       </div>
-      <div class="opt-row"><span>Size</span>
+      <div class="opt-row" id="video-size-row"><span>Size</span>
         <div class="chips">
           <label id="video-fit-label"><input type="radio" name="vmode" value="fit" checked><span>Fit</span></label>
           <label id="video-box-label"><input type="radio" name="vmode" value="box"><span>Letterbox</span></label>
@@ -7947,18 +7948,32 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
 // ── VIDEO: PIPELINE ───────────────────────────────────────────────────────────
 // decode (WebCodecs) → AI upscale on the GPU (aiRun, as for pictures) → encode
 // H.264 (WebCodecs) → MP4. The audio track is copied unchanged.
-// Output resolutions: frame size, bitrate choices (Mbps, middle = default) and
-// H.264 levels (≤ 30 fps / above).
+// Output resolutions: frame size and bitrate choices (Mbps, middle = default).
+// 'orig' keeps the video's own size: cleanup only (or the AI at 1×).
 const VIDEO_RES = {
-  1080: { W: 1920, H: 1080, rates: [6, 10, 16], levels: ['28', '2a'] },   // level 4.0 / 4.2
-  720: { W: 1280, H: 720, rates: [3, 5, 8], levels: ['1f', '20'] },       // level 3.1 / 3.2
+  1080: { W: 1920, H: 1080, rates: [6, 10, 16] },
+  720: { W: 1280, H: 720, rates: [3, 5, 8] },
+  orig: { rates: [1.5, 2.5, 4] },
 };
+
+// The lowest H.264 level for a frame size and rate: [code, max macroblocks
+// per frame, max macroblocks per second] (3.0 … 5.1).
+function videoLevel(W, H, fps) {
+  const mbs = Math.ceil(W / 16) * Math.ceil(H / 16), rate = mbs * fps;
+  for (const [code, fs, mbps] of [['1e', 1620, 40500], ['1f', 3600, 108000], ['20', 5120, 216000], ['28', 8192, 245760],
+    ['2a', 8704, 522240], ['32', 22080, 589824], ['33', 36864, 983040]]) if (mbs <= fs && rate <= mbps) return code;
+  return '33';
+}
 
 // Upscaled picture size and the frame it is placed in: Fit = that size rounded
 // up to even numbers; Letterbox = always the full frame (e.g. 1920×1080). null
 // when the video is already that big. w×h is the exact display size
 // (853.33×480 for a 16:9 DVD frame), so such videos fill the frame exactly.
 function videoTargetSize(w, h, mode, res = 1080) {
+  if (res === 'orig') {                    // own size, in even numbers (853.33 → 854)
+    const iw = Math.round(w / 2) * 2 || 2, ih = Math.round(h / 2) * 2 || 2;
+    return { iw, ih, W: iw, H: ih, x: 0, y: 0 };
+  }
   const { W: MW, H: MH } = VIDEO_RES[res];
   if (w >= MW || h >= MH) return null;
   const s = Math.min(MW / w, MH / h);
@@ -7971,8 +7986,8 @@ function videoTargetSize(w, h, mode, res = 1080) {
 // 'realtime' where it doesn't: Safari 27's encoder takes High and Main
 // profile frames in 'quality' mode but holds them all until a flush, which
 // stalls a running job. Each config is tried before it is used.
-async function videoEncoderConfig(W, H, fps, bitrate, res = 1080) {
-  const level = VIDEO_RES[res].levels[fps > 30.5 ? 1 : 0];
+async function videoEncoderConfig(W, H, fps, bitrate) {
+  const level = videoLevel(W, H, fps);
   const base = { width: W, height: H, bitrate, framerate: fps, bitrateMode: 'variable', avc: { format: 'avc' } };
   for (const codec of ['avc1.6400' + level, 'avc1.4d00' + level, 'avc1.42e0' + level]) {
     for (const latencyMode of ['quality', 'realtime']) {
@@ -8103,7 +8118,7 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
   const size = videoTargetSize(v.width, v.height, settings.mode, settings.res);
   if (!size) throw new Error('This video is already ' + settings.res + 'p or larger.');
   const total = v.samples.filter(s => s.pts >= range.start && s.pts < range.end).length || 1;
-  const config = await videoEncoderConfig(size.W, size.H, v.fps, settings.bitrate, settings.res);
+  const config = await videoEncoderConfig(size.W, size.H, v.fps, settings.bitrate);
   const scale = v.scale >= 600 ? v.scale : 90000;
   const A = info.audio;
   const mux = mp4Muxer(sink, { width: size.W, height: size.H, scale, audio: A && { stsd: A.stsd, scale: A.scale } });
@@ -8197,7 +8212,7 @@ const videoDialog = document.getElementById('video-dialog');
 const vEls = Object.fromEntries(['info', 'engines', 'denoise-row', 'denoise', 'denoise-out', 'models-hint', 'dl', 'out', 'time', 'time-out',
   'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close', 'rates', 'fit-label', 'box-label',
   'presets', 'preset-none', 'tuning', 'flatness', 'flatness-out', 'lines', 'lines-out', 'extras', 'x-lines', 'x-fills', 'x-edges', 'x-aa',
-  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row']
+  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text']
   .map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('video-' + k)]));
 const vid = { file: null, info: null, frame: null, after: null, afterKey: '', ms: {}, busy: false, dirty: false, timer: null, job: null, clipUrl: null };
 
@@ -8209,7 +8224,7 @@ function videoClock(sec) {
 
 function videoSettings() {
   const pick = name => (videoDialog.querySelector('input[name=' + name + ']:checked') || {}).value;
-  const res = +pick('vres') || 1080, engine = pick('vengine') || null;
+  const res = pick('vres') === 'orig' ? 'orig' : +pick('vres') || 1080, engine = pick('vengine') || null;
   let preset = pick('vpreset') || 'none';
   if (engine === 'builtin' && preset === 'none') preset = 'lumity';     // the built-in engine always cleans up
   return { engine, denoise: +vEls.denoise.value, preset, flatness: +vEls.flatness.value, lines: +vEls.lines.value,
@@ -8250,6 +8265,8 @@ function videoRefreshRes() {
     label.querySelector('span').textContent = mbps + ' Mbps';
     vEls.rates.appendChild(label);
   });
+  vEls.sizeRow.hidden = !R.W;                       // Fit / Letterbox don't apply at the own size
+  if (!R.W) return;
   vEls.fitLabel.title = 'Fit inside ' + R.W + '×' + R.H + ' and keep the shape (4:3 becomes ' + R.H * 4 / 3 + '×' + R.H + ')';
   vEls.boxLabel.title = 'Always ' + R.W + '×' + R.H + ', black bars where the shape differs';
 }
@@ -8407,6 +8424,7 @@ async function openVideo(file) {
   const v = info.video;
   vEls.info.textContent = [file.name, Math.round(v.width) + '×' + Math.round(v.height), v.fps.toFixed(2).replace(/\.?0+$/, '') + ' fps',
     videoClock(info.duration), v.format.startsWith('avc') ? 'H.264' : v.format === 'av01' ? 'AV1' : 'HEVC', info.audio ? 'audio copied as-is' : 'no audio', formatBytes(file.size)].join(' · ');
+  vEls.origText.textContent = 'Original (' + Math.round(v.height) + 'p)';
   vEls.time.max = Math.max(0, info.duration - 1 / v.fps);
   vEls.time.value = info.duration * 0.1;                         // past the usual black intro frames
   vEls.timeOut.textContent = videoClock(+vEls.time.value);
@@ -8440,7 +8458,7 @@ async function videoRun(kind) {
   const clip = kind === 'clip';
   const start = clip ? Math.round(+vEls.time.value * 1e6) : 0;
   const range = { start, end: clip ? start + 5e6 : Infinity };
-  const name = stripExt(vid.file.name) + '.upscaled-' + st.res + 'p.mp4';
+  const name = stripExt(vid.file.name) + (st.res === 'orig' ? '.cleaned-' + size.ih + 'p.mp4' : '.upscaled-' + st.res + 'p.mp4');
   let handle = null;
   if (!clip) {
     if (window.showSaveFilePicker) {
