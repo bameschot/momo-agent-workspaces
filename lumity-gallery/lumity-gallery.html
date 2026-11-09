@@ -6437,6 +6437,354 @@ async function fileSink(handle) {
   };
 }
 
+// ── VIDEO: WEBGPU ENGINE ──────────────────────────────────────────────────────
+// The compact Real-ESRGAN networks (AI · Fast and AI · Balanced) as WebGPU
+// compute shaders, for video: much faster than the WebGL runner, and a frame
+// never leaves the GPU (decoded frame → network → resize and letterbox →
+// canvas → encoder). Other models, and browsers without WebGPU, use aiRun.
+// Same maths as aiModule(): cpuForward, FS_SHUFFLE and FS_RESIZE.
+//
+// Activations live in storage buffers laid out [y][x][C/4] as vec4 (f16 where
+// the GPU supports it). Weights: per conv, tap and group of 4 input channels,
+// one 4×4 matrix per group of 4 output channels (column j = input channel j).
+// Pictures taller than the GPU's buffer limit run in horizontal bands with a
+// halo of one row per conv, so band edges don't change the result.
+let gpuCompactPromise = null;
+function gpuCompact() {
+  if (!gpuCompactPromise) gpuCompactPromise = createGpuCompact().catch(err => { console.warn('WebGPU unavailable', err); return null; });
+  return gpuCompactPromise;
+}
+
+// float32 → float16 bits (round to nearest even); weights only, so no NaN care.
+const toHalfBits = (() => {
+  const f = new Float32Array(1), u = new Uint32Array(f.buffer);
+  return v => {
+    f[0] = v;
+    const x = u[0], sign = (x >>> 16) & 0x8000, e = ((x >>> 23) & 0xff) - 112;
+    let m = x & 0x7fffff;
+    if (e >= 31) return sign | 0x7c00;
+    if (e <= 0) {
+      if (e < -10) return sign;
+      m |= 0x800000;
+      const sh = 14 - e, rem = m & ((1 << sh) - 1), half = 1 << (sh - 1);
+      let r = m >> sh;
+      if (rem > half || (rem === half && (r & 1))) r++;
+      return sign | r;
+    }
+    let r = (e << 10) | (m >> 13);
+    const rem = m & 0x1fff;
+    if (rem > 0x1000 || (rem === 0x1000 && (r & 1))) r++;
+    return sign | r;
+  };
+})();
+
+async function createGpuCompact(opts = {}) {
+  if (!navigator.gpu) return null;
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) return null;
+  const f16 = opts.f16 !== false && adapter.features.has('shader-f16');
+  const device = await adapter.requestDevice({
+    requiredFeatures: f16 ? ['shader-f16'] : [],
+    requiredLimits: Object.fromEntries(['maxStorageBufferBindingSize', 'maxBufferSize', 'maxComputeWorkgroupStorageSize', 'maxComputeInvocationsPerWorkgroup']
+      .map(k => [k, adapter.limits[k]])),
+  });
+  let lost = null;
+  device.lost.then(info => { lost = info.message || 'The GPU was reset.'; gpuCompactPromise = null; });
+  const S = f16 ? 'f16' : 'f32', VS = f16 ? 8 : 16;                // storage type, bytes per vec4
+  const head = (f16 ? 'enable f16;\n' : '') + 'alias S = ' + S + ';\n';
+  // Conv threads: PX neighbouring pixels × 16 output channels each; a
+  // workgroup covers (WX·PX)×WY pixels and OG groups of 16 channels, and
+  // shares each step's input tile and weights (IC×4 input channels) through
+  // workgroup memory, so every value is read from the buffers once.
+  // Defaults measured fastest on an Apple M5 Pro (≈110 ms for a 853×480 frame with AI · Fast).
+  const PX = opts.px || 1, WX = opts.wx || 8, WY = opts.wy || 8, IC = opts.ic || 1, OG = opts.og || 4;
+  const NT = WX * WY * OG, TW = WX * PX + 2, TH = WY + 2, NIN = TW * TH * IC;
+
+  // Input: picture rows [y0, y0 + bh) sampled from the source texture at w×h.
+  const inputCode = head + `
+struct P { w: u32, bh: u32, y0: u32, h: u32 }
+@group(0) @binding(0) var tex: texture_2d<f32>;
+@group(0) @binding(1) var smp: sampler;
+@group(0) @binding(2) var<storage, read_write> dst: array<vec4<S>>;
+@group(0) @binding(3) var<uniform> p: P;
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) g: vec3u) {
+  if (g.x >= p.w || g.y >= p.bh) { return; }
+  let uv = (vec2f(f32(g.x), f32(g.y + p.y0)) + 0.5) / vec2f(f32(p.w), f32(p.h));
+  let c = textureSampleLevel(tex, smp, uv, 0.0).rgb;
+  dst[g.y * p.w + g.x] = vec4<S>(vec3<S>(c), S(0));
+}`;
+
+  // 3×3 conv (zero padding at the band edges), bias, optional PReLU.
+  // Generated unrolled so the 4×PX accumulators stay in registers.
+  const acc = (o, x) => 'a' + o + '_' + x;
+  let body = '';
+  for (let o = 0; o < 4; o++) for (let x = 0; x < PX; x++) body += `  var ${acc(o, x)} = bias[p.bBase + ob + ${o}u];\n`;
+  body += `  for (var i = 0u; i < p.inC4; i += ${IC}u) {
+    for (var k = li; k < ${NIN}u; k += ${NT}u) {
+      let c = k % ${IC}u; let t = k / ${IC}u;
+      let gx = tx0 + i32(t % ${TW}u); let gy = ty0 + i32(t / ${TW}u);
+      var v = vec4<S>();
+      if (i + c < p.inC4 && gx >= 0 && gy >= 0 && gx < i32(p.w) && gy < i32(p.bh)) { v = src[(u32(gy) * p.w + u32(gx)) * p.inC4 + i + c]; }
+      tin[k] = v;
+    }
+    for (var k = li; k < 9u * ${IC}u * p.outC4; k += ${NT}u) {
+      let o4 = k % p.outC4; let r = k / p.outC4; let c = r % ${IC}u; let t = r / ${IC}u;
+      var m = mat4x4<S>();
+      if (i + c < p.inC4) { m = wts[p.wBase + (t * p.inC4 + i + c) * p.outC4 + o4]; }
+      tw[k] = m;
+    }
+    workgroupBarrier();
+    if (live) {\n`;
+  for (let c = 0; c < IC; c++) for (let ky = 0; ky < 3; ky++) {
+    body += `      {\n`;
+    for (let k = 0; k < PX + 2; k++) body += `        let r${k} = tin[((lid.y + ${ky}u) * ${TW}u + lid.x * ${PX}u + ${k}u) * ${IC}u + ${c}u];\n`;
+    for (let kx = 0; kx < 3; kx++) {
+      body += `        { let wi = (${(ky * 3 + kx) * IC + c}u) * p.outC4 + ob;\n`;
+      for (let o = 0; o < 4; o++) {
+        body += `          { let m = tw[wi + ${o}u];`;
+        for (let x = 0; x < PX; x++) body += ` ${acc(o, x)} += vec4f(m * r${kx + x});`;
+        body += ` }\n`;
+      }
+      body += `        }\n`;
+    }
+    body += `      }\n`;
+  }
+  body += `    }\n    workgroupBarrier();\n  }\n  if (!live || y >= i32(p.bh)) { return; }\n`;
+  for (let o = 0; o < 4; o++) {
+    body += `  { let sl = bias[p.sBase + ob + ${o}u];\n`;
+    for (let x = 0; x < PX; x++) {
+      body += `    if (x0 + ${x} < i32(p.w)) { var v = ${acc(o, x)}; if (p.act == 2u) { v = max(v, vec4f(0.0)) + sl * min(v, vec4f(0.0)); }` +
+        ` dst[(u32(y) * p.w + u32(x0 + ${x})) * p.outC4 + ob + ${o}u] = vec4<S>(v); }\n`;
+    }
+    body += `  }\n`;
+  }
+  const convCode = head + `
+struct P { w: u32, bh: u32, inC4: u32, outC4: u32, wBase: u32, bBase: u32, sBase: u32, act: u32 }
+@group(0) @binding(0) var<storage, read> src: array<vec4<S>>;
+@group(0) @binding(1) var<storage, read_write> dst: array<vec4<S>>;
+@group(0) @binding(2) var<storage, read> wts: array<mat4x4<S>>;
+@group(0) @binding(3) var<storage, read> bias: array<vec4f>;
+@group(0) @binding(4) var<uniform> p: P;
+var<workgroup> tin: array<vec4<S>, ${NIN}>;
+var<workgroup> tw: array<mat4x4<S>, ${9 * IC * 16}>;
+@compute @workgroup_size(${WX}, ${WY}, ${OG})
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u, @builtin(local_invocation_index) li: u32) {
+  let og = wid.z * ${OG}u + lid.z;
+  let x0 = i32(wid.x * ${WX * PX}u + lid.x * ${PX}u); let y = i32(wid.y * ${WY}u + lid.y);
+  let tx0 = i32(wid.x * ${WX * PX}u) - 1; let ty0 = i32(wid.y * ${WY}u) - 1;
+  let live = og * 4u < p.outC4;
+  let ob = select(0u, og * 4u, live);
+${body}}`;
+
+  // Output: pixel-shuffle ×4 of the last conv + nearest-upsampled input
+  // (FS_SHUFFLE), area-averaged to the target size (FS_RESIZE), black outside
+  // the picture (letterbox). Writes target rows [ty0, ty1) for one band.
+  const outputCode = head + `
+struct P { w: u32, bh: u32, by0: u32, n: u32, step: f32, px: i32, py: i32, pw: i32, ph: i32, pad0: u32, pad1: u32, pad2: u32 }
+@group(0) @binding(0) var<storage, read> last: array<vec4<S>>;
+@group(0) @binding(1) var<storage, read> inp: array<vec4<S>>;
+@group(0) @binding(2) var<uniform> p: P;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let q = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(q * 2.0 - 1.0, 0.0, 1.0);
+}
+fn t4(u: i32, v: i32) -> vec3f {
+  let sx = u32(u >> 2); let sy = u32(v >> 2); let sub = u32((v & 3) * 4 + (u & 3));
+  let base = (sy * p.w + sx) * 12u;
+  var c = vec3f(inp[sy * p.w + sx].rgb);
+  for (var k = 0u; k < 3u; k++) { let ch = k * 16u + sub; c[k] += f32(last[base + (ch >> 2u)][ch & 3u]); }
+  return c;
+}
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let X = i32(pos.x) - p.px; let Y = i32(pos.y) - p.py;
+  if (X < 0 || Y < 0 || X >= p.pw || Y >= p.ph) { return vec4f(0.0, 0.0, 0.0, 1.0); }
+  let c = (vec2f(f32(X), f32(Y)) + 0.5) * p.step - vec2f(0.0, f32(p.by0 * 4u));
+  let lim = vec2f(f32(p.w * 4u), f32(p.bh * 4u));
+  var s = vec3f(0.0);
+  for (var j = 0u; j < p.n; j++) {
+    for (var i = 0u; i < p.n; i++) {
+      let q = clamp(c + ((vec2f(f32(i), f32(j)) + 0.5) / f32(p.n) - 0.5) * p.step, vec2f(0.5), lim - 0.5) - 0.5;
+      let a = vec2i(floor(q)); let f = q - floor(q);
+      let b = min(a + 1, vec2i(lim) - 1);
+      s += mix(mix(t4(a.x, a.y), t4(b.x, a.y), f.x), mix(t4(a.x, b.y), t4(b.x, b.y), f.x), f.y);
+    }
+  }
+  return vec4f(clamp(s / f32(p.n * p.n), vec3f(0.0), vec3f(1.0)), 1.0);
+}`;
+
+  const mod = code => device.createShaderModule({ code });
+  const [inputMod, convMod, outputMod] = [inputCode, convCode, outputCode].map(mod);
+  for (const [name, m] of [['input', inputMod], ['conv', convMod], ['output', outputMod]]) {
+    const info = await m.getCompilationInfo();
+    const errs = info.messages.filter(x => x.type === 'error');
+    if (errs.length) throw new Error('WebGPU ' + name + ' shader: ' + errs.map(x => x.lineNum + ': ' + x.message).join('; '));
+  }
+  const inputPipe = device.createComputePipeline({ layout: 'auto', compute: { module: inputMod, entryPoint: 'main' } });
+  const convPipe = device.createComputePipeline({ layout: 'auto', compute: { module: convMod, entryPoint: 'main' } });
+  const outputPipe = device.createRenderPipeline({ layout: 'auto', vertex: { module: outputMod, entryPoint: 'vs' },
+    fragment: { module: outputMod, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] }, primitive: { topology: 'triangle-list' } });
+  const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+  const canvas = new OffscreenCanvas(16, 16);
+  const ctx = canvas.getContext('webgpu');
+  const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+
+  // Weights of one model version: one f16/f32 matrix buffer + f32 bias/slopes.
+  let packed = null;
+  function pack(model) {
+    if (packed && packed.model === model && packed.version === model.version) return packed;
+    if (packed) { packed.wBuf.destroy(); packed.bBuf.destroy(); }
+    let nm = 0, nb = 0;
+    const convs = model.convs.map(c => {
+      const inC4 = Math.ceil(c.inC / 4), outC4 = Math.ceil(c.outC / 4);
+      const L = { inC4, outC4, wBase: nm, bBase: 0, sBase: 0, act: c.prelu ? 2 : 0 };
+      nm += 9 * inC4 * outC4;
+      L.bBase = nb; nb += outC4;
+      L.sBase = nb; nb += outC4;
+      return L;
+    });
+    const W = new Float32Array(nm * 16), B = new Float32Array(nb * 4);
+    model.convs.forEach((c, k) => {
+      const L = convs[k];
+      for (let t = 0; t < 9; t++) for (let i = 0; i < L.inC4; i++) for (let o4 = 0; o4 < L.outC4; o4++) {
+        const base = ((L.wBase + (t * L.inC4 + i) * L.outC4 + o4)) * 16;
+        for (let j = 0; j < 4; j++) for (let r = 0; r < 4; r++) {
+          const ic = i * 4 + j, oc = o4 * 4 + r;
+          if (ic < c.inC && oc < c.outC) W[base + j * 4 + r] = c.weight[(oc * c.inC + ic) * 9 + t];
+        }
+      }
+      for (let o = 0; o < c.outC; o++) { B[L.bBase * 4 + o] = c.bias[o]; if (c.prelu) B[L.sBase * 4 + o] = c.prelu[o]; }
+    });
+    let wData = W;
+    if (f16) { wData = new Uint16Array(W.length); for (let i = 0; i < W.length; i++) wData[i] = toHalfBits(W[i]); }
+    const wBuf = device.createBuffer({ size: Math.max(16, wData.byteLength), usage: STORAGE });
+    const bBuf = device.createBuffer({ size: Math.max(16, B.byteLength), usage: STORAGE });
+    device.queue.writeBuffer(wBuf, 0, wData);
+    device.queue.writeBuffer(bBuf, 0, B);
+    packed = { model, version: model.version, convs, wBuf, bBuf };
+    plan = null;
+    return packed;
+  }
+
+  // Buffers, uniforms and bind groups for one geometry (model × size).
+  let plan = null;
+  function planFor(pk, w, h, size) {
+    const key = [w, h, size.iw, size.ih, size.W, size.H, size.x, size.y].join(',');
+    if (plan && plan.pk === pk && plan.key === key) return plan;
+    if (plan) plan.destroy();
+    const halo = pk.convs.length, maxC4 = Math.max(...pk.convs.map(L => L.outC4));
+    const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize, 1 << 30);
+    const fitRows = Math.floor(limit / (w * maxC4 * VS));
+    const core = fitRows >= h ? h : Math.max(8, fitRows - 2 * halo);
+    if (fitRows < 2 * halo + 8) throw new Error('This video is too large for the GPU’s buffer limits.');
+    const bandRows = Math.min(h, core + 2 * halo);
+    const buf = c4 => device.createBuffer({ size: w * bandRows * c4 * VS, usage: GPUBufferUsage.STORAGE });
+    const inp = buf(1), A = buf(maxC4), B = buf(maxC4);
+    const s = size.iw / w, step = 4 / s, n = Math.max(1, Math.ceil(step - 1e-6));
+    const bands = [];
+    for (let c0 = 0; c0 < h; c0 += core) {
+      const c1 = Math.min(h, c0 + core), b0 = Math.max(0, c0 - halo), b1 = Math.min(h, c1 + halo);
+      const ty0 = c0 === 0 ? 0 : Math.round(c0 * s), ty1 = c1 === h ? size.ih : Math.round(c1 * s);
+      const uniforms = [];
+      const ubuf = (words, f32idx = []) => {
+        const u = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        const a = new Uint32Array(12), fa = new Float32Array(a.buffer);
+        words.forEach((v, i) => { if (f32idx.includes(i)) fa[i] = v; else a[i] = v | 0; });
+        device.queue.writeBuffer(u, 0, a);
+        uniforms.push(u);
+        return u;
+      };
+      const bh = b1 - b0;
+      const inputU = ubuf([w, bh, b0, h]);
+      let src = inp, dst = A;
+      const convs = pk.convs.map(L => {
+        const bg = device.createBindGroup({ layout: convPipe.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: { buffer: src } }, { binding: 1, resource: { buffer: dst } },
+          { binding: 2, resource: { buffer: pk.wBuf } }, { binding: 3, resource: { buffer: pk.bBuf } },
+          { binding: 4, resource: { buffer: ubuf([w, bh, L.inC4, L.outC4, L.wBase, L.bBase, L.sBase, L.act]) } },
+        ] });
+        const r = { bg, groups: [Math.ceil(w / (WX * PX)), Math.ceil(bh / WY), Math.ceil(L.outC4 / 4 / OG)] };
+        src = dst; dst = dst === A ? B : A;
+        return r;
+      });
+      const output = device.createBindGroup({ layout: outputPipe.getBindGroupLayout(0), entries: [
+        { binding: 0, resource: { buffer: src } }, { binding: 1, resource: { buffer: inp } },
+        { binding: 2, resource: { buffer: ubuf([w, bh, b0, n, step, size.x, size.y, size.iw, size.ih, 0, 0, 0], [4]) } },
+      ] });
+      bands.push({ b0, bh, ty0, ty1, inputU, convs, output, uniforms, input: null });
+    }
+    const outTex = device.createTexture({ size: [size.W, size.H], format: 'rgba8unorm',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+    plan = { pk, key, bands, inp, inTex: null, outTex,
+      destroy() { inp.destroy(); A.destroy(); B.destroy(); outTex.destroy(); bands.forEach(b => b.uniforms.forEach(u => u.destroy())); } };
+    return plan;
+  }
+
+  let inTex = null;
+  // Runs the network on `source` (a canvas or ImageBitmap; see videoUpscale
+  // for why not a VideoFrame), drawn at w×h, into a size.W×size.H frame: picture at (size.x, size.y), size
+  // size.iw×size.ih, black around it. The result is in `canvas` (for a
+  // VideoFrame) and can be read back with read(). Work is queued, not awaited.
+  function run(model, source, w, h, size) {
+    if (lost) throw new Error(lost);
+    const pk = pack(model), pl = planFor(pk, w, h, size);
+    const sw = source.displayWidth || source.width, sh = source.displayHeight || source.height;
+    if (!inTex || inTex.width !== sw || inTex.height !== sh) {
+      if (inTex) inTex.destroy();
+      inTex = device.createTexture({ size: [sw, sh], format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+    }
+    if (pl.inTex !== inTex) {
+      pl.inTex = inTex;
+      for (const b of pl.bands) {
+        b.input = device.createBindGroup({ layout: inputPipe.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: inTex.createView() }, { binding: 1, resource: sampler },
+          { binding: 2, resource: { buffer: pl.inp } }, { binding: 3, resource: { buffer: b.inputU } },
+        ] });
+      }
+    }
+    device.queue.copyExternalImageToTexture({ source }, { texture: inTex }, [sw, sh]);
+    if (canvas.width !== size.W || canvas.height !== size.H) { canvas.width = size.W; canvas.height = size.H; }
+    if (!ctx.configured) { ctx.configure({ device, format: 'rgba8unorm', alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST }); ctx.configured = true; }
+    const enc = device.createCommandEncoder();
+    pl.bands.forEach((b, k) => {
+      const cp = enc.beginComputePass();
+      cp.setPipeline(inputPipe); cp.setBindGroup(0, b.input);
+      cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(b.bh / 8));
+      cp.setPipeline(convPipe);
+      for (const c of b.convs) { cp.setBindGroup(0, c.bg); cp.dispatchWorkgroups(...c.groups); }
+      cp.end();
+      const rp = enc.beginRenderPass({ colorAttachments: [{ view: pl.outTex.createView(), loadOp: k ? 'load' : 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+      rp.setPipeline(outputPipe); rp.setBindGroup(0, b.output);
+      // Picture rows of this band; the first and last band also draw the bars.
+      const y0 = k ? size.y + b.ty0 : 0, y1 = k === pl.bands.length - 1 ? size.H : size.y + b.ty1;
+      rp.setScissorRect(0, y0, size.W, y1 - y0);
+      rp.draw(3);
+      rp.end();
+    });
+    enc.copyTextureToTexture({ texture: pl.outTex }, { texture: ctx.getCurrentTexture() }, [size.W, size.H]);
+    device.queue.submit([enc.finish()]);
+    return pl;
+  }
+
+  // The last result as RGBA bytes (W×H×4), e.g. for the preview.
+  async function read(size) {
+    const pl = plan, bpr = Math.ceil(size.W * 4 / 256) * 256;
+    const buf = device.createBuffer({ size: bpr * size.H, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const enc = device.createCommandEncoder();
+    enc.copyTextureToBuffer({ texture: pl.outTex }, { buffer: buf, bytesPerRow: bpr }, [size.W, size.H]);
+    device.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const src = new Uint8Array(buf.getMappedRange()), out = new Uint8ClampedArray(size.W * size.H * 4);
+    for (let y = 0; y < size.H; y++) out.set(src.subarray(y * bpr, y * bpr + size.W * 4), y * size.W * 4);
+    buf.unmap(); buf.destroy();
+    return out;
+  }
+
+  return { f16, canvas, run, read, done: () => device.queue.onSubmittedWorkDone(), destroy: () => device.destroy(), get lost() { return lost; },
+    info: (f16 ? 'f16' : 'f32') + ' · ' + (adapter.info ? [adapter.info.vendor, adapter.info.architecture].filter(Boolean).join(' ') : '') };
+}
+
 // ── VIDEO: PIPELINE ───────────────────────────────────────────────────────────
 // decode (WebCodecs) → AI upscale on the GPU (aiRun, as for pictures) → encode
 // H.264 (WebCodecs) → MP4. The audio track is copied unchanged.
@@ -6490,6 +6838,16 @@ async function videoFrameAt(src, t) {
   throw new Error('No frame found at that time.');
 }
 
+// The WebGPU engine and model for an AI engine id, or null when that model
+// isn't a compact network or WebGPU isn't available (→ the WebGL aiRun path).
+const VIDEO_GPU_MODELS = new Set(['animevideov3', 'generalv3']);
+async function videoGpuFor(engine, denoise) {
+  if (!VIDEO_GPU_MODELS.has(engine)) return null;
+  const eng = await gpuCompact();
+  if (!eng || eng.lost) return null;
+  return { eng, model: await aiGetModel(engine, { denoise }) };
+}
+
 // settings: { engine, denoise, res (1080 | 720), mode, bitrate (bit/s) };
 // range: { start, end } µs. onProgress(done, total). Resolves with sink.close()'s result.
 async function videoUpscale(src, settings, range, sink, onProgress, isCancelled) {
@@ -6515,9 +6873,18 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
   });
   encoder.ondequeue = poke;
   encoder.configure(config);
-  const inCanvas = new OffscreenCanvas(w, h), outCanvas = new OffscreenCanvas(size.W, size.H);
-  const out = outCanvas.getContext('2d');
-  out.fillStyle = '#000'; out.fillRect(0, 0, size.W, size.H);
+  // WebGPU: the frame is drawn into a 2D canvas (on the GPU; copying a
+  // VideoFrame into WebGPU directly converts its BT.709 transfer curve and
+  // lifts the mid-tones, unlike players), then through the network into the
+  // engine's canvas. WebGL: pixels via a 2D canvas, aiRun, then a 2D canvas.
+  const gpu = await videoGpuFor(settings.engine, settings.denoise);
+  let inCanvas = new OffscreenCanvas(w, h), outCanvas = gpu && gpu.eng.canvas, out = null;
+  const inCtx = gpu && inCanvas.getContext('2d');
+  if (!gpu) {
+    outCanvas = new OffscreenCanvas(size.W, size.H);
+    out = outCanvas.getContext('2d');
+    out.fillStyle = '#000'; out.fillRect(0, 0, size.W, size.H);
+  }
   let origin = null, nextKey = 0, lastDur = 0, done = 0, ai = 0;
   // Audio up to `until` (µs, clip time), never past the end of the range.
   async function copyAudio(until) {
@@ -6535,12 +6902,17 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
   try {
     for await (const frame of mp4DecodeFrames(file, v, range.start, range.end, isCancelled)) {
       let ts, dur, rgba;
-      try { ts = frame.timestamp; dur = frame.duration || 0; rgba = videoFramePixels(frame, w, h, inCanvas); }
-      finally { frame.close(); }
+      try {
+        ts = frame.timestamp; dur = frame.duration || 0;
+        if (gpu) { inCtx.drawImage(frame, 0, 0, w, h); gpu.eng.run(gpu.model, inCanvas, w, h, size); }
+        else rgba = videoFramePixels(frame, w, h, inCanvas);
+      } finally { frame.close(); }
       if (dur) lastDur = dur;
       if (origin === null) origin = ts;
-      const up = await aiRun(settings.engine, rgba, w, h, size.iw, size.ih, null, isCancelled, { denoise: settings.denoise });
-      out.putImageData(new ImageData(new Uint8ClampedArray(up.buffer, up.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), size.x, size.y);
+      if (!gpu) {
+        const up = await aiRun(settings.engine, rgba, w, h, size.iw, size.ih, null, isCancelled, { denoise: settings.denoise });
+        out.putImageData(new ImageData(new Uint8ClampedArray(up.buffer, up.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), size.x, size.y);
+      }
       while (encoder.encodeQueueSize > 2 && !encError) await new Promise(r => { wake = r; setTimeout(r, 30); });
       if (encError) throw encError;
       const t = ts - origin, keyFrame = t >= nextKey;
@@ -6641,7 +7013,7 @@ function videoRefreshModels() {
   if (pick) vEls.engines.querySelector('input[value="' + pick + '"]').checked = true;
   vEls.modelsHint.textContent = aiState.gpuError
     ? 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + ').'
-    : pick ? 'AI · Fast is made for anime video and is the quickest; the others take several times longer per frame.'
+    : pick ? 'AI · Fast is made for anime video and is the quickest. AI · Fast and Balanced run on WebGPU where the browser has it; Best and Anime+ use the slower WebGL engine.'
     : 'Download an AI model to start — it runs on your GPU and is kept in this browser. AI · Fast is made for anime video.';
 }
 
@@ -6706,16 +7078,26 @@ async function videoRenderPreview() {
       vEls.spinner.hidden = false;
       vEls.status.textContent = where + ' · upscaling…';
       const { canvas } = vid.frame, w = canvas.width, h = canvas.height;
-      const rgba = canvas.getContext('2d').getImageData(0, 0, w, h).data;
-      const t0 = performance.now();
-      const up = await aiRun(st.engine, rgba, w, h, size.iw, size.ih, null, gone, { denoise: st.denoise });
-      // The first run also sends the model to the GPU, so keep the fastest.
-      vid.ms[st.engine] = Math.min(vid.ms[st.engine] || Infinity, performance.now() - t0);
+      const gpu = await videoGpuFor(st.engine, st.denoise);
+      let up, t0 = performance.now();
+      if (gpu) {
+        const pic = { iw: size.iw, ih: size.ih, W: size.iw, H: size.ih, x: 0, y: 0 };     // the picture only
+        gpu.eng.run(gpu.model, canvas, w, h, pic);
+        await gpu.eng.done();
+        vid.ms[st.engine] = Math.min(vid.ms[st.engine] || Infinity, performance.now() - t0);
+        up = await gpu.eng.read(pic);
+      } else {
+        const rgba = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+        up = await aiRun(st.engine, rgba, w, h, size.iw, size.ih, null, gone, { denoise: st.denoise });
+        vid.ms[st.engine] = Math.min(vid.ms[st.engine] || Infinity, performance.now() - t0);
+      }
+      vid.backend = gpu ? 'WebGPU' : 'WebGL';
+      // The first run also sends the model to the GPU, so the fastest is kept.
       const c = new OffscreenCanvas(size.iw, size.ih);
       c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(up.buffer, up.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), 0, 0);
       vid.after = c; vid.afterKey = key;
     }
-    vEls.status.textContent = where + ' · ' + AI_MODELS.find(m => m.id === st.engine).title;
+    vEls.status.textContent = where + ' · ' + AI_MODELS.find(m => m.id === st.engine).title + (vid.backend ? ' on ' + vid.backend : '');
     videoDraw(); videoTexts();
   } catch (err) {
     if (!gone()) { console.error('Video preview failed', err); vEls.status.textContent = 'Preview failed: ' + (err.message || err); }
