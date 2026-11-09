@@ -3720,7 +3720,7 @@ async function gpuAttempt(getEngine, job, what, isCancelled) {
   if (!eng) return null;
   gpuFreeWebGL();
   const detail = err => (err.message || err) + ' — ' + what + ', GPU budget ' + Math.round(gpuBudget() / 2 ** 20) + ' MB, max buffer ' +
-    Math.round(eng.device.limits.maxBufferSize / 2 ** 20) + ' MB' + (eng.f16 ? '' : ', 32-bit') + (gpuSafeMode ? ', safe mode' : '');
+    Math.round(eng.device.limits.maxBufferSize / 2 ** 20) + ' MB' + (eng.f16 ? '' : ', 32-bit') + (gpuSafeMode ? ', safe mode' : '') + (eng.info ? ' · ' + eng.info : '');
   for (;;) {
     const dev = eng.device;
     dev.pushErrorScope('out-of-memory'); dev.pushErrorScope('validation');
@@ -7114,8 +7114,106 @@ function gpuDeviceLost(device, reason) {
 }
 function gpuCompact() {
   if (gpuOff) return Promise.resolve(null);
-  if (!gpuCompactPromise) gpuCompactPromise = createGpuCompact(gpuSafeMode ? { f16: false, og: 1 } : {}).catch(err => { console.warn('WebGPU unavailable', err); return null; });
+  if (!gpuCompactPromise) gpuCompactPromise = (async () => {
+    if (gpuSafeMode) return createGpuCompact({ f16: false, og: 1 });
+    const t = GPU_MOBILE ? await gpuTune().catch(err => { console.warn('GPU tuning failed', err); return null; }) : null;
+    if (t && t.off) { gpuOff = 'no kernel shape worked on this GPU when it was tuned'; return null; }
+    return createGpuCompact(t ? { ...t.exact, f16: t.f16, fastOpts: t.fast, noFast: !t.fast, tuned: t } : {});
+  })().catch(err => { console.warn('WebGPU unavailable', err); return null; });
   return gpuCompactPromise;
+}
+
+// ── Kernel tuning (phones) ──
+// The kernel shapes above were measured on an Apple M5 Pro. On a phone the
+// first WebGPU job times a few shapes once on a small test picture and keeps
+// the fastest that works, per GPU (localStorage). Every shape gives exactly
+// the same result; only the speed differs. Each candidate runs on its own
+// device, so one that makes the driver fail only rules itself out; a mark
+// written before each run lets a crashed tab skip it on the next visit. If
+// no 16-bit shape works, the device uses 32-bit maths.
+const GPU_TUNE_KEY = 'lumity-gpu-tune-v1', GPU_KERNEL_VERSION = 1;   // (bump when the kernels change)
+const GPU_TUNE_SHAPES = {
+  exact: [{ px: 1, wx: 8, wy: 8, og: 4 }, { px: 1, wx: 8, wy: 8, og: 1 }, { px: 2, wx: 4, wy: 8, og: 2 }, { px: 1, wx: 8, wy: 4, og: 2 }, { px: 2, wx: 8, wy: 8, og: 1 }],
+  fast: [{ px: 4, wx: 4, wy: 8, og: 4 }, { px: 2, wx: 8, wy: 8, og: 1 }, { px: 4, wx: 4, wy: 8, og: 1 }, { px: 2, wx: 4, wy: 8, og: 2 }],
+};
+const gpuShapeName = sh => sh.px + 'px ' + sh.wx + '×' + sh.wy + '×' + sh.og;
+function gpuTuneStore(update) {
+  let all = {};
+  try { all = JSON.parse(localStorage.getItem(GPU_TUNE_KEY)) || {}; } catch { /* none or unreadable */ }
+  if (update) { update(all); try { localStorage.setItem(GPU_TUNE_KEY, JSON.stringify(all)); } catch { /* not stored: tunes again next visit */ } }
+  return all;
+}
+// A compact network with the layer shapes of AI · Fast, for timing when no model is downloaded.
+function gpuTuneModel() {
+  const conv = (inC, outC, prelu) => ({ inC, outC, weight: Float32Array.from({ length: outC * inC * 9 }, (_, i) => Math.sin(i) * 0.05),
+    bias: new Float32Array(outC), ...(prelu ? { prelu: new Float32Array(outC).fill(0.1) } : {}) });
+  return { arch: 'compact', scale: 4, pad: 16, version: 0, convs: [conv(3, 64, true), ...Array.from({ length: 16 }, () => conv(64, 64, true)), conv(64, 48, false)] };
+}
+let gpuTunePromise = null;
+function gpuTune() { return gpuTunePromise || (gpuTunePromise = gpuTuneRun()); }
+async function gpuTuneRun() {
+  let off = false;
+  try { off = !!localStorage.getItem('lumity-gpu-tune-off'); } catch { /* storage blocked */ }
+  if (off || !navigator.gpu) return null;
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) return null;
+  const ai = adapter.info || {};
+  const key = [ai.vendor, ai.architecture, ai.device, ai.description].join('|') + '|k' + GPU_KERNEL_VERSION;
+  const hasF16 = adapter.features.has('shader-f16');
+  let rec = gpuTuneStore()[key] || { bad: [], ms: {} };
+  if (rec.done) return rec;
+  const save = () => gpuTuneStore(all => { all[key] = rec; });
+  if (rec.trying) { rec.bad.push(rec.trying); rec.trying = null; save(); }     // the tab or the driver died on it last time
+  showToast('Tuning the GPU for this device (once, a few seconds)…');
+  const model = aiReady('animevideov3') ? await aiGetModel('animevideov3') : gpuTuneModel();     // (timing depends on the layer shapes only)
+  const w = 256, h = 144, rgba = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4, line = (x + y) % 23 < 2;
+    rgba[i] = line ? 20 : x; rgba[i + 1] = line ? 20 : y + 60; rgba[i + 2] = line ? 20 : 200 - x / 2; rgba[i + 3] = 255;
+  }
+  const size = { iw: w * 4, ih: h * 4, W: w * 4, H: h * 4, x: 0, y: 0 }, t0 = performance.now();
+  // → ms per run, or null when this shape failed (it's then never tried again)
+  async function time(kind, shape, f16) {
+    const ck = kind + (f16 ? '' : '-f32') + ':' + gpuShapeName(shape);
+    if (rec.bad.includes(ck)) return null;
+    if (rec.ms[ck]) return rec.ms[ck];
+    if (performance.now() - t0 > 8000) return null;                    // time's up: not measured (not bad)
+    rec.trying = ck; save();
+    let eng = null, ms = null;
+    try {
+      eng = await createGpuCompact(kind === 'fast' ? { f16, fastOpts: shape, tuning: true } : { ...shape, f16, noFast: true, tuning: true });
+      if (!eng || (kind === 'fast' && !eng.fastKernel)) throw new Error('no engine');
+      const dev = eng.device;
+      dev.pushErrorScope('out-of-memory'); dev.pushErrorScope('validation');
+      const once = () => { eng.run(model, rgba, w, h, size, false, kind === 'fast'); return eng.done(); };
+      await once();
+      const runs = [];
+      for (let k = 0; k < 3; k++) { const a = performance.now(); await once(); runs.push(performance.now() - a); }
+      const v = await dev.popErrorScope(), o = await dev.popErrorScope();
+      if (v || o || eng.lost) throw new Error((v || o || {}).message || eng.lost);
+      ms = runs.sort((a, b) => a - b)[1];
+      rec.ms[ck] = Math.round(ms * 10) / 10;
+    } catch (err) {
+      console.warn('GPU tuning: ' + ck + ' failed', err);
+      rec.bad.push(ck);
+    } finally {
+      rec.trying = null; save();
+      if (eng) try { eng.device.destroy(); } catch { /* lost already */ }
+    }
+    return ms;
+  }
+  const best = async (kind, f16) => {
+    let win = null, winMs = Infinity;
+    for (const shape of GPU_TUNE_SHAPES[kind]) { const ms = await time(kind, shape, f16); if (ms != null && ms < winMs) { win = shape; winMs = ms; } }
+    return win;
+  };
+  let f16 = hasF16, exact = await best('exact', f16);
+  if (!exact && f16) { f16 = false; exact = await best('exact', false); }            // 16-bit maths failed: 32-bit
+  const fast = exact && f16 ? await best('fast', true) : null;
+  Object.assign(rec, { done: true, off: !exact, f16, exact, fast, at: Date.now(), info: [ai.vendor, ai.architecture, ai.description].filter(Boolean).join(' ') });
+  save();
+  console.info('GPU tuned', rec);
+  return rec;
 }
 
 // float32 → float16 bits (round to nearest even); weights only, so no NaN care.
@@ -7183,7 +7281,7 @@ async function createGpuCompact(opts = {}) {
   let lost = null;
   device.lost.then(info => {
     lost = (info.reason && info.reason !== 'unknown' ? info.reason + ': ' : '') + (info.message || 'the GPU was reset');
-    gpuDeviceLost(device, lost);
+    if (!opts.tuning) gpuDeviceLost(device, lost);              // (a tuning device only rules out its shape)
   });
   const S = f16 ? 'f16' : 'f32', VS = f16 ? 8 : 16;                // storage type, bytes per vec4
   const head = (f16 ? 'enable f16;\n' : '') + 'alias S = ' + S + ';\n';
@@ -7281,7 +7379,8 @@ ${body}}`;
   // Exact: the defaults, measured fastest on an Apple M5 Pro (≈110 ms for a
   // 853×480 frame with AI · Fast). Fast: f16 sums with 4 pixels per thread
   // (≈ 0.56× the time for both models there). Without f16 the fast kernel is the exact one.
-  const kernels = { exact: convKernel(opts), fast: f16 ? convKernel({ half: true, px: 4, wx: 4, ...opts.fastOpts }) : null };
+  // (opts: an exact shape, fastOpts: a fast one — e.g. from gpuTune; noFast: no fast kernel.)
+  const kernels = { exact: convKernel(opts), fast: f16 && !opts.noFast ? convKernel({ px: 4, wx: 4, ...opts.fastOpts, half: true }) : null };
 
   // Output: pixel-shuffle ×4 of the last conv + nearest-upsampled input
   // (FS_SHUFFLE), area-averaged to the target size (FS_RESIZE), black outside
@@ -7527,7 +7626,8 @@ fn t4(u: i32, v: i32) -> vec3f {
 
   return { f16, fastKernel: !!kernels.fast, canvas, run, read, present, release, device, result: () => plan && plan.outTex,
     done: () => device.queue.onSubmittedWorkDone(), get lost() { return lost; },
-    info: (f16 ? 'f16' : 'f32') + ' · ' + (adapter.info ? [adapter.info.vendor, adapter.info.architecture].filter(Boolean).join(' ') : '') };
+    info: (f16 ? 'f16' : 'f32') + ' · ' + (adapter.info ? [adapter.info.vendor, adapter.info.architecture].filter(Boolean).join(' ') : '') +
+      (opts.tuned ? ' · tuned ' + gpuShapeName(opts.tuned.exact) + (opts.tuned.fast ? ', fast ' + gpuShapeName(opts.tuned.fast) : ', no fast') : '') };
 }
 
 // ── CLEANUP: WEBGPU ───────────────────────────────────────────────────────────
@@ -8275,7 +8375,7 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
   }
 
   // (gpuAttempt catches the GPU errors of cleanup() and releases on failure.)
-  return { ai, device, f16: ai.f16, get lost() { return ai.lost; }, cleanup, cleanupTex, upload, read, release };
+  return { ai, device, f16: ai.f16, info: ai.info, get lost() { return ai.lost; }, cleanup, cleanupTex, upload, read, release };
 }
 
 // ── VIDEO: PIPELINE ───────────────────────────────────────────────────────────
