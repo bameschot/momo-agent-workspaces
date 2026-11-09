@@ -3595,11 +3595,11 @@ async function gpuCleanup(rgba, w, h, opts, device, onProgress, isCancelled) {
   const stopped = () => isCancelled && isCancelled();
   if (device === 'webgpu') {
     try {
-      const eng = typeof gpuCleanupEngine === 'function' ? await gpuCleanupEngine() : null;
+      const eng = await gpuCleanupEngine();
       if (eng) {
-        const out = await eng.cleanup(rgba, w, h, opts, P, M.LANCZOS2, onProgress, isCancelled);
+        const r = await eng.cleanup(rgba, w, h, opts, P, M.LANCZOS2, onProgress, isCancelled);
         lastCleanupBackend = 'WebGPU';
-        return { out, backend: 'WebGPU' };
+        return { out: r.out, aaDone: r.aaDone, backend: 'WebGPU' };
       }
       note('WebGPU isn’t available here, so the cleanup runs on WebGL.');
     } catch (err) {
@@ -3635,7 +3635,7 @@ async function builtinJob(rgba, w, h, opts, onProgress, device) {
     catch (err) { if (cancelled) throw new CancelledError('Cancelled'); throw err; }
     finally { currentJob = null; }
     if (r) {
-      if (!aaFull) return r.out;
+      if (!aaFull || r.aaDone) return r.out;
       return runUpscaleJob(r.out, opts.width, opts.height, { period: opts.lineScale || opts.width / w, strength: aaFull },
         f => onProgress(0.8 + f * 0.2, 'Smoothing edges…'), 'antialias');
     }
@@ -4358,7 +4358,7 @@ async function previewEngine(region, rw, rh, opts, device, isCancelled) {
   if (device === 'webgpu' || device === 'webgl') {
     const r = await gpuCleanup(region, rw, rh, opts, device, null, isCancelled);
     if (r) {
-      const aa = opts.extras && opts.extras.aa;
+      const aa = opts.extras && opts.extras.aa && !r.aaDone;
       return aa ? previewWorkerRun(r.out, opts.width, opts.height, { period: opts.lineScale || opts.width / rw, strength: aa }, 'antialias') : r.out;
     }
     device = gpuBuiltinAvailable() ? 'gpu' : 'cpu';
@@ -7120,7 +7120,7 @@ fn t4(u: i32, v: i32) -> vec3f {
       bands.push({ b0, bh, ty0, ty1, inputU, convs, output, uniforms, input: null });
     }
     const outTex = device.createTexture({ size: [size.W, size.H], format: 'rgba8unorm',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING });
     plan = { pk, key, bands, inp, inTex: null, outTex,
       destroy() { inp.destroy(); A.destroy(); B.destroy(); outTex.destroy(); bands.forEach(b => b.uniforms.forEach(u => u.destroy())); } };
     return plan;
@@ -7187,8 +7187,743 @@ fn t4(u: i32, v: i32) -> vec3f {
     return out;
   }
 
-  return { f16, canvas, run, read, done: () => device.queue.onSubmittedWorkDone(), destroy: () => device.destroy(), get lost() { return lost; },
+  // Puts a picture texture (e.g. the WebGPU cleanup's result) into `canvas`
+  // as a size.W×size.H frame, at (size.x, size.y) on black.
+  function present(tex, size) {
+    if (lost) throw new Error(lost);
+    if (canvas.width !== size.W || canvas.height !== size.H) { canvas.width = size.W; canvas.height = size.H; }
+    if (!ctx.configured) { ctx.configure({ device, format: 'rgba8unorm', alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST }); ctx.configured = true; }
+    const enc = device.createCommandEncoder(), ct = ctx.getCurrentTexture();
+    enc.beginRenderPass({ colorAttachments: [{ view: ct.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] }).end();
+    enc.copyTextureToTexture({ texture: tex }, { texture: ct, origin: [size.x, size.y] }, [size.iw, size.ih]);
+    device.queue.submit([enc.finish()]);
+  }
+
+  return { f16, canvas, run, read, present, device, result: () => plan && plan.outTex,
+    done: () => device.queue.onSubmittedWorkDone(), destroy: () => device.destroy(), get lost() { return lost; },
     info: (f16 ? 'f16' : 'f32') + ' · ' + (adapter.info ? [adapter.info.vendor, adapter.info.architecture].filter(Boolean).join(' ') : '') };
+}
+
+// ── CLEANUP: WEBGPU ───────────────────────────────────────────────────────────
+// The built-in engine (prepare, the output half and edge anti-aliasing) as
+// WebGPU passes, on the device of the WebGPU AI engine. The fragment shaders
+// are WGSL ports of the WebGL ones (FS_P_*, FS_RESAMPLE … FS_OUT) and of
+// antialias(), with the same region conventions (P, G = P + orig, C clamps
+// to the region; size / orig / img). Flat fills runs as compute: regions by
+// label propagation, region means and variances by atomic sums.
+let gpuCleanupPromise = null;
+function gpuCleanupEngine() {
+  if (!gpuCleanupPromise) {
+    gpuCleanupPromise = gpuCompact().then(ai => ai ? createGpuCleanup(ai) : null)
+      .catch(err => { console.warn('WebGPU cleanup unavailable', err); gpuCleanupPromise = null; return null; });
+  }
+  return gpuCleanupPromise.then(c => {
+    if (c && c.ai.lost) { gpuCleanupPromise = null; return gpuCleanupEngine(); }
+    return c;
+  });
+}
+
+async function createGpuCleanup(ai) {
+  const device = ai.device;
+  const TU = GPUTextureUsage, BU = GPUBufferUsage;
+  // Uniforms shared by every pass: region size / origin, picture size, source
+  // size, 8 floats, 4 ints, a direction.
+  const HEAD = `
+struct U { size: vec2i, orig: vec2i, img: vec2i, src: vec2i, f0: vec4f, f1: vec4f, i0: vec4i, dir: vec2i, pad: vec2i }
+@group(0) @binding(0) var<uniform> u: U;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let q = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(q * 2.0 - 1.0, 0.0, 1.0);
+}
+fn C(q: vec2i) -> vec2i { return clamp(q, vec2i(0), u.size - 1); }
+fn outside(q: vec2i) -> bool { return q.x < 0 || q.y < 0 || q.x >= u.size.x || q.y >= u.size.y; }
+`;
+  const frag = (n, pre, body) => HEAD + Array.from({ length: n }, (_, k) => `@group(0) @binding(${k + 1}) var t${k + 1}: texture_2d<f32>;\n`).join('') +
+    pre + `\n@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {\n  let p = vec2i(pos.xy); let g = p + u.orig;\n${body}\n}`;
+  const SOBEL = `
+  let gx = (Yv(p + vec2i(1, -1)) + 2.0 * Yv(p + vec2i(1, 0)) + Yv(p + vec2i(1, 1)) - Yv(p + vec2i(-1, -1)) - 2.0 * Yv(p + vec2i(-1, 0)) - Yv(p + vec2i(-1, 1))) / 8.0;
+  let gy = (Yv(p + vec2i(-1, 1)) + 2.0 * Yv(p + vec2i(0, 1)) + Yv(p + vec2i(1, 1)) - Yv(p + vec2i(-1, -1)) - 2.0 * Yv(p + vec2i(0, -1)) - Yv(p + vec2i(1, -1))) / 8.0;`;
+  const SRC = {
+    // ── prepare (input resolution) ──
+    planes: frag(1, '', `
+  let c = round(textureLoad(t1, p, 0) * 255.0);
+  return vec4f(0.299 * c.r + 0.587 * c.g + 0.114 * c.b, -0.168736 * c.r - 0.331264 * c.g + 0.5 * c.b + 128.0,
+               0.5 * c.r - 0.418688 * c.g - 0.081312 * c.b + 128.0, c.a);`),
+    deblock: frag(1, '', `
+  let cur = textureLoad(t1, p, 0); let vert = u.i0.x == 1;
+  let d = select(vec2i(1, 0), vec2i(0, 1), vert); let ps = select(p.x, p.y, vert); let len = select(u.size.x, u.size.y, vert);
+  var e: i32; var isQ: bool;
+  if (ps % 8 == 0) { e = ps; isQ = true; } else if ((ps + 1) % 8 == 0) { e = ps + 1; isQ = false; } else { return cur; }
+  if (e < 8 || e + 1 >= len) { return cur; }
+  let qe = p + d * (e - ps);
+  let p1 = textureLoad(t1, qe - 2 * d, 0).rgb; let p0 = textureLoad(t1, qe - d, 0).rgb; let q0 = textureLoad(t1, qe, 0).rgb; let q1 = textureLoad(t1, qe + d, 0).rgb;
+  let st = (q1 - p1) / 3.0; let T = u.f0.xyz;
+  let res = select(p0 + 0.75 * (p1 + st - p0), q0 + 0.75 * (p1 + 2.0 * st - q0), isQ); let old = select(p0, q0, isQ);
+  let keep = (abs(q0 - p0) >= T) | (abs(p1 - p0) >= T * 0.5) | (abs(q1 - q0) >= T * 0.5);
+  return vec4f(select(res, old, keep), cur.a);`),
+    guard: frag(1, '', `
+  var lo = vec3f(1e9); var hi = vec3f(-1e9);
+  for (var dy = -1; dy <= 1; dy++) { for (var dx = -1; dx <= 1; dx++) { let v = textureLoad(t1, C(p + vec2i(dx, dy)), 0).rgb; lo = min(lo, v); hi = max(hi, v); } }
+  let r = hi - lo; let k = u.f0.x;
+  return vec4f(select(0.0, 1.0, r.x > k || r.y > k * 0.8 || r.z > k * 0.8));`),
+    flatten: frag(2, '', `
+  let cur = textureLoad(t1, p, 0);
+  if (textureLoad(t2, p, 0).r > 0.5) { return cur; }
+  let R = u.i0.x; var sw = 0.0; var s = vec3f(0.0);
+  for (var dy = -R; dy <= R; dy++) { for (var dx = -R; dx <= R; dx++) {
+    let d2 = dx * dx + dy * dy;
+    if (d2 > R * R + R) { continue; }
+    let q = p + vec2i(dx, dy);
+    if (outside(q)) { continue; }
+    if (textureLoad(t2, q, 0).r > 0.5) { continue; }
+    let v = textureLoad(t1, q, 0).rgb; let dv = v - cur.rgb;
+    let k = floor((dv.x * dv.x + 0.5 * (dv.y * dv.y + dv.z * dv.z)) / u.f0.y);
+    if (k >= 1024.0) { continue; }
+    let wt = exp(-f32(d2) / u.f0.x) * exp(-(k * u.f0.y) / u.f0.z);
+    sw += wt; s += wt * v;
+  } }
+  if (sw > 0.0) { return vec4f(s / sw, cur.a); }
+  return cur;`),
+    box: frag(1, '', `
+  let R = u.i0.x; let mode = u.i0.y;
+  var acc = select(select(vec4f(0.0), vec4f(1e30), mode == 2), vec4f(-1e30), mode == 1); var n = 0;
+  for (var k = -R; k <= R; k++) {
+    let q = p + u.dir * k;
+    if (outside(q)) { continue; }
+    let v = textureLoad(t1, q, 0);
+    if (mode == 0) { acc += v; } else if (mode == 1) { acc = max(acc, v); } else { acc = min(acc, v); }
+    n++;
+  }
+  if (mode == 0) { return acc / f32(n); }
+  return acc;`),
+    gprod: frag(1, '', `
+  let c = textureLoad(t1, p, 0); let m = u.i0.x;
+  if (m == 0) { return vec4f(c.r, c.r * c.r, 0.0, 0.0); }
+  if (m == 1) { return vec4f(c.r, c.g, c.b, c.r * c.r); }
+  return vec4f(c.r * c.g, c.r * c.b, 0.0, 0.0);`),
+    gab: frag(2, '', `
+  let m = textureLoad(t1, p, 0); let eps = u.f0.x;
+  let x = textureLoad(t2, p, 0);
+  if (u.i0.x == 0) { let v = m.g - m.r * m.r; let a = v / (v + eps); return vec4f(a, m.r - a * m.r, 0.0, 0.0); }
+  let v = m.a - m.r * m.r;
+  let a1 = (x.r - m.r * m.g) / (v + eps); let a2 = (x.g - m.r * m.b) / (v + eps);
+  return vec4f(a1, m.g - a1 * m.r, a2, m.b - a2 * m.r);`),
+    gout: frag(2, '', `
+  let c = textureLoad(t1, p, 0); let ab = textureLoad(t2, p, 0); var o = c;
+  if (u.i0.x == 0) { o.r = ab.r * c.r + ab.g; } else { o.g = ab.r * c.r + ab.g; o.b = ab.b * c.r + ab.a; }
+  return o;`),
+    tensor: frag(1, 'fn Yv(q: vec2i) -> f32 { return textureLoad(t1, C(q), 0).r; }', SOBEL + `
+  return vec4f(gx * gx, gx * gy, gy * gy, 0.0);`),
+    field: frag(1, '', `
+  let J = textureLoad(t1, p, 0);
+  let dxx = J.r - J.b; let dxy = 2.0 * J.g; let tr = J.r + J.b; let diff = sqrt(dxx * dxx + dxy * dxy);
+  if (diff < 1e-6) { return vec4f(0.0); }
+  let len = diff / (tr + 1e-6) * clamp((sqrt((tr + diff) / 2.0) - 2.0) / 10.0, 0.0, 1.0);
+  return vec4f(dxx / diff * len, dxy / diff * len, 0.0, 0.0);`),
+    edge: frag(1, 'fn Yv(q: vec2i) -> f32 { return textureLoad(t1, q, 0).r; }', `
+  if (p.x < 1 || p.y < 1 || p.x >= u.size.x - 1 || p.y >= u.size.y - 1) { return vec4f(0.0); }` + SOBEL + `
+  return vec4f(select(0.0, 1.0, sqrt(gx * gx + gy * gy) > 10.0));`),
+    eclean: frag(4, `
+fn bil(q0: vec2f) -> vec3f {
+  let q = clamp(q0, vec2f(0.0), vec2f(u.size - 1));
+  let a = vec2i(floor(q)); let b = min(a + 1, u.size - 1); let f = q - vec2f(a);
+  return mix(mix(textureLoad(t1, a, 0).rgb, textureLoad(t1, vec2i(b.x, a.y), 0).rgb, f.x),
+             mix(textureLoad(t1, vec2i(a.x, b.y), 0).rgb, textureLoad(t1, b, 0).rgb, f.x), f.y);
+}`, `
+  let cur = textureLoad(t1, p, 0);
+  let fv = textureLoad(t4, p, 0).rg;
+  if (textureLoad(t2, p, 0).r > 0.5) {
+    let len = sqrt(fv.x * fv.x + fv.y * fv.y);
+    if (len < 1e-4 || len < 0.3) { return cur; }
+    let cc = fv.x / len; let c = sqrt(max(0.0, (1.0 + cc) / 2.0)); let s = sqrt(max(0.0, (1.0 - cc) / 2.0)) * select(1.0, -1.0, fv.y < 0.0);
+    let t = vec2f(-s, c);
+    var sw = 4.0; var acc = 4.0 * cur.rgb;
+    for (var k = -2; k <= 2; k++) {
+      if (k == 0) { continue; }
+      let wt = select(1.0, 2.0, k == -1 || k == 1);
+      let v = bil(vec2f(p) + t * f32(k));
+      if (abs(v.x - cur.r) > 30.0) { continue; }
+      sw += wt; acc += wt * v;
+    }
+    return vec4f(acc / sw, cur.a);
+  }
+  if (textureLoad(t3, p, 0).r > 0.5) {
+    var sw = 0.0; var acc = vec3f(0.0);
+    for (var dy = -3; dy <= 3; dy++) { for (var dx = -3; dx <= 3; dx++) {
+      let q = p + vec2i(dx, dy);
+      if (outside(q)) { continue; }
+      if (textureLoad(t2, q, 0).r > 0.5) { continue; }
+      let v = textureLoad(t1, q, 0).rgb; let d = v - cur.rgb;
+      let wt = exp(-(d.x * d.x + 0.5 * (d.y * d.y + d.z * d.z)) / 392.0);
+      sw += wt; acc += wt * v;
+    } }
+    if (sw > 0.0) { return vec4f(acc / sw, cur.a); }
+  }
+  return cur;`),
+    // ── output half (output resolution, per tile) ──
+    resample: frag(3, 'fn lz(d2: f32) -> f32 { return textureLoad(t3, vec2i(i32(d2 * 512.0), 0), 0).r; }', `
+  let w = u.src.x; let h = u.src.y;
+  let sx = (f32(g.x) + 0.5) * (f32(w) / f32(u.img.x)) - 0.5;
+  let sy = (f32(g.y) + 0.5) * (f32(h) / f32(u.img.y)) - 0.5;
+  let ix = i32(floor(sx)); let iy = i32(floor(sy)); let fx = sx - f32(ix); let fy = sy - f32(iy);
+  let x0 = clamp(ix, 0, w - 1); let x1 = clamp(ix + 1, 0, w - 1); let y0 = clamp(iy, 0, h - 1); let y1 = clamp(iy + 1, 0, h - 1);
+  let f = textureLoad(t2, vec2i(x0, y0), 0).rg * ((1.0 - fx) * (1.0 - fy)) + textureLoad(t2, vec2i(x1, y0), 0).rg * (fx * (1.0 - fy))
+        + textureLoad(t2, vec2i(x0, y1), 0).rg * ((1.0 - fx) * fy) + textureLoad(t2, vec2i(x1, y1), 0).rg * (fx * fy);
+  var len = sqrt(f.x * f.x + f.y * f.y); var c = 1.0; var s = 0.0;
+  if (len > 1e-4) { let cc = f.x / len; c = sqrt(max(0.0, (1.0 + cc) / 2.0)); s = sqrt(max(0.0, (1.0 - cc) / 2.0)) * select(1.0, -1.0, f.y < 0.0); len = min(len, 1.0); }
+  else { len = 0.0; }
+  let across = 1.0 + 0.5 * len; let along = 1.0 / (1.0 + 1.2 * len);
+  var sum = vec3f(0.0); var ws = 0.0;
+  for (var j = -1; j <= 2; j++) {
+    let yy = clamp(iy + j, 0, h - 1); let vy = f32(j) - fy;
+    for (var i = -1; i <= 2; i++) {
+      let xx = clamp(ix + i, 0, w - 1); let vx = f32(i) - fx;
+      let uu = (vx * c + vy * s) * across; let vv = (vy * c - vx * s) * along; let d2 = uu * uu + vv * vv;
+      if (d2 >= 4.0) { continue; }
+      let wt = lz(d2);
+      sum += wt * textureLoad(t1, vec2i(xx, yy), 0).rgb; ws += wt;
+    }
+  }
+  let a = textureLoad(t1, vec2i(x0, y0), 0).rgb; let b = textureLoad(t1, vec2i(x1, y0), 0).rgb;
+  let cq = textureLoad(t1, vec2i(x0, y1), 0).rgb; let d = textureLoad(t1, vec2i(x1, y1), 0).rgb;
+  var val = a;
+  if (ws > 1e-6) { val = sum / ws; }
+  val = clamp(val, min(min(a, b), min(cq, d)), max(max(a, b), max(cq, d)));
+  return vec4f(val.r, round(clamp(val.g, 0.0, 255.0)), round(clamp(val.b, 0.0, 255.0)), 0.0);`),
+    line: frag(1, '', `
+  let ch = u.i0.x; let R = u.i0.y; let mode = u.i0.z;
+  var acc = select(select(0.0, 1e30, mode == 2), -1e30, mode == 1); var n = 0;
+  for (var k = -R; k <= R; k++) {
+    let q = p + u.dir * k;
+    if (outside(q)) { continue; }
+    let v = textureLoad(t1, q, 0)[ch];
+    if (mode == 0) { acc += v; } else if (mode == 1) { acc = max(acc, v); } else { acc = min(acc, v); }
+    n++;
+  }
+  if (mode == 0) { return vec4f(acc / f32(n)); }
+  return vec4f(acc);`),
+    shock: frag(2, 'fn Yc(q: vec2i) -> f32 { return textureLoad(t1, C(q), 0).r; }\nfn Sm(q: vec2i) -> f32 { return textureLoad(t2, C(q), 0).r; }', `
+  let cur = textureLoad(t1, p, 0); var o = cur;
+  if (g.x < 1 || g.y < 1 || g.x >= u.img.x - 1 || g.y >= u.img.y - 1) { return cur; }
+  let gx = (Sm(p + vec2i(1, 0)) - Sm(p - vec2i(1, 0))) / 2.0; let gy = (Sm(p + vec2i(0, 1)) - Sm(p - vec2i(0, 1))) / 2.0;
+  let g2 = gx * gx + gy * gy;
+  if (g2 < 4.0) { return cur; }
+  let s0 = Sm(p);
+  let ixx = Sm(p + vec2i(1, 0)) - 2.0 * s0 + Sm(p - vec2i(1, 0));
+  let iyy = Sm(p + vec2i(0, 1)) - 2.0 * s0 + Sm(p - vec2i(0, 1));
+  let ixy = (Sm(p + vec2i(1, 1)) - Sm(p + vec2i(-1, 1)) - Sm(p + vec2i(1, -1)) + Sm(p + vec2i(-1, -1))) / 4.0;
+  let vnn = (gx * gx * ixx + 2.0 * gx * gy * ixy + gy * gy * iyy) / g2;
+  let ux = (Yc(p + vec2i(1, 0)) - Yc(p - vec2i(1, 0))) / 2.0; let uy = (Yc(p + vec2i(0, 1)) - Yc(p - vec2i(0, 1))) / 2.0;
+  let sg = select(select(0.0, -1.0, vnn < -1e-3), 1.0, vnn > 1e-3);
+  let v = cur.r - sg * sqrt(ux * ux + uy * uy) * u.f0.x;
+  var lo = cur.r; var hi = cur.r;
+  for (var k = -1; k <= 1; k++) { for (var d = -1; d <= 1; d++) { let q = Yc(p + vec2i(d, k)); lo = min(lo, q); hi = max(hi, q); } }
+  o.r = clamp(v, lo, hi);
+  return o;`),
+    sharpen: frag(1, 'fn Yc(q: vec2i) -> f32 { return textureLoad(t1, C(q), 0).r; }', `
+  let cur = textureLoad(t1, p, 0); var o = cur;
+  if (g.x < 1 || g.y < 1 || g.x >= u.img.x - 1 || g.y >= u.img.y - 1) { return cur; }
+  let c = cur.r; let l = Yc(p - vec2i(1, 0)); let r = Yc(p + vec2i(1, 0)); let up = Yc(p - vec2i(0, 1)); let d = Yc(p + vec2i(0, 1));
+  let lo = min(min(min(c, l), min(r, up)), d); let hi = max(max(max(c, l), max(r, up)), d);
+  let room = min(lo, 255.0 - hi) / select(1.0, max(hi, 1.0), hi > 0.0);
+  let k = u.f0.x * sqrt(max(0.0, min(1.0, room + 0.25)));
+  o.r = clamp(c + k * (4.0 * c - l - r - up - d) / 4.0, lo, hi);
+  return o;`),
+    fflat: frag(2, 'fn Yc(q: vec2i) -> f32 { return textureLoad(t1, C(q), 0).r; }', `
+  let cur = textureLoad(t1, p, 0); var o = cur;
+  let mean = textureLoad(t2, p, 0).r;
+  if (g.x < 1 || g.y < 1 || g.x >= u.img.x - 1 || g.y >= u.img.y - 1) { return cur; }
+  var lo = cur.r; var hi = cur.r;
+  for (var k = -1; k <= 1; k++) { for (var d = -1; d <= 1; d++) { let q = Yc(p + vec2i(d, k)); lo = min(lo, q); hi = max(hi, q); } }
+  let range = hi - lo;
+  if (range < u.f0.x) { let t = range / u.f0.x; o.r = mean * (1.0 - t) + cur.r * t; }
+  return o;`),
+    cov: frag(3, '', `
+  let cl = textureLoad(t2, p, 0).r; let c = cl - textureLoad(t3, p, 0).r; let cur = textureLoad(t1, p, 0).r;
+  var v = 0.0;
+  if (c >= 24.0) { v = clamp((cl - cur) / c, 0.0, 1.0); }
+  return vec4f(v);`),
+    redraw: frag(6, '', `
+  let cur = textureLoad(t1, p, 0); var o = cur;
+  let cl = textureLoad(t2, p, 0).r; let er = textureLoad(t3, p, 0).r; let c = cl - er; let pk = textureLoad(t5, p, 0).r;
+  let ls = textureLoad(t4, p, 0).r; let ly = textureLoad(t6, p, 0).r;
+  if (c < 24.0 || pk < 0.15) { return cur; }
+  let t = 0.5 * pk;
+  let Cv = clamp((ls - t) / (pk / u.f0.x) + 0.5, 0.0, 1.0);
+  let core = min(cl, 0.6 * ly + 0.4 * min(cur.r, cl));
+  let tg = cl * (1.0 - Cv) + core * Cv;
+  let z = min(1.0, (c - 24.0) / 24.0) * min(1.0, (pk - 0.15) / 0.15);
+  o.r = cur.r + (tg - cur.r) * z;
+  return o;`),
+    darken: frag(2, '', `
+  let cur = textureLoad(t1, p, 0);
+  let hat = max(0.0, textureLoad(t2, p, 0).r - cur.r);
+  return vec4f(max(0.0, cur.r - u.f0.x * hat), cur.g, cur.b, hat);`),
+    snap: frag(1, '', `
+  let cur = textureLoad(t1, p, 0); var o = cur;
+  if (g.x < 2 || g.y < 2 || g.x >= u.img.x - 2 || g.y >= u.img.y - 2) { return cur; }
+  var lo = p; var hi = p; var ylo = cur.r; var yhi = cur.r;
+  for (var dy = -2; dy <= 2; dy++) { for (var dx = -2; dx <= 2; dx++) {
+    let q = C(p + vec2i(dx, dy)); let v = textureLoad(t1, q, 0).r;
+    if (v < ylo) { ylo = v; lo = q; }
+    if (v > yhi) { yhi = v; hi = q; }
+  } }
+  var b = cur.g; var c = cur.b; let range = yhi - ylo;
+  if (range > u.f0.x) {
+    let t = clamp((cur.r - ylo) / range * 2.2 - 0.6, 0.0, 1.0);
+    let L = textureLoad(t1, lo, 0); let Hh = textureLoad(t1, hi, 0);
+    b = L.g * (1.0 - t) + Hh.g * t; c = L.b * (1.0 - t) + Hh.b * t;
+  }
+  let boost = select(1.0, 1.0 + u.f0.y * min(1.0, cur.a / 30.0), u.i0.x == 1);
+  o.g = round(clamp(128.0 + (b - 128.0) * boost, 0.0, 255.0));
+  o.b = round(clamp(128.0 + (c - 128.0) * boost, 0.0, 255.0));
+  return o;`),
+    out: frag(2, `
+fn hash(v: vec2u) -> f32 {
+  var h = v.x * 1664525u + v.y * 1013904223u; h ^= h >> 16u; h *= 2246822519u; h ^= h >> 13u; h *= 3266489917u; h ^= h >> 16u;
+  return f32(h) / 4294967296.0;
+}`, `
+  let cur = textureLoad(t1, p, 0);
+  let y = cur.r; let cb = cur.g - 128.0; let cr = cur.b - 128.0;
+  let gu = vec2u(g);
+  let dither = (hash(gu * 2u) - hash(gu * 2u + vec2u(1u, 7u))) * 0.5;
+  var rgb = vec3f(y + 1.402 * cr, y - 0.344136 * cb - 0.714136 * cr, y + 1.772 * cb) + dither;
+  var a = 255.0;
+  let w = u.src.x; let h = u.src.y;
+  let sy = clamp((f32(g.y) + 0.5) * f32(h) / f32(u.img.y) - 0.5, 0.0, f32(h - 1));
+  let sx = clamp((f32(g.x) + 0.5) * f32(w) / f32(u.img.x) - 0.5, 0.0, f32(w - 1));
+  let y0 = i32(floor(sy)); let x0 = i32(floor(sx)); let y1 = min(y0 + 1, h - 1); let x1 = min(x0 + 1, w - 1);
+  let fy = sy - f32(y0); let fx = sx - f32(x0);
+  let av = (textureLoad(t2, vec2i(x0, y0), 0).a * (1.0 - fx) + textureLoad(t2, vec2i(x1, y0), 0).a * fx) * (1.0 - fy)
+         + (textureLoad(t2, vec2i(x0, y1), 0).a * (1.0 - fx) + textureLoad(t2, vec2i(x1, y1), 0).a * fx) * fy;
+  if (u.i0.x == 1) {
+    a = round(clamp(av, 0.0, 255.0));
+    if (u.i0.y == 1 && a < 255.0) { let t = a / 255.0; rgb = rgb * t + 255.0 * (1.0 - t); a = 255.0; }
+  }
+  return vec4f(round(clamp(rgb, vec3f(0.0), vec3f(255.0))), a) / 255.0;`),
+    // ── edge anti-aliasing (antialias() in upscalerModule) ──
+    aaluma: frag(1, '', `
+  let c = round(textureLoad(t1, p, 0) * 255.0);
+  return vec4f(0.299 * c.r + 0.587 * c.g + 0.114 * c.b);`),
+    aagrad: frag(1, 'fn Ys(q: vec2i) -> f32 { return textureLoad(t1, C(q), 0).r; }', `
+  let gx = (Ys(p + vec2i(1, 0)) - Ys(p - vec2i(1, 0))) * 0.5; let gy = (Ys(p + vec2i(0, 1)) - Ys(p - vec2i(0, 1))) * 0.5;
+  return vec4f(gx * gx, gx * gy, gy * gy, 0.0);`),
+    aaalong: frag(2, 'fn px(q: vec2i) -> vec3f { return round(textureLoad(t1, q, 0).rgb * 255.0); }', `
+  let src = px(p);
+  let J = textureLoad(t2, p, 0); let a = J.r; let b = J.g; let c = J.b;
+  let half = (a + c) / 2.0; let d = sqrt((a - c) * (a - c) / 4.0 + b * b); let l1 = half + d; let l2 = half - d;
+  if (l1 < 4.0) { return vec4f(src, 0.0); }
+  let coh = (l1 - l2) / (l1 + l2 + 1e-6);
+  let e = clamp((sqrt(l1) - 2.0) / 6.0, 0.0, 1.0); let q = clamp((coh - 0.35) / 0.4, 0.0, 1.0);
+  let wgt = u.f0.x * e * q;
+  if (wgt < 0.02) { return vec4f(src, 0.0); }
+  var gx = l1 - c; var gy = b;
+  if (abs(gx) + abs(gy) < 1e-6) { gx = b; gy = l1 - a; }
+  var gl = sqrt(gx * gx + gy * gy);
+  if (gl == 0.0) { gl = 1.0; }
+  let tx = -gy / gl; let ty = gx / gl;
+  let L = u.i0.x; let W = u.size.x; let H = u.size.y;
+  var acc = vec3f(0.0); var ws = 0.0;
+  for (var k = -L; k <= L; k++) {
+    let fxp = clamp(f32(p.x) + f32(k) * tx, 0.0, f32(W - 1)); let fyp = clamp(f32(p.y) + f32(k) * ty, 0.0, f32(H - 1));
+    let x0 = i32(fxp); let y0 = i32(fyp); let x1 = select(x0, x0 + 1, x0 < W - 1); let y1 = select(y0, y0 + 1, y0 < H - 1);
+    let fx = fxp - f32(x0); let fy = fyp - f32(y0); let wk = exp(-f32(k * k) / u.f0.y);
+    acc += (px(vec2i(x0, y0)) * ((1.0 - fx) * (1.0 - fy)) + px(vec2i(x1, y0)) * (fx * (1.0 - fy))
+          + px(vec2i(x0, y1)) * ((1.0 - fx) * fy) + px(vec2i(x1, y1)) * (fx * fy)) * wk;
+    ws += wk;
+  }
+  return vec4f(round(clamp(src + (acc / ws - src) * wgt, vec3f(0.0), vec3f(255.0))), wgt);`),
+    aaya: frag(1, '', `
+  let c = textureLoad(t1, p, 0);
+  return vec4f(0.299 * c.r + 0.587 * c.g + 0.114 * c.b);`),
+    aaapply: frag(4, '', `
+  let al = textureLoad(t1, p, 0); var rgb = al.rgb;
+  let dl = textureLoad(t3, p, 0).r - textureLoad(t2, p, 0).r;
+  if (al.a > 0.0) { rgb = round(clamp(rgb + dl * min(1.0, al.a * 1.5), vec3f(0.0), vec3f(255.0))); }
+  return vec4f(rgb / 255.0, textureLoad(t4, p, 0).a);`),
+  };
+  // Flat fills: regions of similar neighbouring non-edge pixels (labels = the
+  // smallest pixel index in the region, by propagation), their mean and
+  // variance (64-bit fixed-point sums with a carry word), then flat regions
+  // are pulled to their mean — flatFills() in upscalerModule.
+  const FF = `
+struct F { w: u32, h: u32, pad0: u32, pad1: u32 }
+@group(0) @binding(0) var<uniform> fu: F;
+@group(0) @binding(1) var planes: texture_2d<f32>;
+@group(0) @binding(2) var<storage, read_write> lab: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> flag: array<atomic<u32>>;
+@group(0) @binding(4) var<storage, read_write> cnt: array<atomic<u32>>;
+@group(0) @binding(5) var<storage, read_write> sums: array<atomic<u32>>;
+@group(0) @binding(6) var<storage, read_write> vars: array<atomic<u32>>;
+@group(0) @binding(7) var outT: texture_storage_2d<rgba32float, write>;
+const NONE = 0xffffffffu;
+fn ok(gid: vec3u) -> bool { return gid.x < fu.w && gid.y < fu.h; }
+fn close(a: vec3f, b: vec3f) -> bool { let d = a - b; return d.x * d.x + 0.5 * (d.y * d.y + d.z * d.z) < 12.25; }
+fn add64(i: u32, v: u32, buf: u32) {
+  if (buf == 0u) { let old = atomicAdd(&sums[i], v); if (old > NONE - v) { atomicAdd(&sums[i + 1u], 1u); } }
+  else { let old = atomicAdd(&vars[i], v); if (old > NONE - v) { atomicAdd(&vars[i + 1u], 1u); } }
+}
+fn mean(l: u32, k: u32, n: f32) -> f32 {
+  let i = l * 6u + k * 2u;
+  return (f32(atomicLoad(&sums[i + 1u])) * 4294967296.0 + f32(atomicLoad(&sums[i]))) / 64.0 / n - 64.0;
+}
+@compute @workgroup_size(8, 8) fn init(@builtin(global_invocation_id) gid: vec3u) {
+  if (!ok(gid)) { return; }
+  let p = vec2i(gid.xy); let mx = vec2i(i32(fu.w) - 1, i32(fu.h) - 1);
+  var lo = 1e9; var hi = -1e9;
+  for (var dy = -1; dy <= 1; dy++) { for (var dx = -1; dx <= 1; dx++) { let v = textureLoad(planes, clamp(p + vec2i(dx, dy), vec2i(0), mx), 0).r; lo = min(lo, v); hi = max(hi, v); } }
+  let i = gid.y * fu.w + gid.x;
+  atomicStore(&lab[i], select(i, NONE, hi - lo >= 14.0));
+  atomicStore(&cnt[i], 0u);
+  for (var k = 0u; k < 6u; k++) { atomicStore(&sums[i * 6u + k], 0u); }
+  atomicStore(&vars[i * 2u], 0u); atomicStore(&vars[i * 2u + 1u], 0u);
+}
+@compute @workgroup_size(8, 8) fn prop(@builtin(global_invocation_id) gid: vec3u) {
+  if (!ok(gid)) { return; }
+  let i = gid.y * fu.w + gid.x; let li = atomicLoad(&lab[i]);
+  if (li == NONE) { return; }
+  let p = vec2i(gid.xy); let c = textureLoad(planes, p, 0).rgb;
+  var m = li;
+  var nb = array<vec2i, 4>(vec2i(1, 0), vec2i(-1, 0), vec2i(0, 1), vec2i(0, -1));
+  for (var k = 0; k < 4; k++) {
+    let q = p + nb[k];
+    if (q.x < 0 || q.y < 0 || q.x >= i32(fu.w) || q.y >= i32(fu.h)) { continue; }
+    let lj = atomicLoad(&lab[u32(q.y) * fu.w + u32(q.x)]);
+    if (lj != NONE && lj < m && close(c, textureLoad(planes, q, 0).rgb)) { m = lj; }
+  }
+  let lm = atomicLoad(&lab[m]);
+  if (lm < m) { m = lm; }
+  if (m < li) { atomicMin(&lab[i], m); atomicMin(&lab[li], m); atomicStore(&flag[0], 1u); }
+}
+@compute @workgroup_size(8, 8) fn stats(@builtin(global_invocation_id) gid: vec3u) {
+  if (!ok(gid)) { return; }
+  let l = atomicLoad(&lab[gid.y * fu.w + gid.x]);
+  if (l == NONE) { return; }
+  let c = textureLoad(planes, vec2i(gid.xy), 0).rgb;
+  atomicAdd(&cnt[l], 1u);
+  for (var k = 0u; k < 3u; k++) { add64(l * 6u + k * 2u, u32(round((clamp(c[k], -64.0, 960.0) + 64.0) * 64.0)), 0u); }
+}
+@compute @workgroup_size(8, 8) fn vari(@builtin(global_invocation_id) gid: vec3u) {
+  if (!ok(gid)) { return; }
+  let l = atomicLoad(&lab[gid.y * fu.w + gid.x]);
+  if (l == NONE) { return; }
+  let n = f32(atomicLoad(&cnt[l])); let c = textureLoad(planes, vec2i(gid.xy), 0).rgb;
+  let d = c - vec3f(mean(l, 0u, n), mean(l, 1u, n), mean(l, 2u, n));
+  add64(l * 2u, u32(round(min(d.x * d.x + 0.5 * (d.y * d.y + d.z * d.z), 2.0e8) * 16.0)), 1u);
+}
+@compute @workgroup_size(8, 8) fn apply(@builtin(global_invocation_id) gid: vec3u) {
+  if (!ok(gid)) { return; }
+  let p = vec2i(gid.xy); let c = textureLoad(planes, p, 0); var o = c;
+  let l = atomicLoad(&lab[gid.y * fu.w + gid.x]);
+  if (l != NONE) {
+    let n = f32(atomicLoad(&cnt[l]));
+    let v = (f32(atomicLoad(&vars[l * 2u + 1u])) * 4294967296.0 + f32(atomicLoad(&vars[l * 2u]))) / 16.0 / n;
+    if (n >= 40.0 && sqrt(v) <= 6.0) {
+      let m = vec3f(mean(l, 0u, n), mean(l, 1u, n), mean(l, 2u, n));
+      o = vec4f(m + (c.rgb - m) * 0.15, c.a);
+    }
+  }
+  textureStore(outT, p, o);
+}`;
+
+  const mods = {};
+  for (const [k, code] of Object.entries(SRC)) mods[k] = device.createShaderModule({ code });
+  const ffMod = device.createShaderModule({ code: FF });
+  for (const [k, m] of [...Object.entries(mods), ['flatfills', ffMod]]) {
+    const errs = (await m.getCompilationInfo()).messages.filter(x => x.type === 'error');
+    if (errs.length) throw new Error('WebGPU cleanup shader ' + k + ': ' + errs.map(x => x.lineNum + ': ' + x.message).join('; '));
+  }
+  const pipes = {};
+  const pipeDesc = (name, format) => ({ layout: 'auto', vertex: { module: mods[name], entryPoint: 'vs' },
+    fragment: { module: mods[name], entryPoint: 'fs', targets: [{ format }] }, primitive: { topology: 'triangle-list' } });
+  const pipeline = (name, format) => pipes[name + ':' + format] || (pipes[name + ':' + format] = device.createRenderPipeline(pipeDesc(name, format)));
+  // Built up front (in parallel) so the first picture or frame doesn't wait for them.
+  await Promise.all(Object.keys(SRC).map(async name => {
+    const format = name === 'out' || name === 'aaapply' ? 'rgba8unorm' : 'rgba32float';
+    pipes[name + ':' + format] = await device.createRenderPipelineAsync(pipeDesc(name, format));
+  }));
+  const ffLayout = device.createBindGroupLayout({ entries: [
+    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+    { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float' } },
+    ...[2, 3, 4, 5, 6].map(binding => ({ binding, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } })),
+    { binding: 7, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba32float' } },
+  ] });
+  const ffPipes = Object.fromEntries(['init', 'prop', 'stats', 'vari', 'apply'].map(e => [e, device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [ffLayout] }), compute: { module: ffMod, entryPoint: e } })]));
+
+  const views = new WeakMap();
+  const view = t => views.get(t) || (views.set(t, t.createView()), views.get(t));
+  const tex = (w, h, format = 'rgba32float', extra = 0) => device.createTexture({ size: [w, h], format,
+    usage: TU.TEXTURE_BINDING | TU.RENDER_ATTACHMENT | TU.COPY_SRC | TU.COPY_DST | extra });
+  // Texture sets, kept while the size stays the same (video frames).
+  const pools = {};
+  const pool = (key, w, h, make) => {
+    const p = pools[key];
+    if (p && p.w === w && p.h === h) return p;
+    if (p) p.all.forEach(t => t.destroy());
+    const all = [], mk = (...a) => { const t = tex(...a); all.push(t); return t; };
+    return (pools[key] = { w, h, all, ...make(mk) });
+  };
+  let lutTex = null;
+
+  // Recorded passes, encoded in one go by flush() with one uniform buffer.
+  const U_SIZE = 96, U_STRIDE = 256;
+  let passes = [];
+  const pass = (name, dst, rw, rh, texs, uo) => passes.push({ name, dst, rw, rh, texs, uo });
+  function flush(extra) {
+    const n = passes.length;
+    const enc = device.createCommandEncoder();
+    let ub = null;
+    if (n) {
+      const data = new ArrayBuffer(n * U_STRIDE), dv = new DataView(data);
+      passes.forEach((ps, k) => {
+        const o = ps.uo, b = k * U_STRIDE;
+        const I = (at, v) => dv.setInt32(b + at, v | 0, true), Fl = (at, v) => dv.setFloat32(b + at, v, true);
+        I(0, o.size[0]); I(4, o.size[1]); I(8, o.orig[0]); I(12, o.orig[1]); I(16, o.img[0]); I(20, o.img[1]);
+        if (o.src) { I(24, o.src[0]); I(28, o.src[1]); }
+        (o.f || []).forEach((v, j) => Fl(32 + 4 * j, v));
+        (o.i || []).forEach((v, j) => I(64 + 4 * j, v));
+        if (o.dir) { I(80, o.dir[0]); I(84, o.dir[1]); }
+      });
+      ub = device.createBuffer({ size: n * U_STRIDE, usage: BU.UNIFORM | BU.COPY_DST });
+      device.queue.writeBuffer(ub, 0, data);
+      passes.forEach((ps, k) => {
+        const pipe = pipeline(ps.name, ps.dst.format);
+        const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: { buffer: ub, offset: k * U_STRIDE, size: U_SIZE } },
+          ...ps.texs.map((t, j) => ({ binding: j + 1, resource: view(t) })) ] });
+        const rp = enc.beginRenderPass({ colorAttachments: [{ view: view(ps.dst), loadOp: 'load', storeOp: 'store' }] });
+        rp.setPipeline(pipe); rp.setBindGroup(0, bg);
+        rp.setViewport(0, 0, ps.rw, ps.rh, 0, 1); rp.setScissorRect(0, 0, ps.rw, ps.rh);
+        rp.draw(3); rp.end();
+      });
+    }
+    if (extra) extra(enc);
+    device.queue.submit([enc.finish()]);
+    if (ub) ub.destroy();              // freed once the submitted work is done
+    passes = [];
+  }
+  const check = isCancelled => {
+    if (ai.lost) throw new Error(ai.lost);
+    if (isCancelled && isCancelled()) throw new Error('cancelled');
+  };
+
+  // flatFills() on the planes in `src`, written to `dst` (same size).
+  async function flatFills(src, dst, w, h, isCancelled) {
+    const n = w * h;
+    const fb = pools.ff && pools.ff.n === n ? pools.ff : (() => {
+      if (pools.ff) pools.ff.all.forEach(b => b.destroy());
+      const buf = (size, usage = BU.STORAGE) => device.createBuffer({ size, usage });
+      const all = [buf(n * 4), buf(16, BU.STORAGE | BU.COPY_SRC | BU.COPY_DST), buf(n * 4), buf(n * 24), buf(n * 8),
+        buf(16, BU.MAP_READ | BU.COPY_DST), buf(16, BU.UNIFORM | BU.COPY_DST)];
+      return (pools.ff = { n, all, lab: all[0], flag: all[1], cnt: all[2], sums: all[3], vars: all[4], rb: all[5], ub: all[6] });
+    })();
+    device.queue.writeBuffer(fb.ub, 0, new Uint32Array([w, h, 0, 0]));
+    const bg = device.createBindGroup({ layout: ffLayout, entries: [
+      { binding: 0, resource: { buffer: fb.ub } }, { binding: 1, resource: view(src) },
+      { binding: 2, resource: { buffer: fb.lab } }, { binding: 3, resource: { buffer: fb.flag } }, { binding: 4, resource: { buffer: fb.cnt } },
+      { binding: 5, resource: { buffer: fb.sums } }, { binding: 6, resource: { buffer: fb.vars } }, { binding: 7, resource: view(dst) } ] });
+    const gx = Math.ceil(w / 8), gy = Math.ceil(h / 8);
+    const run = (enc, e) => { const cp = enc.beginComputePass(); cp.setPipeline(ffPipes[e]); cp.setBindGroup(0, bg); cp.dispatchWorkgroups(gx, gy); cp.end(); };
+    let enc = device.createCommandEncoder();
+    run(enc, 'init');
+    device.queue.submit([enc.finish()]);
+    for (let it = 0; it < 8192; it += 16) {
+      check(isCancelled);
+      enc = device.createCommandEncoder();
+      enc.clearBuffer(fb.flag);
+      for (let k = 0; k < 16; k++) run(enc, 'prop');
+      enc.copyBufferToBuffer(fb.flag, 0, fb.rb, 0, 4);
+      device.queue.submit([enc.finish()]);
+      await fb.rb.mapAsync(GPUMapMode.READ);
+      const changed = new Uint32Array(fb.rb.getMappedRange())[0];
+      fb.rb.unmap();
+      if (!changed) break;
+    }
+    enc = device.createCommandEncoder();
+    run(enc, 'stats'); run(enc, 'vari'); run(enc, 'apply');
+    device.queue.submit([enc.finish()]);
+  }
+
+  // prepare() → { planes, field } textures at w×h.
+  async function prepare(srcTex, w, h, opts, P, isCancelled) {
+    const pp = pool('prep', w, h, mk => ({ A: mk(w, h, 'rgba32float', TU.STORAGE_BINDING), B: mk(w, h, 'rgba32float', TU.STORAGE_BINDING),
+      s: [mk(w, h), mk(w, h), mk(w, h), mk(w, h), mk(w, h)] }));
+    const extras = opts.extras || {}, [s0, s1, s2, s3, s4] = pp.s;
+    let A = pp.A, B = pp.B;
+    const swap = () => { const x = A; A = B; B = x; };
+    const U = (o = {}) => ({ size: [w, h], orig: [0, 0], img: [w, h], ...o });
+    const ps = (name, dst, texs, o) => pass(name, dst, w, h, texs, U(o));
+    const box2 = (src, r, mode, tmp, dst) => { ps('box', tmp, [src], { dir: [1, 0], i: [r, mode] }); ps('box', dst, [tmp], { dir: [0, 1], i: [r, mode] }); };
+    const field = (cur, dst) => { ps('tensor', s0, [cur]); box2(s0, 1, 0, s1, s2); ps('field', dst, [s2]); };
+    ps('planes', A, [srcTex]);
+    if (opts.jpegSource !== false) for (const vert of [0, 1]) { ps('deblock', B, [A], { i: [vert], f: [P.deblock, P.deblock * 1.5, P.deblock * 1.5] }); swap(); }
+    if (P.flatten) {
+      const F = P.flatten;
+      ps('guard', s4, [A], { f: [F.keepEdges] });
+      for (let it = 0; it < F.iterations; it++) {
+        ps('flatten', B, [A, s4], { i: [F.r], f: [2 * (F.r / 1.5) * (F.r / 1.5), (9 * F.sigma * F.sigma) / 1024, 2 * F.sigma * F.sigma] }); swap();
+      }
+    }
+    ps('gprod', s0, [A], { i: [0] }); box2(s0, P.r, 0, s1, s2);
+    ps('gab', s0, [s2, s2], { i: [0], f: [P.eps] }); box2(s0, P.r, 0, s1, s3);
+    ps('gout', B, [A, s3], { i: [0] }); swap();
+    ps('gprod', s0, [A], { i: [1] }); box2(s0, P.chromaR, 0, s1, s2);
+    ps('gprod', s0, [A], { i: [2] }); box2(s0, P.chromaR, 0, s1, s3);
+    ps('gab', s0, [s2, s3], { i: [1], f: [P.chromaEps] }); box2(s0, P.chromaR, 0, s1, s4);
+    ps('gout', B, [A, s4], { i: [1] }); swap();
+    if (extras.edges) {
+      field(A, s3); ps('edge', s4, [A]); box2(s4, 3, 1, s0, s2);
+      ps('eclean', B, [A, s4, s2, s3]); swap();
+    }
+    if (extras.fills) { flush(); await flatFills(A, B, w, h, isCancelled); swap(); }
+    field(A, s4);
+    flush();
+    return { planes: A, field: s4 };
+  }
+
+  // The output half, tile by tile as runBuiltin, into outTex (W×H rgba8unorm).
+  function finish(planes, fieldT, meta, outTex, isCancelled) {
+    const { w, h, W, H, P, extras, scale } = meta;
+    const CORE = 768, HALO = 48;
+    const T = pool('fin', Math.min(W, CORE + 2 * HALO), Math.min(H, CORE + 2 * HALO), mk => {
+      const tw = Math.min(W, CORE + 2 * HALO), th = Math.min(H, CORE + 2 * HALO);
+      return { m: [mk(tw, th), mk(tw, th)], s: Array.from({ length: 9 }, () => mk(tw, th)), o: mk(tw, th, 'rgba8unorm') };
+    });
+    const iterations = P.shock + (scale > 2.5 ? 1 : 0), smoothR = scale > 2.5 ? 2 : 1;
+    for (let ty = 0; ty < Math.ceil(H / CORE); ty++) for (let tx = 0; tx < Math.ceil(W / CORE); tx++) {
+      check(isCancelled);
+      const cx0 = tx * CORE, cy0 = ty * CORE, cx1 = Math.min(W, cx0 + CORE), cy1 = Math.min(H, cy0 + CORE);
+      const rx0 = Math.max(0, cx0 - HALO), ry0 = Math.max(0, cy0 - HALO), rx1 = Math.min(W, cx1 + HALO), ry1 = Math.min(H, cy1 + HALO);
+      const rw = rx1 - rx0, rh = ry1 - ry0, S = T.s;
+      let m = 0;
+      const M = () => T.m[m], Mo = () => T.m[1 - m], swap = () => { m = 1 - m; };
+      const ps = (name, dst, texs, o = {}) => pass(name, dst, rw, rh, texs, { size: [rw, rh], orig: [rx0, ry0], img: [W, H], ...o });
+      const line = (src, ch, dir, r, mode, dst) => ps('line', dst, [src], { i: [ch, r, mode], dir });
+      const box2 = (src, ch, r, tmp, dst) => { line(src, ch, [1, 0], r, 0, tmp); line(tmp, 0, [0, 1], r, 0, dst); };
+      const morph2 = (src, ch, r, isMax, tmp, dst) => { line(src, ch, [1, 0], r, isMax ? 1 : 2, tmp); line(tmp, 0, [0, 1], r, isMax ? 1 : 2, dst); };
+      const gauss = (src, sigma, a, b) => {
+        const rb = Math.max(0, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2));
+        if (rb === 0) return src;
+        box2(src, 0, rb, b, a); box2(a, 0, rb, b, a); box2(a, 0, rb, b, a);
+        return a;
+      };
+      ps('resample', Mo(), [planes, fieldT, lutTex], { src: [w, h] }); swap();
+      for (let it = 0; it < iterations; it++) { box2(M(), 0, smoothR, S[0], S[1]); const cur = M(); ps('shock', Mo(), [cur, S[1]], { f: [P.dt] }); swap(); }
+      if (P.sharpen > 0) { const cur = M(); ps('sharpen', Mo(), [cur], { f: [P.sharpen] }); swap(); }
+      if (P.finalFlatten) { box2(M(), 0, 2, S[0], S[1]); const cur = M(); ps('fflat', Mo(), [cur, S[1]], { f: [P.finalFlatten] }); swap(); }
+      if (extras.lines) {
+        const ls = meta.lineScale || scale, r = Math.max(2, Math.ceil(1.5 * ls)), sigma = 0.4 * ls;
+        morph2(M(), 0, r, true, S[0], S[1]); morph2(S[1], 0, r, false, S[0], S[2]);
+        morph2(M(), 0, r, false, S[0], S[3]);
+        const cur = M();
+        ps('cov', S[4], [cur, S[2], S[3]]);
+        const Ls = gauss(S[4], sigma, S[5], S[0]);
+        morph2(Ls, 0, r, true, S[0], S[6]);
+        const lineY = gauss(S[3], Math.max(0.7, sigma * 0.5), S[7], S[8]);
+        ps('redraw', Mo(), [cur, S[2], S[3], Ls, S[6], lineY], { f: [2.5 * sigma] }); swap();
+      }
+      if (P.lines) {
+        const r = Math.max(2, Math.round(scale));
+        morph2(M(), 0, r, true, S[0], S[1]); morph2(S[1], 0, r, false, S[0], S[2]);
+        const cur = M();
+        ps('darken', Mo(), [cur, S[2]], { f: [P.lines.darken] }); swap();
+        const cur2 = M();
+        ps('snap', Mo(), [cur2], { f: [P.lines.snap, P.lines.saturate], i: [1] }); swap();
+      } else if (extras.lines) {
+        const cur = M();
+        ps('snap', Mo(), [cur], { f: [18, 0], i: [0] }); swap();
+      }
+      ps('out', T.o, [M(), planes], { src: [w, h], i: [meta.A ? 1 : 0, meta.flattenWhite ? 1 : 0] });
+      flush(enc => enc.copyTextureToTexture({ texture: T.o, origin: [cx0 - rx0, cy0 - ry0] }, { texture: outTex, origin: [cx0, cy0] }, [cx1 - cx0, cy1 - cy0]));
+    }
+  }
+
+  // antialias() on inTex (W×H rgba8unorm) → a new rgba8unorm texture.
+  function antialias(inTex, W, H, period, strength) {
+    const s = Math.max(0, Math.min(1, strength / 100));
+    const ap = pool('aa', W, H, mk => ({ t: Array.from({ length: 7 }, () => mk(W, H)), o: mk(W, H, 'rgba8unorm') }));
+    const [a0, a1, a2, a3, a4, a5, a6] = ap.t;
+    const ps = (name, dst, texs, o = {}) => pass(name, dst, W, H, texs, { size: [W, H], orig: [0, 0], img: [W, H], ...o });
+    const box2 = (src, r, tmp, dst) => { ps('box', tmp, [src], { dir: [1, 0], i: [r, 0] }); ps('box', dst, [tmp], { dir: [0, 1], i: [r, 0] }); };
+    const gauss = (src, sigma, a, b) => {
+      const rb = Math.max(0, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2));
+      if (rb === 0) return src;
+      box2(src, rb, b, a); box2(a, rb, b, a); box2(a, rb, b, a);
+      return a;
+    };
+    ps('aaluma', a0, [inTex]);
+    const Ys = gauss(a0, 0.7, a1, a2);
+    ps('aagrad', a3, [Ys]);
+    const J = gauss(a3, Math.max(1, 2 * period), a1, a2);
+    const L = Math.max(2, Math.min(14, Math.round(2.5 * period)));
+    ps('aaalong', a4, [inTex, J], { f: [s, 2 * (L / 2) * (L / 2)], i: [L] });
+    ps('aaya', a0, [a4]);
+    const smoothR = Math.max(1, Math.round(period / 2));
+    let cur = a0;
+    for (const next of [a5, a6]) {
+      ps('line', a1, [cur], { i: [0, smoothR, 0], dir: [1, 0] }); ps('line', a3, [a1], { i: [0, smoothR, 0], dir: [0, 1] });
+      ps('shock', next, [cur, a3], { f: [0.3] });
+      cur = next;
+    }
+    ps('aaapply', ap.o, [a4, a0, cur, inTex]);
+    flush();
+    return ap.o;
+  }
+
+  const AA_MAX_PIXELS = 4.2e6;     // bigger outputs leave the anti-aliasing to the worker
+  // The whole built-in engine on srcTex (w×h rgba8unorm) → { tex: W×H rgba8unorm, aaDone }.
+  async function cleanupTex(srcTex, w, h, opts, P, LUT, isCancelled, onProgress) {
+    check(isCancelled);
+    if (!lutTex) {
+      lutTex = device.createTexture({ size: [LUT.length, 1], format: 'r32float', usage: TU.TEXTURE_BINDING | TU.COPY_DST });
+      device.queue.writeTexture({ texture: lutTex }, LUT, { bytesPerRow: LUT.length * 4 }, [LUT.length, 1]);
+    }
+    const W = opts.width, H = opts.height, extras = opts.extras || {};
+    const { planes, field } = await prepare(srcTex, w, h, opts, P, isCancelled);
+    if (onProgress) onProgress(0.4);
+    check(isCancelled);
+    const out = pool('out', W, H, mk => ({ t: mk(W, H, 'rgba8unorm') })).t;
+    finish(planes, field, { w, h, W, H, scale: W / w, P, extras, flattenWhite: !!opts.flattenWhite,
+      lineScale: opts.lineScale || W / w, A: !!opts.alpha }, out, isCancelled);
+    if (onProgress) onProgress(0.9);
+    if (extras.aa && W * H <= AA_MAX_PIXELS) return { tex: antialias(out, W, H, opts.lineScale || W / w, extras.aa), aaDone: true };
+    return { tex: out, aaDone: !extras.aa };
+  }
+
+  async function read(t, W, H) {
+    const bpr = Math.ceil(W * 4 / 256) * 256;
+    const buf = device.createBuffer({ size: bpr * H, usage: BU.COPY_DST | BU.MAP_READ });
+    const enc = device.createCommandEncoder();
+    enc.copyTextureToBuffer({ texture: t }, { buffer: buf, bytesPerRow: bpr }, [W, H]);
+    device.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const src = new Uint8Array(buf.getMappedRange()), out = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < H; y++) out.set(src.subarray(y * bpr, y * bpr + W * 4), y * W * 4);
+    buf.unmap(); buf.destroy();
+    return out;
+  }
+
+  // Upload: an RGBA array or a canvas/ImageBitmap into a w×h texture.
+  function upload(source, w, h) {
+    const up = pool('in', w, h, mk => ({ t: mk(w, h, 'rgba8unorm') })).t;
+    if (ArrayBuffer.isView(source)) {               // (instanceof fails for arrays from a worker or another frame)
+      device.queue.writeTexture({ texture: up }, source, { bytesPerRow: w * 4 }, [w, h]);
+    } else device.queue.copyExternalImageToTexture({ source }, { texture: up }, [w, h]);
+    return up;
+  }
+
+  // Pictures: RGBA in, RGBA out. → { out, aaDone }
+  async function cleanup(rgba, w, h, opts, P, LUT, onProgress, isCancelled) {
+    let alpha = false;
+    for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) { alpha = true; break; }
+    const r = await cleanupTex(upload(rgba, w, h), w, h, { ...opts, alpha }, P, LUT, isCancelled, onProgress);
+    const out = await read(r.tex, opts.width, opts.height);
+    if (onProgress) onProgress(1);
+    return { out, aaDone: r.aaDone };
+  }
+
+  return { ai, cleanup, cleanupTex, upload, read };
 }
 
 // ── VIDEO: PIPELINE ───────────────────────────────────────────────────────────
