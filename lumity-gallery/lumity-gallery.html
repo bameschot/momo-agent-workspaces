@@ -3674,16 +3674,22 @@ async function gpuCleanup(rgba, w, h, opts, device, onProgress, isCancelled) {
   const gpuAA = !!ex.aa && opts.width * opts.height <= 4.2e6 && cleanupBytes(w, h, opts.width, opts.height, ex, true) <= gpuBudget();
   if (device === 'webgpu') {
     try {
-      const eng = await gpuCleanupEngine();
+      let eng = await gpuCleanupEngine();
       if (eng) {
         gpuFreeWebGL();
         for (;;) {
+          if (!eng) throw new Error('WebGPU was turned off after the GPU driver failed twice (' + gpuOff + ')');
           try {
             const aa = gpuAA && cleanupBytes(w, h, opts.width, opts.height, ex, true) <= gpuBudget();
             const r = await eng.cleanup(rgba, w, h, { ...opts, gpuAA: aa }, P, M.LANCZOS2, onProgress, isCancelled);
             lastCleanupBackend = 'WebGPU';
             return { out: r.out, aaDone: r.aaDone, backend: 'WebGPU' };
           } catch (err) {
+            if (!stopped() && (gpuLost(err) || eng.ai.lost)) {      // device lost: once more in safe mode
+              if (!gpuDeviceLost(eng.ai.device, eng.ai.lost || err.message)) throw new Error((err.message || err) + '; WebGPU is off until the page is reloaded');
+              eng = await gpuCleanupEngine();
+              continue;
+            }
             if (stopped() || !gpuOutOfMemory(err) || gpuBudgetScale <= 1 / 8) {
               throw new Error((err.message || err) + ' — ' + w + '×' + h + ' → ' + opts.width + '×' + opts.height +
                 ', GPU budget ' + Math.round(gpuBudget() / 2 ** 20) + ' MB');
@@ -3693,7 +3699,8 @@ async function gpuCleanup(rgba, w, h, opts, device, onProgress, isCancelled) {
           }
         }
       }
-      note('WebGPU isn’t available here, so the cleanup runs on WebGL.');
+      note(gpuOff ? 'WebGPU is off for this visit after the GPU driver failed twice (' + gpuOff + '), so the cleanup runs on WebGL.'
+        : 'WebGPU isn’t available here, so the cleanup runs on WebGL.');
     } catch (err) {
       if (stopped()) throw err;
       console.warn('WebGPU cleanup failed', err);
@@ -6523,13 +6530,15 @@ async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, op
   if (settings.device === 'webgpu' && VIDEO_GPU_MODELS.has(settings.engine) && w * h <= GPU_CLEANUP_MAX_PIXELS) {
     const note = msg => { if (!gpuCleanupNotes.has(msg)) { gpuCleanupNotes.add(msg); showToast(msg); } };
     try {
-      const gpu = await videoGpuFor(settings.engine, settings.denoise);
+      let gpu = await videoGpuFor(settings.engine, settings.denoise);
       if (gpu) {
         gpuFreeWebGL();
-        const size = { iw: W, ih: H, W, H, x: 0, y: 0 }, dev = gpu.eng.device;
-        const diag = () => w + '×' + h + ' → ' + W + '×' + H + ', GPU budget ' + Math.round(gpuBudget() / 2 ** 20) + ' MB, max buffer ' +
-          Math.round(dev.limits.maxBufferSize / 2 ** 20) + ' MB' + (gpu.eng.f16 ? '' : ', 32-bit');
+        const size = { iw: W, ih: H, W, H, x: 0, y: 0 };
         for (;;) {
+          if (!gpu) throw new Error('WebGPU was turned off after the GPU driver failed twice (' + gpuOff + ')');
+          const dev = gpu.eng.device;
+          const diag = () => w + '×' + h + ' → ' + W + '×' + H + ', GPU budget ' + Math.round(gpuBudget() / 2 ** 20) + ' MB, max buffer ' +
+            Math.round(dev.limits.maxBufferSize / 2 ** 20) + ' MB' + (gpu.eng.f16 ? '' : ', 32-bit') + (gpuSafeMode ? ', safe mode' : '');
           const bmp = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba), w, h), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
           // WebGPU reports a failed allocation later instead of throwing: catch it here.
           dev.pushErrorScope('out-of-memory'); dev.pushErrorScope('validation');
@@ -6545,12 +6554,18 @@ async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, op
             return out;
           }
           gpu.eng.release();
+          if (gpuLost(fail) || gpu.eng.lost) {          // device lost: once more in safe mode, then WebGL
+            if (!gpuDeviceLost(dev, gpu.eng.lost || fail.message)) throw new Error((fail.message || fail) + ' — ' + diag() + '; WebGPU is off until the page is reloaded');
+            gpu = await videoGpuFor(settings.engine, settings.denoise);
+            continue;
+          }
           if (!gpuOutOfMemory(fail) || gpuBudgetScale <= 1 / 8) throw new Error((fail.message || fail) + ' — ' + diag());
           gpuBudgetScale /= 2;                     // retry with smaller bands
           console.warn('WebGPU AI out of memory, retrying with a budget of ' + Math.round(gpuBudget() / 2 ** 20) + ' MB', fail);
         }
       }
-      note('WebGPU isn’t available here, so the AI runs on WebGL.');
+      note(gpuOff ? 'WebGPU is off for this visit after the GPU driver failed twice (' + gpuOff + '), so the AI runs on WebGL.'
+        : 'WebGPU isn’t available here, so the AI runs on WebGL.');
     } catch (err) {
       if (isCancelled && isCancelled()) throw err;
       console.warn('WebGPU AI failed', err);
@@ -7007,8 +7022,29 @@ async function fileSink(handle) {
 // Pictures taller than the GPU's buffer limit run in horizontal bands with a
 // halo of one row per conv, so band edges don't change the result.
 let gpuCompactPromise = null;
+// WebGPU health for this visit. When a device is lost (some phone drivers kill
+// it, e.g. on 16-bit float maths or big shared-memory workgroups) the engines
+// are rebuilt in a safe mode — 32-bit floats, small workgroups, half the memory
+// budget — and the job is retried; a second loss turns WebGPU off until the
+// page is reloaded, and WebGL is used instead.
+let gpuSafeMode = false, gpuOff = null;
+const gpuLostDevices = new WeakSet();
+const gpuLost = err => /lost|destroyed/i.test(String((err && err.message) || err));
+// → true when it's worth trying again (safe mode now on), false when WebGPU is off.
+function gpuDeviceLost(device, reason) {
+  if (!gpuLostDevices.has(device)) {
+    gpuLostDevices.add(device);
+    gpuCompactPromise = null; gpuCleanupPromise = null;
+    if (!gpuSafeMode) {
+      gpuSafeMode = true; gpuBudgetScale = Math.max(1 / 8, gpuBudgetScale / 2);
+      console.warn('WebGPU device lost (' + reason + '); continuing in safe mode');
+    } else gpuOff = reason || 'the GPU device was lost again';
+  }
+  return !gpuOff;
+}
 function gpuCompact() {
-  if (!gpuCompactPromise) gpuCompactPromise = createGpuCompact().catch(err => { console.warn('WebGPU unavailable', err); return null; });
+  if (gpuOff) return Promise.resolve(null);
+  if (!gpuCompactPromise) gpuCompactPromise = createGpuCompact(gpuSafeMode ? { f16: false, og: 1 } : {}).catch(err => { console.warn('WebGPU unavailable', err); return null; });
   return gpuCompactPromise;
 }
 
@@ -7046,7 +7082,11 @@ async function createGpuCompact(opts = {}) {
       .map(k => [k, adapter.limits[k]])),
   });
   let lost = null;
-  device.lost.then(info => { lost = info.message || 'The GPU was reset.'; gpuCompactPromise = null; });
+  device.lost.then(info => {
+    lost = (info.reason && info.reason !== 'unknown' ? info.reason + ': ' : '') + (info.message || 'the GPU was reset');
+    if (info.reason === 'destroyed') gpuCompactPromise = null;
+    else gpuDeviceLost(device, lost);
+  });
   const S = f16 ? 'f16' : 'f32', VS = f16 ? 8 : 16;                // storage type, bytes per vec4
   const head = (f16 ? 'enable f16;\n' : '') + 'alias S = ' + S + ';\n';
   // Conv threads: PX neighbouring pixels × 16 output channels each; a
