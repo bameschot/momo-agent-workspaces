@@ -3511,6 +3511,36 @@ let upscaleWorker = null;
 let mainThreadUpscaler = null;
 let currentJob = null;
 
+// Picture jobs (Enhance, previews) and video frames take turns: they share
+// the WebGPU engines' buffers, the upscale worker and the cancel handle of the
+// progress panel. Two kinds of turn: engineTurn (the WebGPU engines) and
+// workerTurn (the upscale worker). A picture job or a video frame takes both
+// (gpuExclusive); a video whose AI runs on WebGPU and cleanup in the worker
+// takes them separately per stage, so the next frame's AI overlaps this
+// frame's cleanup. Both are always taken engine first (no deadlock).
+// isCancelled is checked once the turn comes (→ CancelledError).
+function makeTurns() {
+  let turn = Promise.resolve();
+  const take = async (fn, isCancelled) => {
+    const before = turn;
+    let done;
+    turn = new Promise(r => { done = r; });
+    take.queued++;
+    try {
+      await before;
+      if (isCancelled && isCancelled()) throw new CancelledError('Cancelled');
+      return await fn();
+    } finally {
+      take.queued--;
+      done();
+    }
+  };
+  take.queued = 0;
+  return take;
+}
+const engineTurn = makeTurns(), workerTurn = makeTurns();
+const gpuExclusive = (fn, isCancelled) => engineTurn(() => workerTurn(fn, isCancelled), isCancelled);
+
 function createUpscaleWorker() {
   try {
     const src = 'const M = (' + upscalerModule.toString() + ')();\n' +
@@ -3604,7 +3634,8 @@ class CancelledError extends Error {}
 
 // rgba: Uint8ClampedArray (transferred). Resolves to the output Uint8ClampedArray.
 // cmd 'upscale' → output RGBA; 'prepare' → the input-resolution half (for the GPU).
-function runUpscaleJob(rgba, w, h, opts, onProgress, cmd = 'upscale') {
+// track: cancellable from the progress panel (currentJob); video frames aren't.
+function runUpscaleJob(rgba, w, h, opts, onProgress, cmd = 'upscale', track = true) {
   const worker = getUpscaleWorker();
   if (!worker) {
     return yieldToBrowser().then(() => {
@@ -3614,8 +3645,8 @@ function runUpscaleJob(rgba, w, h, opts, onProgress, cmd = 'upscale') {
     });
   }
   return new Promise((resolve, reject) => {
-    const finish = () => { worker.onmessage = null; worker.onerror = null; currentJob = null; };
-    currentJob = {
+    const finish = () => { worker.onmessage = null; worker.onerror = null; if (track) currentJob = null; };
+    if (track) currentJob = {
       cancel() {
         finish();
         worker.terminate();          // stops it immediately; a fresh one is made next time
@@ -3667,15 +3698,50 @@ const GPU_TILE = GPU_MOBILE ? 384 : 768;       // output-half tile size of the W
 // output-half tiles, the result, flat fills and (gpuAA) anti-aliasing.
 function cleanupBytes(w, h, W, H, extras, gpuAA) {
   const t = GPU_TILE + 96;
-  return 7 * w * h * 16 + 12 * Math.min(W, t) * Math.min(H, t) * 16 + W * H * 4 +
+  return 7 * w * h * 16 + (2 * 16 + 9 * 4 + 4) * Math.min(W, t) * Math.min(H, t) + W * H * 4 +
     (extras && extras.fills ? w * h * 40 : 0) + (gpuAA ? 8 * W * H * 16 : 0);
 }
 let gpuCleanupNotes = new Set(), lastCleanupBackend = null;
+// Each fallback message is shown once per visit.
+const gpuNote = msg => { if (!gpuCleanupNotes.has(msg)) { gpuCleanupNotes.add(msg); showToast(msg); } };
+
+// One WebGPU picture job with recovery. GPU errors that WebGPU reports later
+// instead of throwing (allocation, validation) become exceptions; a lost
+// device → once more on a new engine in safe mode; out of memory → the budget
+// is halved (down to 1/8) and the job retried. getEngine() → an engine
+// (device, lost, release) or null; → { value } or null when there's no engine.
+async function gpuAttempt(getEngine, job, what, isCancelled) {
+  let eng = await getEngine();
+  if (!eng) return null;
+  gpuFreeWebGL();
+  const detail = err => (err.message || err) + ' — ' + what + ', GPU budget ' + Math.round(gpuBudget() / 2 ** 20) + ' MB, max buffer ' +
+    Math.round(eng.device.limits.maxBufferSize / 2 ** 20) + ' MB' + (eng.f16 ? '' : ', 32-bit') + (gpuSafeMode ? ', safe mode' : '');
+  for (;;) {
+    const dev = eng.device;
+    dev.pushErrorScope('out-of-memory'); dev.pushErrorScope('validation');
+    let value, fail = null;
+    try { value = await job(eng); } catch (err) { fail = err; }
+    const v = await dev.popErrorScope().catch(() => null), o = await dev.popErrorScope().catch(() => null);
+    fail = fail || ((v || o) && new Error((v || o).message));
+    if (!fail) { if (GPU_MOBILE) eng.release(); return { value }; }
+    eng.release();
+    if (isCancelled && isCancelled()) throw fail;
+    if (gpuLost(fail) || eng.lost) {
+      if (!gpuDeviceLost(dev, eng.lost || fail.message)) throw new Error(detail(fail) + '; WebGPU is off until the page is reloaded');
+      eng = await getEngine();
+      if (!eng) throw new Error('WebGPU was turned off after the GPU driver failed twice (' + gpuOff + ')');
+      continue;
+    }
+    if (!gpuOutOfMemory(fail) || gpuBudgetScale <= 1 / 8) throw new Error(detail(fail));
+    gpuBudgetScale /= 2;
+    console.warn('WebGPU out of memory, retrying with a budget of ' + Math.round(gpuBudget() / 2 ** 20) + ' MB', fail);
+  }
+}
+
 async function gpuCleanup(rgba, w, h, opts, device, onProgress, isCancelled) {
   lastCleanupBackend = null;
   const M = getMainUpscaler(), P = M.tunePreset(M.PRESETS[opts.preset] || M.PRESETS.balanced, opts.tuning);
-  const note = msg => { if (!gpuCleanupNotes.has(msg)) { gpuCleanupNotes.add(msg); showToast(msg); } };
-  const stopped = () => isCancelled && isCancelled();
+  const note = gpuNote, stopped = () => isCancelled && isCancelled();
   const ex = opts.extras || {};
   // A same-size cleanup (after the AI) can run on WebGPU in bands of rows when
   // the whole picture doesn't fit (not with flat fills, which needs whole regions).
@@ -3689,30 +3755,12 @@ async function gpuCleanup(rgba, w, h, opts, device, onProgress, isCancelled) {
   const gpuAA = !!ex.aa && opts.width * opts.height <= 4.2e6 && cleanupBytes(w, h, opts.width, opts.height, ex, true) <= gpuBudget();
   if (device === 'webgpu') {
     try {
-      let eng = await gpuCleanupEngine();
-      if (eng) {
-        gpuFreeWebGL();
-        for (;;) {
-          if (!eng) throw new Error('WebGPU was turned off after the GPU driver failed twice (' + gpuOff + ')');
-          try {
-            const aa = gpuAA && cleanupBytes(w, h, opts.width, opts.height, ex, true) <= gpuBudget();
-            const r = await eng.cleanup(rgba, w, h, { ...opts, gpuAA: aa }, P, M.LANCZOS2, onProgress, isCancelled);
-            lastCleanupBackend = 'WebGPU';
-            return { out: r.out, aaDone: r.aaDone, backend: 'WebGPU' };
-          } catch (err) {
-            if (!stopped() && (gpuLost(err) || eng.ai.lost)) {      // device lost: once more in safe mode
-              if (!gpuDeviceLost(eng.ai.device, eng.ai.lost || err.message)) throw new Error((err.message || err) + '; WebGPU is off until the page is reloaded');
-              eng = await gpuCleanupEngine();
-              continue;
-            }
-            if (stopped() || !gpuOutOfMemory(err) || gpuBudgetScale <= 1 / 8) {
-              throw new Error((err.message || err) + ' — ' + w + '×' + h + ' → ' + opts.width + '×' + opts.height +
-                ', GPU budget ' + Math.round(gpuBudget() / 2 ** 20) + ' MB');
-            }
-            gpuBudgetScale /= 2;                   // retry in smaller bands
-            console.warn('WebGPU cleanup out of memory, retrying with a budget of ' + Math.round(gpuBudget() / 2 ** 20) + ' MB', err);
-          }
-        }
+      const r = await gpuAttempt(gpuCleanupEngine, eng => eng.cleanup(rgba, w, h,
+        { ...opts, gpuAA: gpuAA && cleanupBytes(w, h, opts.width, opts.height, ex, true) <= gpuBudget() }, P, M.LANCZOS2, onProgress, isCancelled),
+        w + '×' + h + ' → ' + opts.width + '×' + opts.height, isCancelled);
+      if (r) {
+        lastCleanupBackend = 'WebGPU';
+        return { out: r.value.out, aaDone: r.value.aaDone, backend: 'WebGPU' };
       }
       note(gpuOff ? 'WebGPU is off for this visit after the GPU driver failed twice (' + gpuOff + '), so the cleanup runs on WebGL.'
         : 'WebGPU isn’t available here, so the cleanup runs on WebGL.');
@@ -3740,32 +3788,28 @@ async function gpuCleanup(rgba, w, h, opts, device, onProgress, isCancelled) {
 // GPU = input-resolution half in the worker, output-resolution half on the GPU.
 // 'webgpu' / 'webgl' = both halves on the GPU (gpuCleanup), falling back to
 // WebGL and then to the original GPU/CPU processing when that isn't possible.
-async function builtinJob(rgba, w, h, opts, onProgress, device) {
+// track: cancellable from the progress panel (false for video frames).
+async function builtinJob(rgba, w, h, opts, onProgress, device, track = true) {
   const aaFull = opts.extras && opts.extras.aa;
+  const antialias = (px, f0) => runUpscaleJob(px, opts.width, opts.height, { period: opts.lineScale || opts.width / w, strength: aaFull },
+    f => onProgress(f0 + f * (1 - f0), 'Smoothing edges…'), 'antialias', track);
   if (device === 'webgpu' || device === 'webgl') {
     let cancelled = false, r;
-    currentJob = { cancel() { cancelled = true; } };
+    if (track) currentJob = { cancel() { cancelled = true; } };
     try { r = await gpuCleanup(rgba, w, h, opts, device, f => onProgress(f * (aaFull ? 0.8 : 1), 'Cleaning up on the GPU…'), () => cancelled); }
     catch (err) { if (cancelled) throw new CancelledError('Cancelled'); throw err; }
-    finally { currentJob = null; }
-    if (r) {
-      if (!aaFull || r.aaDone) return r.out;
-      return runUpscaleJob(r.out, opts.width, opts.height, { period: opts.lineScale || opts.width / w, strength: aaFull },
-        f => onProgress(0.8 + f * 0.2, 'Smoothing edges…'), 'antialias');
-    }
+    finally { if (track) currentJob = null; }
+    if (r) return !aaFull || r.aaDone ? r.out : antialias(r.out, 0.8);
     device = gpuBuiltinAvailable() ? 'gpu' : 'cpu';
   }
-  if (device !== 'gpu') return runUpscaleJob(rgba, w, h, opts, onProgress);
+  if (device !== 'gpu') return runUpscaleJob(rgba, w, h, opts, onProgress, 'upscale', track);
   // Share of the time spent preparing (CPU) vs finishing (GPU, assumed ~6× faster).
   const M = getMainUpscaler(), c = M.stageCosts(w, h, opts);
   const sum = keys => keys.reduce((a, k) => a + c[k], 0);
   const prepCost = sum(M.PREPARE_STAGES), split = prepCost / (prepCost + sum(M.FINISH_STAGES) / 6);
-  const aa = opts.extras && opts.extras.aa;
-  const prep = await runUpscaleJob(rgba, w, h, opts, (f, label) => onProgress(f * split * (aa ? 0.8 : 1), label), 'prepare');
-  const out = await gpuFinish(prep, f => onProgress((split + f * (1 - split)) * (aa ? 0.8 : 1), 'Upscaling on the GPU…'), null, true);
-  if (!aa) return out;                     // edge anti-aliasing runs on the CPU (in the worker)
-  return runUpscaleJob(out, opts.width, opts.height, { period: opts.lineScale || opts.width / w, strength: aa },
-    f => onProgress(0.8 + f * 0.2, 'Smoothing edges…'), 'antialias');
+  const prep = await runUpscaleJob(rgba, w, h, opts, (f, label) => onProgress(f * split * (aaFull ? 0.8 : 1), label), 'prepare', track);
+  const out = await gpuFinish(prep, f => onProgress((split + f * (1 - split)) * (aaFull ? 0.8 : 1), 'Upscaling on the GPU…'), null, track);
+  return aaFull ? antialias(out, 0.8) : out;      // edge anti-aliasing runs on the CPU (in the worker)
 }
 
 // Output-resolution half on the GPU. `asJob` makes it cancellable from the
@@ -3830,24 +3874,24 @@ function encodePixels(rgba, W, H, format) {
 }
 
 // Upscale one original into a new entry (replacing its previous upscaled copy).
-async function enhanceOne(original, settings, onProgress) {
+async function enhanceOne(original, settings, onProgress, isCancelled) {
   onProgress(0, 'Reading picture…');
   const { rgba, w, h, jpeg } = await decodePixels(original);
   const size = targetSize(w, h, settings);
   if (!size) return { skipped: 'already at least that size' };
-  let out;
-  if (isAiEngine(settings)) {
-    if (settings.preset === 'auto') settings = { ...settings, preset: 'none' };
-    out = await aiUpscale({ rgba, w, h }, size.W, size.H, settings, onProgress);
-  } else {
+  if (isAiEngine(settings) && settings.preset === 'auto') settings = { ...settings, preset: 'none' };
+  if (!isAiEngine(settings)) {
     if (settings.preset === 'auto') onProgress(0.03, 'Analysing picture…');
     // Measured before the pixels are handed to the worker.
     settings = resolveSettings(settings, { rgba, w, h, jpeg }, size.scale);
-    out = await builtinJob(rgba, w, h, {
+  }
+  if (engineTurn.queued || workerTurn.queued) onProgress(0.02, vq.running ? 'Waiting for the video conversion…' : 'Waiting for the GPU…');
+  const out = await gpuExclusive(() => isAiEngine(settings)
+    ? aiUpscale({ rgba, w, h }, size.W, size.H, settings, onProgress)
+    : builtinJob(rgba, w, h, {
       width: size.W, height: size.H, preset: settings.preset, tuning: engineTuning(settings),
       extras: engineExtras(settings), jpegSource: jpeg, flattenWhite: settings.format === 'jpeg',
-    }, (f, label) => onProgress(0.05 + f * 0.85, label), settings.device);
-  }
+    }, (f, label) => onProgress(0.05 + f * 0.85, label), settings.device), isCancelled);
 
   onProgress(0.92, 'Saving ' + (settings.format === 'png' ? 'PNG' : 'JPEG') + '…');
   const blob = await encodePixels(out, size.W, size.H, settings.format);
@@ -4020,7 +4064,7 @@ async function runEnhance(targets, settings, mode) {
         const r = await enhanceOne(original, settings, (f, label) => {
           setProgress(prefix + label, Math.round((i + f) / targets.length * 1000), 1000, 'percent');
           lastF = f; showEta();
-        });
+        }, () => cancelled);
         if (r.skipped) { skipped++; continue; }
         ok = true;
         done++; last = r.img;
@@ -4040,7 +4084,7 @@ async function runEnhance(targets, settings, mode) {
     loadBusy = false;
     if (aiState.batching) {
       aiState.batching = false;
-      if (aiState.runner) withGpu(r => r.releaseAll()).catch(() => {});
+      if (aiState.runner && !aiState.videoBatching) withGpu(r => r.releaseAll()).catch(() => {});
     }
   }
   if (mode === 'single' && last && lb.classList.contains('open')) {
@@ -4517,7 +4561,7 @@ function previewGeometry(settings, size) {
   const rx1 = Math.min(w, cx0 + cs + pad), ry1 = Math.min(h, cy0 + cs + pad);
   const rw = rx1 - rx0, rh = ry1 - ry0;
   const aiKey = ai ? [settings.engine, settings.engine === 'generalv3' ? settings.denoise : '', settings.engine === 'cugan' ? settings.cuganMode : '',
-    rx0, ry0, rw, rh, Math.round(rw * sc), Math.round(rh * sc)].join('|') : null;
+    VIDEO_GPU_MODELS.has(settings.engine) ? settings.aiDevice : '', rx0, ry0, rw, rh, Math.round(rw * sc), Math.round(rh * sc)].join('|') : null;
   return { cs, cx0, cy0, rx0, ry0, rw, rh, aiKey };
 }
 function currentAiKey() {
@@ -4578,30 +4622,33 @@ async function runPreview() {
 
   try {
     let out;
-    if (ai) {
-      // Stops as soon as a setting changes or the dialog closes, so a slow
-      // "AI · Best" preview never holds things up.
-      // The AI result for this area is kept, so changing only the cleanup
-      // (sliders, extras, format…) re-runs just the cleanup. A change that
-      // doesn't affect the AI step lets a running AI render finish.
-      const closed = () => token !== preview.token || !enhanceDialog.classList.contains('open');
-      const aiStale = () => closed() || (preview.dirty && currentAiKey() !== aiKey);
-      if (preview.aiCache && preview.aiCache.key === aiKey && preview.aiCache.pixels === preview.pixels) {
-        out = preview.aiCache.out.slice();
+    // (Takes its turn with Enhance and video frames: they share the GPU engines.)
+    await gpuExclusive(async () => {
+      if (ai) {
+        // Stops as soon as a setting changes or the dialog closes, so a slow
+        // "AI · Best" preview never holds things up.
+        // The AI result for this area is kept, so changing only the cleanup
+        // (sliders, extras, format…) re-runs just the cleanup. A change that
+        // doesn't affect the AI step lets a running AI render finish.
+        const closed = () => token !== preview.token || !enhanceDialog.classList.contains('open');
+        const aiStale = () => closed() || (preview.dirty && currentAiKey() !== aiKey);
+        if (preview.aiCache && preview.aiCache.key === aiKey && preview.aiCache.pixels === preview.pixels) {
+          out = preview.aiCache.out.slice();
+        } else {
+          out = await pictureAi(settings, region, rw, rh, RW, RH, f => {
+            pct.textContent = Math.round(f * 100) + '%';
+            previewEls.status.textContent = 'Rendering AI preview… ' + Math.round(f * 100) + '%';
+          }, aiStale, { denoise: settings.denoise, cuganMode: settings.cuganMode, seFrom: { rgba, w, h } });
+          preview.aiCache = { key: aiKey, pixels: preview.pixels, out: out.slice() };
+        }
+        const stale = () => closed() || preview.dirty;
+        if (preview.dirty) throw new Error('cancelled');
+        if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false, lineScale: sc }, settings.device, stale);
       } else {
-        out = await pictureAi(settings, region, rw, rh, RW, RH, f => {
-          pct.textContent = Math.round(f * 100) + '%';
-          previewEls.status.textContent = 'Rendering AI preview… ' + Math.round(f * 100) + '%';
-        }, aiStale, { denoise: settings.denoise, cuganMode: settings.cuganMode, seFrom: { rgba, w, h } });
-        preview.aiCache = { key: aiKey, pixels: preview.pixels, out: out.slice() };
+        const stale = () => token !== preview.token || preview.dirty || !enhanceDialog.classList.contains('open');
+        out = await previewEngine(region, rw, rh, opts, settings.device, stale);
       }
-      const stale = () => closed() || preview.dirty;
-      if (preview.dirty) throw new Error('cancelled');
-      if (post) out = await previewEngine(out, RW, RH, { ...opts, width: RW, height: RH, jpegSource: false, lineScale: sc }, settings.device, stale);
-    } else {
-      const stale = () => token !== preview.token || preview.dirty || !enhanceDialog.classList.contains('open');
-      out = await previewEngine(region, rw, rh, opts, settings.device, stale);
-    }
+    }, () => token !== preview.token || preview.dirty || !enhanceDialog.classList.contains('open'));
     if (token !== preview.token) return;
     const tmp = document.createElement('canvas');
     tmp.width = RW; tmp.height = RH;
@@ -4611,7 +4658,7 @@ async function runPreview() {
     if (!preview.pending && !preview.dirty) previewEls.after.classList.remove('stale');
     previewEls.status.textContent = 'Preview at ' + (Math.round(sc * 100) / 100) + '× · ' + describeSettings(settings);
   } catch (err) {
-    if (err && err.message === 'cancelled') { /* superseded by a newer preview */ }
+    if (err && (err.message === 'cancelled' || err instanceof CancelledError)) { /* superseded by a newer preview */ }
     else {
       console.error('Preview failed', err);
       if (token === preview.token) previewEls.status.textContent = 'Preview failed' + (ai ? ': ' + err.message : '.');
@@ -5974,6 +6021,17 @@ void main(){
       if (kind !== 'esrgan' && pool) { Object.values(pool.t).flat().forEach(free); pool = null; }
       if (kind !== 'cugan') cgFreeAll();
       if (kind !== 'builtin' && bpool) { [...bpool.m, ...bpool.s, bpool.o].forEach(x => gl.deleteTexture(x.t)); bpool = null; }
+      if (kind !== 'builtin') freeCleanupTextures();
+    }
+    // runCleanup's input-resolution textures (the picture + 7 float planes),
+    // kept between calls while batching (video frames of one size).
+    let cpool = null;
+    function freeCleanupTextures() { if (cpool) { cpool.all.forEach(x => gl.deleteTexture(x.t)); cpool = null; } }
+    function cleanupTextures(w, h) {
+      if (cpool && cpool.w === w && cpool.h === h) return cpool;
+      freeCleanupTextures();
+      const all = [tex2(w, h, gl.RGBA8), ...Array.from({ length: 7 }, () => tex2(w, h, gl.RGBA32F))];
+      return (cpool = { w, h, all });
     }
     function bTextures(rw, rh) {
       if (bpool && bpool.w >= rw && bpool.h >= rh) return bpool;
@@ -6122,12 +6180,10 @@ void main(){
       const extras = opts.extras || {};
       let alpha = false;
       for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) { alpha = true; break; }
-      const T = [];
-      const t = () => { const x = tex2(w, h, gl.RGBA32F); T.push(x); return x; };
-      const src = tex2(w, h, gl.RGBA8, new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.length), gl.UNSIGNED_BYTE);
-      T.push(src);
-      let A = t(), B2 = t();
-      const s0 = t(), s1 = t(), s2 = t(), s3 = t(), s4 = t();
+      const [src, a0, b0, s0, s1, s2, s3, s4] = cleanupTextures(w, h).all;
+      gl.bindTexture(gl.TEXTURE_2D, src.t);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.length));
+      let A = a0, B2 = b0;
       const swapPl = () => { const x = A; A = B2; B2 = x; };
       const pass = (pr, dst, cost, set) => step(w * h * cost, () => {
         gl.useProgram(pr.p);
@@ -6230,7 +6286,7 @@ void main(){
         return debug ? { out, ...dbg } : out;
       } finally {
         queue = [];
-        T.forEach(x => gl.deleteTexture(x.t));
+        if (!batching()) freeCleanupTextures();
       }
     }
 
@@ -6254,7 +6310,7 @@ const AI_MODELS = [
     bytes: 2 * 2573648 + 2 * 2818348 },
 ];
 const AI_PREVIEW_PAD = 24;
-const aiState = { stored: new Set(), compiled: new Map(), runner: null, gpuError: null, busy: new Set(), progress: {} };
+const aiState = { stored: new Set(), compiled: new Map(), runner: null, gpuError: null, busy: new Set(), progress: {}, staleWeights: [] };
 
 function isAiEngine(st) { return !!st && !!st.engine && st.engine !== 'builtin'; }
 function aiReady(id) { return aiState.stored.has(id) && !aiState.gpuError; }
@@ -6274,7 +6330,7 @@ function modelStoreTx(mode, fn) {
 function aiRunner() {
   if (aiState.runner) return aiState.runner;
   if (aiState.gpuError) throw new Error(aiState.gpuError);
-  try { aiState.runner = aiModule().createRunner({ isUserBusy: ms => performance.now() - userScrollAt < ms, batching: () => aiState.batching }); }
+  try { aiState.runner = aiModule().createRunner({ isUserBusy: ms => performance.now() - userScrollAt < ms, batching: () => aiState.batching || aiState.videoBatching }); }
   catch (err) { aiState.gpuError = err.message || String(err); throw err; }
   return aiState.runner;
 }
@@ -6299,27 +6355,27 @@ async function aiGetModel(id, opts = {}) {
     const rec = await modelStoreTx('readonly', st => st.get(id));
     if (!rec) throw new Error('The AI model is not downloaded.');
     const M = aiModule();
-    entry = { model: M.compile(rec.param, rec.bin) };
-    if (rec.param2) {
-      entry.strong = M.compile(rec.param, rec.bin);
-      entry.weak = M.compile(rec.param2, rec.bin2);
-      entry.model.version = 0; entry.denoise = null;
-    }
+    entry = rec.param2 ? { strong: M.compile(rec.param, rec.bin), weak: M.compile(rec.param2, rec.bin2), mixes: [] }
+      : { model: M.compile(rec.param, rec.bin) };
     aiState.compiled.set(id, entry);
   }
-  if (entry.weak) {
-    const s = Math.max(0, Math.min(100, denoise)) / 100;
-    if (entry.denoise !== s) {
-      const mix = (out, a, b) => { for (let i = 0; i < out.length; i++) out[i] = a[i] * s + b[i] * (1 - s); };
-      entry.model.convs.forEach((c, k) => {
-        const a = entry.strong.convs[k], b = entry.weak.convs[k];
-        mix(c.weight, a.weight, b.weight); mix(c.bias, a.bias, b.bias);
-        if (c.prelu) mix(c.prelu, a.prelu, b.prelu);
-      });
-      entry.denoise = s; entry.model.version++;          // the runner re-uploads the weights
-    }
+  if (!entry.weak) return entry.model;
+  // AI · Balanced: one model per denoise value, never changed once handed
+  // out, so a video that runs on with one value keeps its weights while a
+  // picture or preview uses another. The last three are kept.
+  const s = Math.max(0, Math.min(100, denoise)) / 100;
+  let k = entry.mixes.findIndex(m => m.denoise === s);
+  if (k < 0) {
+    const mix = (a, b) => a.map((v, i) => v * s + b[i] * (1 - s));
+    entry.mixes.push({ ...entry.strong, denoise: s, version: 0, convs: entry.strong.convs.map((c, i) => {
+      const b = entry.weak.convs[i];
+      return { ...c, weight: mix(c.weight, b.weight), bias: mix(c.bias, b.bias), ...(c.prelu ? { prelu: mix(c.prelu, b.prelu) } : {}) };
+    }) });
+    if (entry.mixes.length > 3) aiState.staleWeights.push(entry.mixes.shift());   // its WebGL weights are freed by withGpu
+    k = entry.mixes.length - 1;
   }
-  return entry.model;
+  entry.mixes.push(...entry.mixes.splice(k, 1));                     // most recently used last
+  return entry.mixes[entry.mixes.length - 1];
 }
 
 let aiActive = 0;
@@ -6334,6 +6390,10 @@ async function withGpu(fn, isCancelled) {
   try {
     await before;
     if (isCancelled && isCancelled()) throw new Error('cancelled');
+    for (const m of aiState.staleWeights.splice(0)) {               // AI · Balanced models no longer cached
+      if (m.wTex && m.wGl && !m.wGl.isContextLost()) m.wGl.deleteTexture(m.wTex);
+      m.wTex = null;
+    }
     const runner = aiRunner();
     aiActive++; document.body.classList.add('gpu-busy');
     try {
@@ -6549,48 +6609,21 @@ let lastAiBackend = null;
 async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, opts) {
   lastAiBackend = 'WebGL';
   if (settings.aiDevice === 'webgpu' && VIDEO_GPU_MODELS.has(settings.engine) && w * h <= GPU_CLEANUP_MAX_PIXELS) {
-    const note = msg => { if (!gpuCleanupNotes.has(msg)) { gpuCleanupNotes.add(msg); showToast(msg); } };
     try {
-      let gpu = await videoGpuFor(settings.engine, settings.denoise);
-      if (gpu) {
-        gpuFreeWebGL();
-        const size = { iw: W, ih: H, W, H, x: 0, y: 0 };
-        for (;;) {
-          if (!gpu) throw new Error('WebGPU was turned off after the GPU driver failed twice (' + gpuOff + ')');
-          const dev = gpu.eng.device;
-          const diag = () => w + '×' + h + ' → ' + W + '×' + H + ', GPU budget ' + Math.round(gpuBudget() / 2 ** 20) + ' MB, max buffer ' +
-            Math.round(dev.limits.maxBufferSize / 2 ** 20) + ' MB' + (gpu.eng.f16 ? '' : ', 32-bit') + (gpuSafeMode ? ', safe mode' : '');
-          const bmp = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba), w, h), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
-          // WebGPU reports a failed allocation later instead of throwing: catch it here.
-          dev.pushErrorScope('out-of-memory'); dev.pushErrorScope('validation');
-          let out, gpuErr, thrown = null;
-          try { gpu.eng.run(gpu.model, bmp, w, h, size); out = await gpu.eng.read(size); }
-          catch (err) { thrown = err; }
-          finally { bmp.close(); gpuErr = (await dev.popErrorScope()) || (await dev.popErrorScope()); }
-          const fail = thrown || (gpuErr && new Error(gpuErr.message));
-          if (!fail) {
-            if (GPU_MOBILE) gpu.eng.release();
-            if (onProgress) onProgress(1);
-            lastAiBackend = 'WebGPU';
-            return out;
-          }
-          gpu.eng.release();
-          if (gpuLost(fail) || gpu.eng.lost) {          // device lost: once more in safe mode, then WebGL
-            if (!gpuDeviceLost(dev, gpu.eng.lost || fail.message)) throw new Error((fail.message || fail) + ' — ' + diag() + '; WebGPU is off until the page is reloaded');
-            gpu = await videoGpuFor(settings.engine, settings.denoise);
-            continue;
-          }
-          if (!gpuOutOfMemory(fail) || gpuBudgetScale <= 1 / 8) throw new Error((fail.message || fail) + ' — ' + diag());
-          gpuBudgetScale /= 2;                     // retry with smaller bands
-          console.warn('WebGPU AI out of memory, retrying with a budget of ' + Math.round(gpuBudget() / 2 ** 20) + ' MB', fail);
-        }
+      const model = await aiGetModel(settings.engine, { denoise: settings.denoise }), size = { iw: W, ih: H, W, H, x: 0, y: 0 };
+      const r = await gpuAttempt(async () => { const e = await gpuCompact(); return e && !e.lost ? e : null; },
+        eng => { eng.run(model, rgba, w, h, size); return eng.read(size); }, w + '×' + h + ' → ' + W + '×' + H, isCancelled);
+      if (r) {
+        if (onProgress) onProgress(1);
+        lastAiBackend = 'WebGPU';
+        return r.value;
       }
-      note(gpuOff ? 'WebGPU is off for this visit after the GPU driver failed twice (' + gpuOff + '), so the AI runs on WebGL.'
+      gpuNote(gpuOff ? 'WebGPU is off for this visit after the GPU driver failed twice (' + gpuOff + '), so the AI runs on WebGL.'
         : 'WebGPU isn’t available here, so the AI runs on WebGL.');
     } catch (err) {
       if (isCancelled && isCancelled()) throw err;
       console.warn('WebGPU AI failed', err);
-      note('The WebGPU AI failed (' + (err.message || err) + '), so it runs on WebGL.');
+      gpuNote('The WebGPU AI failed (' + (err.message || err) + '), so it runs on WebGL.');
     }
   }
   return aiRun(settings.engine, rgba, w, h, W, H, onProgress, isCancelled, opts);
@@ -6817,6 +6850,8 @@ async function mp4Demux(file) {
   return { duration: video.duration, video, audio };
 }
 
+const videoCodecName = v => v.format.startsWith('avc') ? 'H.264' : v.format === 'av01' ? 'AV1' : 'HEVC';
+
 // Decoded frames with start ≤ timestamp < end (µs), in display order. Decoding
 // starts at the last keyframe at or before `start`. The caller closes frames.
 async function* mp4DecodeFrames(file, v, start, end, isCancelled) {
@@ -6828,9 +6863,12 @@ async function* mp4DecodeFrames(file, v, start, end, isCancelled) {
   }
   for (let i = first + 1; i < S.length; i++) if (S[i].key && S[i].pts >= end) { last = i; break; }
   const ready = [];
-  let failed = null, wake = null, flushing = null, flushed = false, next = first;
+  // (A decoder that takes samples but never returns a frame or an error ends
+  // the job after 30 s instead of leaving it waiting; time spent by the caller
+  // on a frame doesn't count.)
+  let failed = null, wake = null, flushing = null, flushed = false, next = first, active = performance.now();
   const poke = () => { if (wake) { const w = wake; wake = null; w(); } };
-  const dec = new VideoDecoder({ output: f => { ready.push(f); poke(); }, error: e => { failed = e; poke(); } });
+  const dec = new VideoDecoder({ output: f => { ready.push(f); active = performance.now(); poke(); }, error: e => { failed = e; poke(); } });
   dec.ondequeue = poke;
   dec.configure(v.config);
   try {
@@ -6839,8 +6877,10 @@ async function* mp4DecodeFrames(file, v, start, end, isCancelled) {
         const f = ready.shift();
         if (f.timestamp < start || f.timestamp >= end) { f.close(); continue; }
         yield f;
+        active = performance.now();
       }
       if (failed) throw failed;
+      if (performance.now() - active > 30000) throw new Error('The video decoder stopped responding. Please try again.');
       if (isCancelled && isCancelled()) throw new CancelledError('Cancelled');
       if (flushed) return;
       // Keep a few samples queued, but don't pile up decoded frames (the
@@ -7021,12 +7061,12 @@ function blobSink() {
 // only replaces the file on close(); abort() leaves no partial file behind.
 async function fileSink(handle) {
   const w = await handle.createWritable();
-  let at = 0;
+  let at = 0, ended = null;
   return {
     async write(parts) { const b = new Blob(parts); await w.write({ type: 'write', position: at, data: b }); at += b.size; },
     async patch(position, bytes) { await w.write({ type: 'write', position, data: bytes }); },
-    async close() { await w.close(); return null; },
-    abort() { return w.abort().catch(() => {}); },
+    async close() { ended = w.close(); await ended; return null; },
+    abort() { return (ended || (ended = w.abort())).catch(() => {}); },
   };
 }
 
@@ -7092,6 +7132,35 @@ const toHalfBits = (() => {
   };
 })();
 
+// A W×H rgba8unorm texture as RGBA bytes. The copy is queued at once (before
+// the first await), so work queued after the call doesn't change the result.
+// One staging buffer per device is kept for frame-sized reads (video).
+const gpuReadBufs = new WeakMap();
+async function gpuReadTexture(device, tex, W, H) {
+  const bpr = Math.ceil(W * 4 / 256) * 256, size = bpr * H;
+  let buf = gpuReadBufs.get(device);
+  if (!buf || buf.size !== size || buf.mapState !== 'unmapped') {
+    const busy = (buf && buf.mapState !== 'unmapped') || size > 32 << 20;   // a one-off buffer
+    if (buf && !busy) buf.destroy();
+    buf = device.createBuffer({ size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    if (!busy) gpuReadBufs.set(device, buf);
+  }
+  const enc = device.createCommandEncoder();
+  enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: bpr }, [W, H]);
+  device.queue.submit([enc.finish()]);
+  await buf.mapAsync(GPUMapMode.READ);
+  const src = new Uint8Array(buf.getMappedRange()), out = new Uint8ClampedArray(W * H * 4);
+  if (bpr === W * 4) out.set(src.subarray(0, W * H * 4));
+  else for (let y = 0; y < H; y++) out.set(src.subarray(y * bpr, y * bpr + W * 4), y * W * 4);
+  buf.unmap();
+  if (gpuReadBufs.get(device) !== buf) buf.destroy();
+  return out;
+}
+function gpuDropReadBuffer(device) {
+  const b = gpuReadBufs.get(device);
+  if (b && b.mapState === 'unmapped') { b.destroy(); gpuReadBufs.delete(device); }
+}
+
 async function createGpuCompact(opts = {}) {
   if (!navigator.gpu) return null;
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
@@ -7105,8 +7174,7 @@ async function createGpuCompact(opts = {}) {
   let lost = null;
   device.lost.then(info => {
     lost = (info.reason && info.reason !== 'unknown' ? info.reason + ': ' : '') + (info.message || 'the GPU was reset');
-    if (info.reason === 'destroyed') gpuCompactPromise = null;
-    else gpuDeviceLost(device, lost);
+    gpuDeviceLost(device, lost);
   });
   const S = f16 ? 'f16' : 'f32', VS = f16 ? 8 : 16;                // storage type, bytes per vec4
   const head = (f16 ? 'enable f16;\n' : '') + 'alias S = ' + S + ';\n';
@@ -7248,10 +7316,11 @@ fn t4(u: i32, v: i32) -> vec3f {
   const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
 
   // Weights of one model version: one f16/f32 matrix buffer + f32 bias/slopes.
+  // A model with the same layout (another AI · Balanced denoise value) only
+  // gets its weights written into the same buffers; the plan stays.
   let packed = null;
   function pack(model) {
     if (packed && packed.model === model && packed.version === model.version) return packed;
-    if (packed) { packed.wBuf.destroy(); packed.bBuf.destroy(); }
     let nm = 0, nb = 0;
     const convs = model.convs.map(c => {
       const inC4 = Math.ceil(c.inC / 4), outC4 = Math.ceil(c.outC / 4);
@@ -7275,12 +7344,20 @@ fn t4(u: i32, v: i32) -> vec3f {
     });
     let wData = W;
     if (f16) { wData = new Uint16Array(W.length); for (let i = 0; i < W.length; i++) wData[i] = toHalfBits(W[i]); }
+    const layout = JSON.stringify(convs);
+    if (packed && packed.layout === layout) {
+      device.queue.writeBuffer(packed.wBuf, 0, wData);
+      device.queue.writeBuffer(packed.bBuf, 0, B);
+      Object.assign(packed, { model, version: model.version });
+      return packed;
+    }
+    if (packed) { packed.wBuf.destroy(); packed.bBuf.destroy(); }
+    if (plan) { plan.destroy(); plan = null; }
     const wBuf = device.createBuffer({ size: Math.max(16, wData.byteLength), usage: STORAGE });
     const bBuf = device.createBuffer({ size: Math.max(16, B.byteLength), usage: STORAGE });
     device.queue.writeBuffer(wBuf, 0, wData);
     device.queue.writeBuffer(bBuf, 0, B);
-    packed = { model, version: model.version, convs, wBuf, bBuf };
-    plan = null;
+    packed = { model, version: model.version, layout, convs, wBuf, bBuf };
     return packed;
   }
 
@@ -7341,14 +7418,21 @@ fn t4(u: i32, v: i32) -> vec3f {
   }
 
   let inTex = null;
-  // Runs the network on `source` (a canvas or ImageBitmap; see videoUpscale
-  // for why not a VideoFrame), drawn at w×h, into a size.W×size.H frame: picture at (size.x, size.y), size
-  // size.iw×size.ih, black around it. The result is in `canvas` (for a
-  // VideoFrame) and can be read back with read(). Work is queued, not awaited.
-  function run(model, source, w, h, size) {
+  const configure = W => {
+    if (canvas.width !== W.W || canvas.height !== W.H) { canvas.width = W.W; canvas.height = W.H; }
+    if (!ctx.configured) { ctx.configure({ device, format: 'rgba8unorm', alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST }); ctx.configured = true; }
+    return ctx.getCurrentTexture();
+  };
+  // Runs the network on `source` (a canvas or ImageBitmap — see videoUpscale
+  // for why not a VideoFrame — or RGBA bytes at w×h), drawn at w×h, into a
+  // size.W×size.H frame: picture at (size.x, size.y), size size.iw×size.ih,
+  // black around it. The result is in result() for read() or the cleanup, and
+  // with toCanvas also in `canvas` (for a VideoFrame). Work is queued, not awaited.
+  function run(model, source, w, h, size, toCanvas = false) {
     if (lost) throw new Error(lost);
     const pk = pack(model), pl = planFor(pk, w, h, size);
-    const sw = source.displayWidth || source.width, sh = source.displayHeight || source.height;
+    const bytes = ArrayBuffer.isView(source);
+    const sw = bytes ? w : source.displayWidth || source.width, sh = bytes ? h : source.displayHeight || source.height;
     if (!inTex || inTex.width !== sw || inTex.height !== sh) {
       if (inTex) inTex.destroy();
       inTex = device.createTexture({ size: [sw, sh], format: 'rgba8unorm',
@@ -7363,9 +7447,8 @@ fn t4(u: i32, v: i32) -> vec3f {
         ] });
       }
     }
-    device.queue.copyExternalImageToTexture({ source }, { texture: inTex }, [sw, sh]);
-    if (canvas.width !== size.W || canvas.height !== size.H) { canvas.width = size.W; canvas.height = size.H; }
-    if (!ctx.configured) { ctx.configure({ device, format: 'rgba8unorm', alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST }); ctx.configured = true; }
+    if (bytes) device.queue.writeTexture({ texture: inTex }, source, { bytesPerRow: w * 4 }, [w, h]);
+    else device.queue.copyExternalImageToTexture({ source }, { texture: inTex }, [sw, sh]);
     // One submit per band, so each piece of GPU work stays short (phones end
     // GPU work that runs for more than a few seconds).
     pl.bands.forEach((b, k) => {
@@ -7385,9 +7468,11 @@ fn t4(u: i32, v: i32) -> vec3f {
       rp.end();
       device.queue.submit([enc.finish()]);
     });
-    const enc = device.createCommandEncoder();
-    enc.copyTextureToTexture({ texture: pl.outTex }, { texture: ctx.getCurrentTexture() }, [size.W, size.H]);
-    device.queue.submit([enc.finish()]);
+    if (toCanvas) {
+      const enc = device.createCommandEncoder();
+      enc.copyTextureToTexture({ texture: pl.outTex }, { texture: configure(size) }, [size.W, size.H]);
+      device.queue.submit([enc.finish()]);
+    }
     return pl;
   }
 
@@ -7395,36 +7480,24 @@ fn t4(u: i32, v: i32) -> vec3f {
   function release() {
     if (plan) { plan.destroy(); plan = null; }
     if (inTex) { inTex.destroy(); inTex = null; }
+    gpuDropReadBuffer(device);
   }
 
   // The last result as RGBA bytes (W×H×4), e.g. for the preview.
-  async function read(size) {
-    const pl = plan, bpr = Math.ceil(size.W * 4 / 256) * 256;
-    const buf = device.createBuffer({ size: bpr * size.H, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    const enc = device.createCommandEncoder();
-    enc.copyTextureToBuffer({ texture: pl.outTex }, { buffer: buf, bytesPerRow: bpr }, [size.W, size.H]);
-    device.queue.submit([enc.finish()]);
-    await buf.mapAsync(GPUMapMode.READ);
-    const src = new Uint8Array(buf.getMappedRange()), out = new Uint8ClampedArray(size.W * size.H * 4);
-    for (let y = 0; y < size.H; y++) out.set(src.subarray(y * bpr, y * bpr + size.W * 4), y * size.W * 4);
-    buf.unmap(); buf.destroy();
-    return out;
-  }
+  const read = size => gpuReadTexture(device, plan.outTex, size.W, size.H);
 
   // Puts a picture texture (e.g. the WebGPU cleanup's result) into `canvas`
   // as a size.W×size.H frame, at (size.x, size.y) on black.
   function present(tex, size) {
     if (lost) throw new Error(lost);
-    if (canvas.width !== size.W || canvas.height !== size.H) { canvas.width = size.W; canvas.height = size.H; }
-    if (!ctx.configured) { ctx.configure({ device, format: 'rgba8unorm', alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST }); ctx.configured = true; }
-    const enc = device.createCommandEncoder(), ct = ctx.getCurrentTexture();
+    const enc = device.createCommandEncoder(), ct = configure(size);
     enc.beginRenderPass({ colorAttachments: [{ view: ct.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] }).end();
     enc.copyTextureToTexture({ texture: tex }, { texture: ct, origin: [size.x, size.y] }, [size.iw, size.ih]);
     device.queue.submit([enc.finish()]);
   }
 
   return { f16, canvas, run, read, present, release, device, result: () => plan && plan.outTex,
-    done: () => device.queue.onSubmittedWorkDone(), destroy: () => device.destroy(), get lost() { return lost; },
+    done: () => device.queue.onSubmittedWorkDone(), get lost() { return lost; },
     info: (f16 ? 'f16' : 'f32') + ' · ' + (adapter.info ? [adapter.info.vendor, adapter.info.architecture].filter(Boolean).join(' ') : '') };
 }
 
@@ -7862,8 +7935,9 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
     fragment: { module: mods[name], entryPoint: 'fs', targets: [{ format }] }, primitive: { topology: 'triangle-list' } });
   const pipeline = (name, format) => pipes[name + ':' + format] || (pipes[name + ':' + format] = device.createRenderPipeline(pipeDesc(name, format)));
   // Built up front (in parallel) so the first picture or frame doesn't wait for them.
-  await Promise.all(Object.keys(SRC).map(async name => {
-    const format = name === 'out' || name === 'aaapply' ? 'rgba8unorm' : 'rgba32float';
+  // (line and cov also write the one-channel scratch textures of the output half.)
+  await Promise.all([...Object.keys(SRC).map(name => [name, name === 'out' || name === 'aaapply' ? 'rgba8unorm' : 'rgba32float']),
+    ['line', 'r32float'], ['cov', 'r32float']].map(async ([name, format]) => {
     pipes[name + ':' + format] = await device.createRenderPipelineAsync(pipeDesc(name, format));
   }));
   const ffLayout = device.createBindGroupLayout({ entries: [
@@ -7890,14 +7964,14 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
   };
   let lutTex = null;
 
-  // Recorded passes, encoded in one go by flush() with one uniform buffer.
+  // Recorded passes, encoded in one go by flush() with one uniform buffer
+  // (kept and grown as needed: writeBuffer is ordered after earlier submits).
   const U_SIZE = 96, U_STRIDE = 256;
-  let passes = [];
+  let passes = [], ub = null;
   const pass = (name, dst, rw, rh, texs, uo) => passes.push({ name, dst, rw, rh, texs, uo });
   function flush(extra) {
     const n = passes.length;
     const enc = device.createCommandEncoder();
-    let ub = null;
     if (n) {
       const data = new ArrayBuffer(n * U_STRIDE), dv = new DataView(data);
       passes.forEach((ps, k) => {
@@ -7909,7 +7983,10 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
         (o.i || []).forEach((v, j) => I(64 + 4 * j, v));
         if (o.dir) { I(80, o.dir[0]); I(84, o.dir[1]); }
       });
-      ub = device.createBuffer({ size: n * U_STRIDE, usage: BU.UNIFORM | BU.COPY_DST });
+      if (!ub || ub.size < n * U_STRIDE) {
+        if (ub) ub.destroy();                  // freed once the submitted work is done
+        ub = device.createBuffer({ size: Math.max(64, n) * U_STRIDE, usage: BU.UNIFORM | BU.COPY_DST });
+      }
       device.queue.writeBuffer(ub, 0, data);
       passes.forEach((ps, k) => {
         const pipe = pipeline(ps.name, ps.dst.format);
@@ -7924,12 +8001,18 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
     }
     if (extra) extra(enc);
     device.queue.submit([enc.finish()]);
-    if (ub) ub.destroy();              // freed once the submitted work is done
     passes = [];
   }
   const check = isCancelled => {
     if (ai.lost) throw new Error(ai.lost);
     if (isCancelled && isCancelled()) throw new Error('cancelled');
+  };
+  // Gaussian blur as three box blurs (as in upscalerModule); box2(src, r, tmp, dst).
+  const gauss3 = (box2, src, sigma, a, b) => {
+    const rb = Math.max(0, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2));
+    if (rb === 0) return src;
+    box2(src, rb, b, a); box2(a, rb, b, a); box2(a, rb, b, a);
+    return a;
   };
 
   // flatFills() on the planes in `src`, written to `dst` (same size).
@@ -8012,7 +8095,8 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
     const CORE = GPU_TILE, HALO = 48;
     const T = pool('fin', Math.min(W, CORE + 2 * HALO), Math.min(H, CORE + 2 * HALO), mk => {
       const tw = Math.min(W, CORE + 2 * HALO), th = Math.min(H, CORE + 2 * HALO);
-      return { m: [mk(tw, th), mk(tw, th)], s: Array.from({ length: 9 }, () => mk(tw, th)), o: mk(tw, th, 'rgba8unorm') };
+      // scratch (one channel: luma, masks, line strength) as in runBuiltin's R32F
+      return { m: [mk(tw, th), mk(tw, th)], s: Array.from({ length: 9 }, () => mk(tw, th, 'r32float')), o: mk(tw, th, 'rgba8unorm') };
     });
     const iterations = P.shock + (scale > 2.5 ? 1 : 0), smoothR = scale > 2.5 ? 2 : 1;
     for (let ty = 0; ty < Math.ceil(H / CORE); ty++) for (let tx = 0; tx < Math.ceil(W / CORE); tx++) {
@@ -8026,12 +8110,7 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
       const line = (src, ch, dir, r, mode, dst) => ps('line', dst, [src], { i: [ch, r, mode], dir });
       const box2 = (src, ch, r, tmp, dst) => { line(src, ch, [1, 0], r, 0, tmp); line(tmp, 0, [0, 1], r, 0, dst); };
       const morph2 = (src, ch, r, isMax, tmp, dst) => { line(src, ch, [1, 0], r, isMax ? 1 : 2, tmp); line(tmp, 0, [0, 1], r, isMax ? 1 : 2, dst); };
-      const gauss = (src, sigma, a, b) => {
-        const rb = Math.max(0, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2));
-        if (rb === 0) return src;
-        box2(src, 0, rb, b, a); box2(a, 0, rb, b, a); box2(a, 0, rb, b, a);
-        return a;
-      };
+      const gauss = (src, sigma, a, b) => gauss3((x, r, t, d) => box2(x, 0, r, t, d), src, sigma, a, b);
       ps('resample', Mo(), [planes, fieldT, lutTex], { src: [w, h] }); swap();
       for (let it = 0; it < iterations; it++) { box2(M(), 0, smoothR, S[0], S[1]); const cur = M(); ps('shock', Mo(), [cur, S[1]], { f: [P.dt] }); swap(); }
       if (P.sharpen > 0) { const cur = M(); ps('sharpen', Mo(), [cur], { f: [P.sharpen] }); swap(); }
@@ -8070,12 +8149,7 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
     const [a0, a1, a2, a3, a4, a5, a6] = ap.t;
     const ps = (name, dst, texs, o = {}) => pass(name, dst, W, H, texs, { size: [W, H], orig: [0, 0], img: [W, H], ...o });
     const box2 = (src, r, tmp, dst) => { ps('box', tmp, [src], { dir: [1, 0], i: [r, 0] }); ps('box', dst, [tmp], { dir: [0, 1], i: [r, 0] }); };
-    const gauss = (src, sigma, a, b) => {
-      const rb = Math.max(0, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2));
-      if (rb === 0) return src;
-      box2(src, rb, b, a); box2(a, rb, b, a); box2(a, rb, b, a);
-      return a;
-    };
+    const gauss = (src, sigma, a, b) => gauss3(box2, src, sigma, a, b);
     ps('aaluma', a0, [inTex]);
     const Ys = gauss(a0, 0.7, a1, a2);
     ps('aagrad', a3, [Ys]);
@@ -8115,18 +8189,7 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
     return { tex: out, aaDone: !extras.aa };
   }
 
-  async function read(t, W, H) {
-    const bpr = Math.ceil(W * 4 / 256) * 256;
-    const buf = device.createBuffer({ size: bpr * H, usage: BU.COPY_DST | BU.MAP_READ });
-    const enc = device.createCommandEncoder();
-    enc.copyTextureToBuffer({ texture: t }, { buffer: buf, bytesPerRow: bpr }, [W, H]);
-    device.queue.submit([enc.finish()]);
-    await buf.mapAsync(GPUMapMode.READ);
-    const src = new Uint8Array(buf.getMappedRange()), out = new Uint8ClampedArray(W * H * 4);
-    for (let y = 0; y < H; y++) out.set(src.subarray(y * bpr, y * bpr + W * 4), y * W * 4);
-    buf.unmap(); buf.destroy();
-    return out;
-  }
+  const read = (t, W, H) => gpuReadTexture(device, t, W, H);
 
   // Upload: an RGBA array or a canvas/ImageBitmap into a w×h texture.
   function upload(source, w, h) {
@@ -8140,11 +8203,12 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
   // Frees the working textures and buffers (pictures on phones, or after a failure).
   function release() {
     for (const [k, p] of Object.entries(pools)) { p.all.forEach(t => t.destroy()); delete pools[k]; }
+    if (ub) { ub.destroy(); ub = null; }
+    gpuDropReadBuffer(device);
   }
 
-  // Pictures: RGBA in, RGBA out. → { out, aaDone }. GPU allocation and
-  // validation errors (reported later by WebGPU, not thrown) become an
-  // exception here, so the caller can fall back.
+  // Pictures: RGBA in, RGBA out. → { out, aaDone }. Run through gpuAttempt,
+  // which turns the GPU errors WebGPU reports later into exceptions.
   async function cleanup(rgba, w, h, opts, P, LUT, onProgress, isCancelled) {
     let alpha = false;
     for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) { alpha = true; break; }
@@ -8167,28 +8231,20 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
         aaDone = aaDone && r.aaDone;
         if (onProgress) onProgress((y0 + keep) / h);
       }
-      if (GPU_MOBILE) release();
       return { out, aaDone };
     }
     const r = await cleanupOne(rgba, w, h, { ...opts, alpha }, P, LUT, isCancelled, onProgress);
-    if (GPU_MOBILE) release();
     if (onProgress) onProgress(1);
     return r;
   }
 
   async function cleanupOne(rgba, w, h, opts, P, LUT, isCancelled, onProgress) {
-    device.pushErrorScope('out-of-memory'); device.pushErrorScope('validation');
-    let r, out, gpuErr;
-    try {
-      r = await cleanupTex(upload(rgba, w, h), w, h, opts, P, LUT, isCancelled, onProgress);
-      out = await read(r.tex, opts.width, opts.height);
-    } catch (err) { release(); throw err; }
-    finally { gpuErr = (await device.popErrorScope()) || (await device.popErrorScope()); }
-    if (gpuErr) { release(); throw new Error(gpuErr.message); }
-    return { out, aaDone: r.aaDone };
+    const r = await cleanupTex(upload(rgba, w, h), w, h, opts, P, LUT, isCancelled, onProgress);
+    return { out: await read(r.tex, opts.width, opts.height), aaDone: r.aaDone };
   }
 
-  return { ai, cleanup, cleanupTex, upload, read, release };
+  // (gpuAttempt catches the GPU errors of cleanup() and releases on failure.)
+  return { ai, device, f16: ai.f16, get lost() { return ai.lost; }, cleanup, cleanupTex, upload, read, release };
 }
 
 // ── VIDEO: PIPELINE ───────────────────────────────────────────────────────────
@@ -8322,14 +8378,29 @@ async function videoChain(st, w, h, size, direct) {
   const M = getMainUpscaler(), P = cleanup && M.tunePreset(M.PRESETS[st.preset] || M.PRESETS.balanced, cleanup.tuning);
   const pic = { iw: size.iw, ih: size.ih, W: size.iw, H: size.ih, x: 0, y: 0 };     // the picture only
   const quiet = () => {};
+  // Cleanup through builtinJob: where it really ran ('webgpu' / 'webgl' fall back).
+  const clean = async (px, pw, ph) => {
+    const out = await builtinJob(px, pw, ph, cleanup, quiet, device, false);
+    if (on !== 'original') chain.cleanBackend = lastCleanupBackend || (gpuBuiltinAvailable() ? 'GPU' : 'CPU');
+    return out;
+  };
+  const isDirect = direct && (cg ? true : !!gpu && !cleanup);
   const chain = {
     // The frame canvas lives on the GPU only for the AI on WebGPU; the built-in
     // engine always gets the CPU-drawn frame, so every mode starts from the
     // same pixels (the browser converts video colours slightly differently
     // when drawing on the GPU).
-    gpu, gpuInput: !!gpu, direct: direct && (cg ? true : !!gpu && !cleanup),
+    gpu, gpuInput: !!gpu, direct: isDirect,
+    // direct: the encoder's frame canvas (of the WebGPU engine in use)
+    canvas: isDirect ? (cg ? cg.ai : gpu.eng).canvas : null,
+    // AI on WebGPU, cleanup through builtinJob: the two stages, so a video can
+    // run the next frame's AI while this one is cleaned (videoUpscale).
+    split: gpu && cleanup && !cg ? {
+      ai(canvas) { gpu.eng.run(gpu.model, canvas, w, h, pic); return gpu.eng.read(pic); },
+      clean: px => clean(px, size.iw, size.ih),
+    } : null,
     backend: !ai ? '' : gpu ? 'WebGPU' : 'WebGL',
-    cleanBackend: !cleanup ? '' : cg ? 'WebGPU' : on === 'original' ? (device === 'gpu' ? 'GPU' : 'CPU') : 'WebGL',
+    cleanBackend: !cleanup ? '' : cg ? 'WebGPU' : on === 'original' ? (device === 'gpu' ? 'GPU' : 'CPU') : on === 'webgpu' ? 'WebGPU' : 'WebGL',
     async run(canvas, isCancelled) {
       if (cg) {
         let src;
@@ -8341,15 +8412,15 @@ async function videoChain(st, w, h, size, direct) {
       }
       let px;
       if (gpu) {
-        if (chain.direct) { gpu.eng.run(gpu.model, canvas, w, h, size); return null; }
+        if (chain.direct) { gpu.eng.run(gpu.model, canvas, w, h, size, true); return null; }
         gpu.eng.run(gpu.model, canvas, w, h, pic);
         px = await gpu.eng.read(pic);
       } else {
         const rgba = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
-        if (!ai) return builtinJob(rgba, w, h, cleanup, quiet, device);
+        if (!ai) return clean(rgba, w, h);
         px = await aiRun(st.engine, rgba, w, h, size.iw, size.ih, null, isCancelled, { denoise: st.denoise });
       }
-      return cleanup ? builtinJob(px, size.iw, size.ih, cleanup, quiet, device) : px;
+      return cleanup ? clean(px, size.iw, size.ih) : px;
     },
   };
   return chain;
@@ -8368,14 +8439,17 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
   const scale = v.scale >= 600 ? v.scale : 90000;
   const A = info.audio;
   const mux = mp4Muxer(sink, { width: size.W, height: size.H, scale, audio: A && { stsd: A.stsd, scale: A.scale } });
-  let encError = null, wake = null, lastOutput = performance.now();
+  // Stall: frames handed to the encoder and nothing back for STALL_MS since
+  // the later of the last output and the first frame it is still holding.
+  let encError = null, wake = null, lastOutput = 0, sent = 0, received = 0, holdingSince = 0;
+  const stalledNow = () => received < sent && performance.now() - Math.max(lastOutput, holdingSince) > STALL_MS;
   const poke = () => { if (wake) { const f = wake; wake = null; f(); } };
   // An encoder that holds frames without ever returning any would otherwise
   // leave the job waiting forever.
   const STALL_MS = 30000, stalled = () => new Error('The video encoder stopped responding. Please try again or use another browser.');
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
-      lastOutput = performance.now();
+      lastOutput = performance.now(); received++;
       if (meta && meta.decoderConfig) mux.setConfig(meta.decoderConfig);
       const data = new Uint8Array(chunk.byteLength);
       chunk.copyTo(data);
@@ -8392,7 +8466,7 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
   // canvas to the encoder; otherwise it is put into a 2D canvas.
   const chain = await videoChain(settings, w, h, size, true);
   const inCanvas = new OffscreenCanvas(w, h), inCtx = inCanvas.getContext('2d', { willReadFrequently: !chain.gpuInput });
-  const outCanvas = chain.direct ? (await gpuCompact()).canvas : new OffscreenCanvas(size.W, size.H);
+  const outCanvas = chain.direct ? chain.canvas : new OffscreenCanvas(size.W, size.H);
   const out = chain.direct ? null : outCanvas.getContext('2d');
   if (out) { out.fillStyle = '#000'; out.fillRect(0, 0, size.W, size.H); }
   let origin = null, nextKey = 0, lastDur = 0, done = 0, ai = 0;
@@ -8407,8 +8481,33 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
       ai++;
     }
   }
-  const before = aiState.batching;
-  aiState.batching = true;                                       // keep GPU textures between frames
+  // The upscaled picture (or, direct, the engine's canvas as it is) → a frame for the encoder.
+  const toFrame = (px, t, dur) => {
+    if (px) out.putImageData(new ImageData(new Uint8ClampedArray(px.buffer, px.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), size.x, size.y);
+    return new VideoFrame(outCanvas, { timestamp: t, duration: dur || undefined });
+  };
+  async function emit({ t, job }) {
+    const vf = await job;
+    try {
+      while (encoder.encodeQueueSize > 2 && !encError) {
+        if (stalledNow()) throw stalled();
+        await new Promise(r => { wake = r; setTimeout(r, 30); });
+      }
+      if (encError) throw encError;
+      const keyFrame = t >= nextKey;
+      if (keyFrame) nextKey = t + 2e6;                            // a keyframe every 2 s, for seeking
+      if (received === sent) holdingSince = performance.now();
+      sent++;
+      encoder.encode(vf, { keyFrame });
+    } finally { vf.close(); }
+    await copyAudio(t + 5e5);
+    await mux.flush();
+    onProgress(++done, total);
+  }
+  // Turns are shared with picture jobs (see gpuExclusive).
+  const turn = (take, fn) => take(fn, isCancelled);
+  let pending = null;                // the previous frame, while its cleanup runs in the worker
+  aiState.videoBatching = true;                                  // keep GPU textures between frames
   try {
     for await (const frame of mp4DecodeFrames(file, v, range.start, range.end, isCancelled)) {
       let ts, dur;
@@ -8416,36 +8515,37 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
       finally { frame.close(); }
       if (dur) lastDur = dur;
       if (origin === null) origin = ts;
-      const px = await chain.run(inCanvas, isCancelled);
-      if (px) out.putImageData(new ImageData(new Uint8ClampedArray(px.buffer, px.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), size.x, size.y);
-      while (encoder.encodeQueueSize > 2 && !encError) {
-        if (performance.now() - lastOutput > STALL_MS) throw stalled();
-        await new Promise(r => { wake = r; setTimeout(r, 30); });
+      const t = ts - origin;
+      let job;
+      if (chain.split) {
+        // AI on WebGPU for this frame while the worker still cleans the previous one.
+        const px = await turn(engineTurn, () => chain.split.ai(inCanvas));
+        job = turn(workerTurn, async () => toFrame(await chain.split.clean(px), t, dur));
+        job.catch(() => {});                                      // (handled by emit)
+      } else {
+        job = turn(gpuExclusive, async () => toFrame(await chain.run(inCanvas, isCancelled), t, dur));
+        await job;
       }
-      if (encError) throw encError;
-      const t = ts - origin, keyFrame = t >= nextKey;
-      if (keyFrame) nextKey = t + 2e6;                            // a keyframe every 2 s, for seeking
-      const vf = new VideoFrame(outCanvas, { timestamp: t, duration: dur || undefined });
-      try { encoder.encode(vf, { keyFrame }); } finally { vf.close(); }
-      await copyAudio(t + 5e5);
-      await mux.flush();
-      onProgress(++done, total);
+      if (pending) { const p = pending; pending = null; await emit(p); }
+      pending = { t, job };
     }
+    if (pending) { const p = pending; pending = null; await emit(p); }
     if (origin === null) throw new Error('No frames in that part of the video.');
     let flushed = false;
     await Promise.race([encoder.flush().finally(() => { flushed = true; }), new Promise((_, reject) => {
-      const check = () => { if (flushed) return; if (performance.now() - lastOutput > STALL_MS) reject(stalled()); else setTimeout(check, 1000); };
+      const check = () => { if (flushed) return; if (stalledNow()) reject(stalled()); else setTimeout(check, 1000); };
       check();
     })]);
     if (encError) throw encError;
     await copyAudio(Infinity);
     return await mux.finish(lastDur);
   } catch (err) {
+    if (pending) pending.job.then(vf => vf.close(), () => {});
     await sink.abort();
     if (isCancelled && isCancelled()) throw new CancelledError('Cancelled');
     throw err;
   } finally {
-    aiState.batching = before;
+    aiState.videoBatching = false;
     if (encoder.state !== 'closed') encoder.close();
   }
 }
@@ -8575,7 +8675,7 @@ function videoTexts() {
   vEls.extras.querySelectorAll('input').forEach(i => { i.disabled = st.preset === 'none'; });
   vEls.aaRow.hidden = !vEls.xAa.checked;
   vEls.onRow.hidden = st.preset === 'none';
-  vEls.on.querySelector('input[value=webgpu]').disabled = !navigator.gpu;
+  vEls.on.querySelector('input[value=webgpu]').disabled = !navigator.gpu || !!gpuOff;
   vEls.on.querySelector('input[value=webgl]').disabled = !gpuBuiltinAvailable();
   if (vEls.on.querySelector('input:checked').disabled) vEls.on.querySelector('input[value=original]').checked = true;
   vEls.cleanupHint.textContent = st.preset === 'none'
@@ -8637,10 +8737,13 @@ async function videoRenderPreview() {
       vEls.status.textContent = where + ' · upscaling…';
       const { canvas } = vid.frame, w = canvas.width, h = canvas.height;
       const chain = await videoChain(st, w, h, size, false);
-      const t0 = performance.now();
-      const up = await chain.run(canvas, gone);
-      // The first run also sends the model to the GPU, so the fastest is kept.
-      vid.ms[ck] = Math.min(vid.ms[ck] || Infinity, performance.now() - t0);
+      const up = await gpuExclusive(async () => {
+        const t0 = performance.now();
+        const px = await chain.run(canvas, gone);
+        // The first run also sends the model to the GPU, so the fastest is kept.
+        vid.ms[ck] = Math.min(vid.ms[ck] || Infinity, performance.now() - t0);
+        return px;
+      }, gone);
       vid.backend = chain.backend; vid.cleanBackend = chain.cleanBackend;
       const c = new OffscreenCanvas(size.iw, size.ih);
       c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(up.buffer, up.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), 0, 0);
@@ -8684,7 +8787,7 @@ async function selectVideo(item) {
   videoClearClip();
   const v = info.video;
   vEls.info.textContent = [item.name, Math.round(v.width) + '×' + Math.round(v.height), v.fps.toFixed(2).replace(/\.?0+$/, '') + ' fps',
-    videoClock(info.duration), v.format.startsWith('avc') ? 'H.264' : v.format === 'av01' ? 'AV1' : 'HEVC', info.audio ? 'audio copied as-is' : 'no audio', formatBytes(item.file.size)].join(' · ');
+    videoClock(info.duration), videoCodecName(v), info.audio ? 'audio copied as-is' : 'no audio', formatBytes(item.file.size)].join(' · ');
   vEls.origText.textContent = 'Original (' + Math.round(v.height) + 'p)';
   vEls.time.max = Math.max(0, info.duration - 1 / v.fps);
   vEls.time.value = info.duration * 0.1;                         // past the usual black intro frames
@@ -8792,6 +8895,7 @@ const VQ_FIELDS = ['id', 'order', 'name', 'size', 'lastModified', 'handle', 'inf
 const vqSave = it => vqTx('items', 'readwrite', st => st.put(Object.fromEntries(VQ_FIELDS.map(k => [k, it[k] ?? null]))));
 const vqSaveMeta = () => vqTx('meta', 'readwrite', st => st.put({ settings: vq.settings, dir: vq.dir }, 'queue'));
 const vqKey = x => x.name + '|' + x.size + '|' + x.lastModified;
+const vqSet = (it, patch) => { Object.assign(it, patch); vqSave(it); queueRender(); };
 
 async function queueLoad() {
   const [items, meta] = await Promise.all([vqTx('items', 'readonly', st => st.getAll()), vqTx('meta', 'readonly', st => st.get('queue'))]);
@@ -8823,8 +8927,7 @@ async function queueAdd(entries) {
       const info = it.demux = await mp4Demux(file), v = info.video;
       const support = await VideoDecoder.isConfigSupported(v.config).catch(() => ({ supported: false }));
       if (!support.supported) throw new Error('This browser cannot decode this video (' + v.codec + ').');
-      it.info = { w: Math.round(v.width), h: Math.round(v.height), fps: v.fps, duration: info.duration, frames: v.samples.length,
-        codec: v.format.startsWith('avc') ? 'H.264' : v.format === 'av01' ? 'AV1' : 'HEVC' };
+      it.info = { w: Math.round(v.width), h: Math.round(v.height), fps: v.fps, duration: info.duration, frames: v.samples.length, codec: videoCodecName(v) };
       it.total = v.samples.length;
     } catch (err) { it.state = 'failed'; it.error = err.message || String(err); }
     vq.items.push(it);
@@ -8971,18 +9074,17 @@ async function queueRun(opts = {}) {
 async function queueOne(it, st, dir) {
   let info = it.demux;
   try { if (!info) info = it.demux = await mp4Demux(it.file); }
-  catch (err) { Object.assign(it, { state: 'failed', error: err.message || String(err) }); vqSave(it); queueRender(); return; }
+  catch (err) { vqSet(it, { state: 'failed', error: err.message || String(err) }); return; }
   const v = info.video, size = videoTargetSize(v.width, v.height, st.mode, st.res);
-  if (!size) { Object.assign(it, { state: 'skipped', note: 'already ' + st.res + 'p or larger' }); vqSave(it); queueRender(); return; }
+  if (!size) { vqSet(it, { state: 'skipped', note: 'already ' + st.res + 'p or larger' }); return; }
   const name = it.outName = queueOutName(it.name, st, size);
   if (dir) {
     try {
       const existing = await (await dir.getFileHandle(name)).getFile();
-      if (existing.size > 0) { Object.assign(it, { state: 'skipped', note: '“' + name + '” is already in the folder', outBytes: existing.size }); vqSave(it); queueRender(); return; }
+      if (existing.size > 0) { vqSet(it, { state: 'skipped', note: '“' + name + '” is already in the folder', outBytes: existing.size }); return; }
     } catch { /* not there yet */ }
   }
-  Object.assign(it, { state: 'converting', done: 0, total: v.samples.length, fps: 0, error: null, note: null });
-  vqSave(it); queueRender();
+  vqSet(it, { state: 'converting', done: 0, total: v.samples.length, fps: 0, error: null, note: null });
   let sink = null, fh = null, cancelled = false, lastSave = 0, lastDraw = 0;
   vq.job = { cancel() { cancelled = true; } };
   const t0 = performance.now();
@@ -8998,7 +9100,7 @@ async function queueOne(it, st, dir) {
     if (!dir && result) downloadBlob(result, name);
     Object.assign(it, { state: 'done', outBytes: dir ? (await fh.getFile()).size : result.size, elapsedMs: performance.now() - t0, finishedAt: Date.now() });
   } catch (err) {
-    if (sink) await sink.abort();
+    if (sink) await sink.abort();        // (also for errors before videoUpscale got going; a second abort does nothing)
     // getFileHandle(create) leaves an empty file; don't let it count as done later.
     if (fh) { try { if ((await fh.getFile()).size === 0) await dir.removeEntry(name); } catch { /* gone already */ } }
     if (cancelled || vq.cancelled || err instanceof CancelledError) Object.assign(it, { state: 'waiting', done: 0 });
@@ -9054,8 +9156,7 @@ vEls.queue.addEventListener('click', e => {
     if (vq.sel === it.id) { vq.sel = null; Object.assign(vid, { file: null, info: null, frame: null, after: null }); vEls.info.textContent = ''; }
     queueRender();
   } else if (act === 'retry') {
-    Object.assign(it, { state: it.file || it.handle ? 'waiting' : 'needs-file', done: 0, error: null, note: null });
-    vqSave(it); queueRender();
+    vqSet(it, { state: it.file || it.handle ? 'waiting' : 'needs-file', done: 0, error: null, note: null });
   } else selectVideo(it);
 });
 vEls.go.addEventListener('click', () => queueRun());
