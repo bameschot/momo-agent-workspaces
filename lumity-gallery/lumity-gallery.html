@@ -571,7 +571,9 @@
     #video-dl:empty { display: none; }
     #video-dl button { background: var(--surface2); border: 1px solid var(--border); color: var(--accent2); border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; font-size: 0.78rem; }
     #video-dl button:disabled { opacity: 0.6; cursor: default; }
-    #video-denoise-row[hidden] { display: none; }
+    #video-denoise-row[hidden], #video-tuning[hidden], #video-aa-row[hidden], #video-preset-none[hidden] { display: none; }
+    #video-tuning, #video-extras { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem; }
+    #video-extras.off .extra { opacity: 0.45; cursor: default; }
     .vp-wrap { position: relative; border-radius: 6px; border: 1px solid var(--border); background: #000; overflow: hidden; }
     .vp-wrap canvas { display: block; width: 100%; height: auto; }
     .vp-wrap.zoom { overflow: auto; max-height: 60vh; }
@@ -988,11 +990,40 @@
     <h2 id="video-title">🎬 Upscale video</h2>
     <p class="dialog-sub" id="video-info"></p>
     <fieldset>
-      <legend>AI model</legend>
+      <legend>Engine</legend>
       <div class="chips even" id="video-engines"></div>
       <div class="slider-row" id="video-denoise-row" hidden><span>Denoise</span><input type="range" id="video-denoise" min="0" max="100" value="50"><output id="video-denoise-out">50</output></div>
       <p class="dialog-sub" id="video-models-hint"></p>
       <div id="video-dl"></div>
+    </fieldset>
+    <fieldset id="video-cleanup">
+      <legend>Cleanup</legend>
+      <div class="chips" id="video-presets">
+        <label id="video-preset-none"><input type="radio" name="vpreset" value="none" checked><span>Off</span></label>
+        <label><input type="radio" name="vpreset" value="soft"><span>Soft</span></label>
+        <label><input type="radio" name="vpreset" value="balanced"><span>Balanced</span></label>
+        <label><input type="radio" name="vpreset" value="strong"><span>Strong</span></label>
+        <label><input type="radio" name="vpreset" value="lumity"><span>✨ Lumity</span></label>
+      </div>
+      <div id="video-tuning" hidden>
+        <label class="slider-row">Flatness
+          <input type="range" id="video-flatness" min="0" max="100" step="5" value="50"><output id="video-flatness-out">50</output></label>
+        <label class="slider-row">Line boldness
+          <input type="range" id="video-lines" min="0" max="100" step="5" value="50"><output id="video-lines-out">50</output></label>
+      </div>
+      <div id="video-extras">
+        <label class="dialog-check extra"><input type="checkbox" id="video-x-lines">
+          <span>Smooth line redraw<small>Rebuilds outlines as smooth, even strokes.</small></span></label>
+        <label class="dialog-check extra"><input type="checkbox" id="video-x-fills">
+          <span>Flat colour fills<small>Sets flat painted areas to one clean colour.</small></span></label>
+        <label class="dialog-check extra"><input type="checkbox" id="video-x-edges">
+          <span>Edge cleanup<small>Removes speckle and ghost lines right next to outlines.</small></span></label>
+        <label class="dialog-check extra"><input type="checkbox" id="video-x-aa">
+          <span>Edge anti-aliasing<small>Smooths staircase steps along slanted and curved lines.</small></span></label>
+        <label class="slider-row" id="video-aa-row" hidden>Smoothing
+          <input type="range" id="video-aa" min="10" max="100" step="10" value="60"><output id="video-aa-out">60</output></label>
+      </div>
+      <p class="dialog-sub" id="video-cleanup-hint"></p>
     </fieldset>
     <fieldset>
       <legend>Output</legend>
@@ -6848,7 +6879,44 @@ async function videoGpuFor(engine, denoise) {
   return { eng, model: await aiGetModel(engine, { denoise }) };
 }
 
-// settings: { engine, denoise, res (1080 | 720), mode, bitrate (bit/s) };
+// The per-frame chain for some settings: an AI model (WebGPU or WebGL) and/or
+// the built-in engine with a cleanup preset and extras — the same processing
+// as for pictures (builtinJob; after AI at the same size, as aiUpscale does).
+// run(canvas) takes a w×h 2D canvas holding the frame and returns the picture
+// as iw×ih RGBA, or null when `direct`: then the whole frame (with any bars)
+// is already in gpu.eng.canvas, ready for the encoder.
+async function videoChain(st, w, h, size, direct) {
+  const ai = st.engine !== 'builtin';
+  const gpu = ai ? await videoGpuFor(st.engine, st.denoise) : null;
+  const cleanup = !ai || st.preset !== 'none' ? {
+    width: size.iw, height: size.ih, preset: st.preset, tuning: engineTuning(st), extras: engineExtras(st),
+    jpegSource: false, flattenWhite: false, ...(ai ? { lineScale: size.iw / w } : {}),
+  } : null;
+  const device = gpuBuiltinAvailable() ? 'gpu' : 'cpu';
+  const pic = { iw: size.iw, ih: size.ih, W: size.iw, H: size.ih, x: 0, y: 0 };     // the picture only
+  const quiet = () => {};
+  const chain = {
+    gpu, direct: direct && !!gpu && !cleanup,
+    backend: !ai ? (device === 'gpu' ? 'GPU' : 'CPU') : gpu ? 'WebGPU' : 'WebGL',
+    async run(canvas, isCancelled) {
+      let px;
+      if (gpu) {
+        if (chain.direct) { gpu.eng.run(gpu.model, canvas, w, h, size); return null; }
+        gpu.eng.run(gpu.model, canvas, w, h, pic);
+        px = await gpu.eng.read(pic);
+      } else {
+        const rgba = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+        if (!ai) return builtinJob(rgba, w, h, cleanup, quiet, device);
+        px = await aiRun(st.engine, rgba, w, h, size.iw, size.ih, null, isCancelled, { denoise: st.denoise });
+      }
+      return cleanup ? builtinJob(px, size.iw, size.ih, cleanup, quiet, device) : px;
+    },
+  };
+  return chain;
+}
+
+// settings: { engine ('builtin' or an AI model), denoise, preset ('none' = AI
+// as-is), flatness, lines, extras, res (1080 | 720), mode, bitrate (bit/s) };
 // range: { start, end } µs. onProgress(done, total). Resolves with sink.close()'s result.
 async function videoUpscale(src, settings, range, sink, onProgress, isCancelled) {
   const { file, info } = src, v = info.video;
@@ -6873,18 +6941,16 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
   });
   encoder.ondequeue = poke;
   encoder.configure(config);
-  // WebGPU: the frame is drawn into a 2D canvas (on the GPU; copying a
-  // VideoFrame into WebGPU directly converts its BT.709 transfer curve and
-  // lifts the mid-tones, unlike players), then through the network into the
-  // engine's canvas. WebGL: pixels via a 2D canvas, aiRun, then a 2D canvas.
-  const gpu = await videoGpuFor(settings.engine, settings.denoise);
-  let inCanvas = new OffscreenCanvas(w, h), outCanvas = gpu && gpu.eng.canvas, out = null;
-  const inCtx = gpu && inCanvas.getContext('2d');
-  if (!gpu) {
-    outCanvas = new OffscreenCanvas(size.W, size.H);
-    out = outCanvas.getContext('2d');
-    out.fillStyle = '#000'; out.fillRect(0, 0, size.W, size.H);
-  }
+  // Each frame is drawn into a 2D canvas first (kept on the GPU when nothing
+  // reads its pixels back; copying a VideoFrame into WebGPU directly converts
+  // its BT.709 transfer curve and lifts the mid-tones, unlike players). With
+  // AI on WebGPU and no cleanup the result goes straight from the engine's
+  // canvas to the encoder; otherwise it is put into a 2D canvas.
+  const chain = await videoChain(settings, w, h, size, true);
+  const inCanvas = new OffscreenCanvas(w, h), inCtx = inCanvas.getContext('2d', { willReadFrequently: !chain.gpu });
+  const outCanvas = chain.direct ? chain.gpu.eng.canvas : new OffscreenCanvas(size.W, size.H);
+  const out = chain.direct ? null : outCanvas.getContext('2d');
+  if (out) { out.fillStyle = '#000'; out.fillRect(0, 0, size.W, size.H); }
   let origin = null, nextKey = 0, lastDur = 0, done = 0, ai = 0;
   // Audio up to `until` (µs, clip time), never past the end of the range.
   async function copyAudio(until) {
@@ -6901,18 +6967,13 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
   aiState.batching = true;                                       // keep GPU textures between frames
   try {
     for await (const frame of mp4DecodeFrames(file, v, range.start, range.end, isCancelled)) {
-      let ts, dur, rgba;
-      try {
-        ts = frame.timestamp; dur = frame.duration || 0;
-        if (gpu) { inCtx.drawImage(frame, 0, 0, w, h); gpu.eng.run(gpu.model, inCanvas, w, h, size); }
-        else rgba = videoFramePixels(frame, w, h, inCanvas);
-      } finally { frame.close(); }
+      let ts, dur;
+      try { ts = frame.timestamp; dur = frame.duration || 0; inCtx.drawImage(frame, 0, 0, w, h); }
+      finally { frame.close(); }
       if (dur) lastDur = dur;
       if (origin === null) origin = ts;
-      if (!gpu) {
-        const up = await aiRun(settings.engine, rgba, w, h, size.iw, size.ih, null, isCancelled, { denoise: settings.denoise });
-        out.putImageData(new ImageData(new Uint8ClampedArray(up.buffer, up.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), size.x, size.y);
-      }
+      const px = await chain.run(inCanvas, isCancelled);
+      if (px) out.putImageData(new ImageData(new Uint8ClampedArray(px.buffer, px.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), size.x, size.y);
       while (encoder.encodeQueueSize > 2 && !encError) await new Promise(r => { wake = r; setTimeout(r, 30); });
       if (encError) throw encError;
       const t = ts - origin, keyFrame = t >= nextKey;
@@ -6944,7 +7005,9 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
 // added to the gallery or its storage.
 const videoDialog = document.getElementById('video-dialog');
 const vEls = Object.fromEntries(['info', 'engines', 'denoise-row', 'denoise', 'denoise-out', 'models-hint', 'dl', 'out', 'time', 'time-out',
-  'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close', 'rates', 'fit-label', 'box-label']
+  'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close', 'rates', 'fit-label', 'box-label',
+  'presets', 'preset-none', 'tuning', 'flatness', 'flatness-out', 'lines', 'lines-out', 'extras', 'x-lines', 'x-fills', 'x-edges', 'x-aa',
+  'aa', 'aa-out', 'aa-row', 'cleanup-hint']
   .map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('video-' + k)]));
 const vid = { file: null, info: null, frame: null, after: null, afterKey: '', ms: {}, busy: false, dirty: false, timer: null, job: null, clipUrl: null };
 
@@ -6956,9 +7019,25 @@ function videoClock(sec) {
 
 function videoSettings() {
   const pick = name => (videoDialog.querySelector('input[name=' + name + ']:checked') || {}).value;
-  const res = +pick('vres') || 1080;
-  return { engine: pick('vengine') || null, denoise: +vEls.denoise.value, res, mode: pick('vmode') || 'fit',
-    bitrate: (+pick('vbitrate') || VIDEO_RES[res].rates[1]) * 1e6 };
+  const res = +pick('vres') || 1080, engine = pick('vengine') || null;
+  let preset = pick('vpreset') || 'none';
+  if (engine === 'builtin' && preset === 'none') preset = 'lumity';     // the built-in engine always cleans up
+  return { engine, denoise: +vEls.denoise.value, preset, flatness: +vEls.flatness.value, lines: +vEls.lines.value,
+    extras: { lines: vEls.xLines.checked, fills: vEls.xFills.checked, edges: vEls.xEdges.checked, aa: vEls.xAa.checked ? +vEls.aa.value : 0 },
+    res, mode: pick('vmode') || 'fit', bitrate: (+pick('vbitrate') || VIDEO_RES[res].rates[1]) * 1e6 };
+}
+
+// Everything that changes the picture (not the time or file settings).
+function videoChainKey(st, size) {
+  return JSON.stringify([st.engine, st.engine === 'generalv3' ? st.denoise : 0, st.preset,
+    st.preset === 'lumity' ? [st.flatness, st.lines] : 0, engineExtras(st), size.iw, size.ih]);
+}
+// "AI · Fast on WebGPU → Lumity · flat fills"
+function videoDescribe(st, backend) {
+  const name = st.engine === 'builtin' ? 'Built-in engine' : AI_MODELS.find(m => m.id === st.engine).title;
+  const x = engineExtras(st);
+  return name + (backend ? ' on ' + backend : '') + (st.preset === 'none' ? '' : (st.engine === 'builtin' ? ' · ' : ' → ') +
+    PRESET_NAMES[st.preset] + (x ? ' · ' + extrasNames(x) : ''));
 }
 function videoSize() {
   const v = vid.info.video, st = videoSettings();
@@ -7009,12 +7088,17 @@ function videoRefreshModels() {
     });
     vEls.dl.appendChild(b);
   }
-  const pick = [current, 'animevideov3', ...AI_MODELS.map(m => m.id)].find(id => id && aiReady(id));
-  if (pick) vEls.engines.querySelector('input[value="' + pick + '"]').checked = true;
-  vEls.modelsHint.textContent = aiState.gpuError
-    ? 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + ').'
-    : pick ? 'AI · Fast is made for anime video and is the quickest. AI · Fast and Balanced run on WebGPU where the browser has it; Best and Anime+ use the slower WebGL engine.'
-    : 'Download an AI model to start — it runs on your GPU and is kept in this browser. AI · Fast is made for anime video.';
+  const builtin = document.createElement('label');
+  builtin.title = 'No AI: the gallery’s own upscaler with the cleanup below. Needs no download.';
+  builtin.innerHTML = '<input type="radio" name="vengine" value="builtin"><span>🧰 Built-in</span>';
+  vEls.engines.appendChild(builtin);
+  const pick = [current, 'animevideov3', ...AI_MODELS.map(m => m.id), 'builtin'].find(id => id && (id === 'builtin' || aiReady(id)));
+  vEls.engines.querySelector('input[value="' + pick + '"]').checked = true;
+  vEls.modelsHint.textContent = (aiState.gpuError
+    ? 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). '
+    : AI_MODELS.some(m => aiReady(m.id)) ? 'AI · Fast is made for anime video and is the quickest AI. AI · Fast and Balanced run on WebGPU where the browser has it; Best and Anime+ use the slower WebGL engine. '
+    : 'Download an AI model for the best result — it runs on your GPU and is kept in this browser. ') +
+    'Built-in needs no AI model.';
 }
 
 // Texts and buttons for the current settings.
@@ -7023,11 +7107,22 @@ function videoTexts() {
   const st = videoSettings(), v = vid.info.video, size = videoSize();
   vEls.denoiseRow.hidden = st.engine !== 'generalv3';
   vEls.denoiseOut.textContent = vEls.denoise.value;
+  // Cleanup: "Off" only after AI; Lumity has its sliders; extras need a preset.
+  const isBuiltin = st.engine === 'builtin';
+  vEls.presetNone.hidden = isBuiltin;
+  vEls.presets.querySelector('input[value="' + st.preset + '"]').checked = true;
+  vEls.tuning.hidden = st.preset !== 'lumity';
+  vEls.extras.classList.toggle('off', st.preset === 'none');
+  vEls.extras.querySelectorAll('input').forEach(i => { i.disabled = st.preset === 'none'; });
+  vEls.aaRow.hidden = !vEls.xAa.checked;
+  vEls.cleanupHint.textContent = st.preset === 'none'
+    ? 'Off: the AI result as-is. A cleanup preset runs the gallery’s picture engine on every frame after the AI.'
+    : 'Runs on every frame, which adds time (see the estimate below). Lumity, flat fills and line redraw decide per frame and can shimmer — check with ▶ Preview 5 s.';
   const est = st.bitrate / 8 * vid.info.duration + vid.audioBytes;
   vEls.out.textContent = !size ? 'This video is already ' + st.res + 'p or larger — nothing to upscale.'
     : 'Output ' + size.W + '×' + size.H + (size.W !== size.iw || size.H !== size.ih ? ' (picture ' + size.iw + '×' + size.ih + ')' : '') +
       ' · H.264 · about ' + formatBytes(est);
-  const ms = st.engine && vid.ms[st.engine];
+  const ms = st.engine && size && vid.ms[videoChainKey(st, size)];
   vEls.summary.textContent = !size ? '' : !st.engine ? 'Download an AI model above to preview and convert.'
     : ms ? 'About ' + Math.round(ms) + ' ms per frame here, so the whole video takes ' + formatEta(v.samples.length * (ms + 10) / 1000) + '.'
     : 'The time per frame is measured with the frame preview.';
@@ -7073,31 +7168,22 @@ async function videoRenderPreview() {
     const st = videoSettings(), size = videoSize();
     const where = 'Frame at ' + videoClock(vid.frame.timestamp / 1e6);
     if (!st.engine || !size) { vEls.status.textContent = where; return; }
-    const key = [st.engine, st.engine === 'generalv3' ? st.denoise : '', t, size.iw, size.ih].join('|');
+    const ck = videoChainKey(st, size), key = ck + '|' + t;
     if (vid.afterKey !== key) {
       vEls.spinner.hidden = false;
       vEls.status.textContent = where + ' · upscaling…';
       const { canvas } = vid.frame, w = canvas.width, h = canvas.height;
-      const gpu = await videoGpuFor(st.engine, st.denoise);
-      let up, t0 = performance.now();
-      if (gpu) {
-        const pic = { iw: size.iw, ih: size.ih, W: size.iw, H: size.ih, x: 0, y: 0 };     // the picture only
-        gpu.eng.run(gpu.model, canvas, w, h, pic);
-        await gpu.eng.done();
-        vid.ms[st.engine] = Math.min(vid.ms[st.engine] || Infinity, performance.now() - t0);
-        up = await gpu.eng.read(pic);
-      } else {
-        const rgba = canvas.getContext('2d').getImageData(0, 0, w, h).data;
-        up = await aiRun(st.engine, rgba, w, h, size.iw, size.ih, null, gone, { denoise: st.denoise });
-        vid.ms[st.engine] = Math.min(vid.ms[st.engine] || Infinity, performance.now() - t0);
-      }
-      vid.backend = gpu ? 'WebGPU' : 'WebGL';
+      const chain = await videoChain(st, w, h, size, false);
+      const t0 = performance.now();
+      const up = await chain.run(canvas, gone);
       // The first run also sends the model to the GPU, so the fastest is kept.
+      vid.ms[ck] = Math.min(vid.ms[ck] || Infinity, performance.now() - t0);
+      vid.backend = chain.backend;
       const c = new OffscreenCanvas(size.iw, size.ih);
       c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(up.buffer, up.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), 0, 0);
       vid.after = c; vid.afterKey = key;
     }
-    vEls.status.textContent = where + ' · ' + AI_MODELS.find(m => m.id === st.engine).title + (vid.backend ? ' on ' + vid.backend : '');
+    vEls.status.textContent = where + ' · ' + videoDescribe(st, vid.backend);
     videoDraw(); videoTexts();
   } catch (err) {
     if (!gone()) { console.error('Video preview failed', err); vEls.status.textContent = 'Preview failed: ' + (err.message || err); }
@@ -7218,6 +7304,9 @@ document.getElementById('video-file-input').addEventListener('change', e => {
   if (file) openVideo(file);
 });
 vEls.engines.addEventListener('change', videoUpdate);
+vEls.presets.addEventListener('change', videoUpdate);
+vEls.extras.addEventListener('change', videoUpdate);
+for (const k of ['flatness', 'lines', 'aa']) vEls[k].addEventListener('input', () => { vEls[k + 'Out'].textContent = vEls[k].value; videoSchedulePreview(300); });
 vEls.denoise.addEventListener('input', () => { vEls.denoiseOut.textContent = vEls.denoise.value; videoSchedulePreview(300); });
 videoDialog.querySelectorAll('input[name=vmode]').forEach(r => r.addEventListener('change', () => { videoTexts(); videoDraw(); }));
 vEls.rates.addEventListener('change', videoTexts);
