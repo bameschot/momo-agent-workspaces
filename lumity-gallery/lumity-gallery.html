@@ -564,6 +564,47 @@
       .preview-body figure.overview canvas { max-height: 140px; width: auto; max-width: 100%; margin: 0 auto; }
     }
 
+    /* ── VIDEO DIALOG ── */
+    #video-card { gap: 0; width: min(720px, 100%); }
+    #video-card > #video-info { margin-bottom: 0.9rem; }
+    #video-dl { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    #video-dl:empty { display: none; }
+    #video-dl button { background: var(--surface2); border: 1px solid var(--border); color: var(--accent2); border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; font-size: 0.78rem; }
+    #video-dl button:disabled { opacity: 0.6; cursor: default; }
+    #video-denoise-row[hidden], #video-tuning[hidden], #video-aa-row[hidden], #video-preset-none[hidden] { display: none; }
+    #video-tuning, #video-extras { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem; }
+    #video-extras.off .extra { opacity: 0.45; cursor: default; }
+    .vp-wrap { position: relative; border-radius: 6px; border: 1px solid var(--border); background: #000; overflow: hidden; }
+    .vp-wrap canvas { display: block; width: 100%; height: auto; }
+    .vp-wrap.zoom { overflow: auto; max-height: 60vh; }
+    .vp-wrap.zoom canvas { width: auto; max-width: none; }
+    .vp-wrap .tile-spinner { border-radius: 0; }
+    #video-clip { width: 100%; border-radius: 6px; border: 1px solid var(--border); background: #000; }
+    #video-clip[hidden] { display: none; }
+    #video-status { color: var(--text-muted); font-size: 0.75rem; min-height: 1em; }
+    #video-card > #video-queue-fs { border-top: none; padding-top: 0.4rem; }
+    #video-queue { display: flex; flex-direction: column; gap: 0.35rem; max-height: 280px; overflow-y: auto; }
+    #video-queue:empty::before { content: 'No videos yet — add one or more MP4 files.'; color: var(--text-muted); font-size: 0.8rem; }
+    .vq-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 0.2rem 0.6rem;
+      padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); cursor: pointer; font-size: 0.82rem; color: var(--text); }
+    .vq-row.sel { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2) inset; }
+    .vq-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .vq-name small, .vq-detail { color: var(--text-muted); font-size: 0.72rem; font-weight: normal; }
+    .vq-detail { grid-column: 1 / -1; font-variant-numeric: tabular-nums; }
+    .vq-bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--bg); overflow: hidden; }
+    .vq-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+    .vq-state { font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; }
+    .vq-state.converting { color: var(--accent2); border-color: var(--accent2); }
+    .vq-state.done { color: #7bd88f; border-color: #7bd88f; }
+    .vq-state.failed { color: #ff8a80; border-color: #ff8a80; }
+    .vq-state.needs-file { color: #ffcc80; border-color: #ffcc80; }
+    .vq-actions { display: flex; gap: 0.3rem; }
+    .vq-actions button, .vq-tools button { background: var(--surface); border: 1px solid var(--border); color: var(--accent2); border-radius: 6px; padding: 0.15rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
+    .vq-actions button:disabled, .vq-tools button:disabled { opacity: 0.45; cursor: default; }
+    .vq-tools { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+    #video-stop[hidden], #video-cancel[hidden], #video-go[hidden], #video-clip-btn[hidden] { display: none; }
+    .dialog-actions button:disabled { opacity: 0.45; cursor: default; }
+
     /* ── TOAST ── */
     /* ── LOAD PROGRESS ── */
     #progress-overlay {
@@ -702,6 +743,8 @@
   </div>
   <span class="count-badge" id="count-badge">— images</span>
   <button id="enhance-all-btn" class="tb-btn accent" title="Enhance all original pictures in view"><span class="ic">✨</span><span class="lbl">Enhance all</span></button>
+  <button id="video-btn" class="tb-btn" title="Upscale an MP4 video to full HD"><span class="ic">🎬</span><span class="lbl">Video</span></button>
+  <input type="file" id="video-file-input" accept="video/mp4,.mp4,.m4v" multiple hidden />
   <nav class="tb-menus" aria-label="Menus">
     <div class="menu">
       <button type="button" class="tb-btn menu-btn" aria-haspopup="true" aria-expanded="false" title="Open pictures"><span class="ic">📂</span><span class="lbl">Open</span></button>
@@ -852,8 +895,10 @@
     <fieldset id="device-fields">
       <legend>Processing</legend>
       <div class="chips">
-        <label><input type="radio" name="device" value="cpu" checked><span>CPU</span></label>
-        <label><input type="radio" name="device" value="gpu" disabled><span>⚡ GPU</span></label>
+        <label title="Original: everything on the processor"><input type="radio" name="device" value="cpu" checked><span>CPU</span></label>
+        <label title="Original: preparation on the processor, upscaling on the graphics card"><input type="radio" name="device" value="gpu" disabled><span>⚡ GPU</span></label>
+        <label title="Everything on the graphics card with WebGPU (WebGL where WebGPU is missing)"><input type="radio" name="device" value="webgpu" disabled><span>🚀 WebGPU</span></label>
+        <label title="Everything on the graphics card with WebGL (flat fills on the processor)"><input type="radio" name="device" value="webgl" disabled><span>WebGL</span></label>
       </div>
       <p class="dialog-sub" id="device-hint"></p>
     </fieldset>
@@ -959,6 +1004,105 @@
       <button type="button" id="st-remove-models">Remove AI models</button>
     </div>
     <div class="dialog-actions"><button type="button" class="primary" id="storage-close">Close</button></div>
+  </div>
+</div>
+
+<!-- Video upscale -->
+<div id="video-dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="video-title">
+  <div class="dialog-card" id="video-card">
+    <h2 id="video-title">🎬 Upscale videos</h2>
+    <fieldset id="video-queue-fs">
+      <legend>Queue</legend>
+      <div id="video-queue"></div>
+      <div class="vq-tools">
+        <button type="button" id="video-add">＋ Add videos…</button>
+        <button type="button" id="video-clear">Clear finished</button>
+      </div>
+      <p class="dialog-sub" id="video-qsum"></p>
+    </fieldset>
+    <p class="dialog-sub" id="video-info"></p>
+    <fieldset>
+      <legend>Engine</legend>
+      <div class="chips even" id="video-engines"></div>
+      <div class="slider-row" id="video-denoise-row" hidden><span>Denoise</span><input type="range" id="video-denoise" min="0" max="100" value="50"><output id="video-denoise-out">50</output></div>
+      <p class="dialog-sub" id="video-models-hint"></p>
+      <div id="video-dl"></div>
+    </fieldset>
+    <fieldset id="video-cleanup">
+      <legend>Cleanup</legend>
+      <div class="chips" id="video-presets">
+        <label id="video-preset-none"><input type="radio" name="vpreset" value="none" checked><span>Off</span></label>
+        <label><input type="radio" name="vpreset" value="soft"><span>Soft</span></label>
+        <label><input type="radio" name="vpreset" value="balanced"><span>Balanced</span></label>
+        <label><input type="radio" name="vpreset" value="strong"><span>Strong</span></label>
+        <label><input type="radio" name="vpreset" value="lumity"><span>✨ Lumity</span></label>
+      </div>
+      <div id="video-tuning" hidden>
+        <label class="slider-row">Flatness
+          <input type="range" id="video-flatness" min="0" max="100" step="5" value="50"><output id="video-flatness-out">50</output></label>
+        <label class="slider-row">Line boldness
+          <input type="range" id="video-lines" min="0" max="100" step="5" value="50"><output id="video-lines-out">50</output></label>
+      </div>
+      <div id="video-extras">
+        <label class="dialog-check extra"><input type="checkbox" id="video-x-lines">
+          <span>Smooth line redraw<small>Rebuilds outlines as smooth, even strokes.</small></span></label>
+        <label class="dialog-check extra"><input type="checkbox" id="video-x-fills">
+          <span>Flat colour fills<small>Sets flat painted areas to one clean colour.</small></span></label>
+        <label class="dialog-check extra"><input type="checkbox" id="video-x-edges">
+          <span>Edge cleanup<small>Removes speckle and ghost lines right next to outlines.</small></span></label>
+        <label class="dialog-check extra"><input type="checkbox" id="video-x-aa">
+          <span>Edge anti-aliasing<small>Smooths staircase steps along slanted and curved lines.</small></span></label>
+        <label class="slider-row" id="video-aa-row" hidden>Smoothing
+          <input type="range" id="video-aa" min="10" max="100" step="10" value="60"><output id="video-aa-out">60</output></label>
+      </div>
+      <div class="opt-row" id="video-on-row"><span>Runs on</span>
+        <div class="chips" id="video-on">
+          <label title="The original implementation: preparation on the processor, the rest on the graphics card"><input type="radio" name="von" value="original" checked><span>Original</span></label>
+          <label title="Everything on the graphics card with WebGPU; with AI · Fast or Balanced the frame never leaves it"><input type="radio" name="von" value="webgpu"><span>🚀 WebGPU</span></label>
+          <label title="Everything on the graphics card with WebGL (flat fills on the processor)"><input type="radio" name="von" value="webgl"><span>WebGL</span></label>
+        </div>
+      </div>
+      <p class="dialog-sub" id="video-cleanup-hint"></p>
+    </fieldset>
+    <fieldset>
+      <legend>Output</legend>
+      <div class="opt-row"><span>Resolution</span>
+        <div class="chips">
+          <label title="Full HD, 1920×1080"><input type="radio" name="vres" value="1080" checked><span>1080p</span></label>
+          <label title="HD, 1280×720: same AI work, smaller files"><input type="radio" name="vres" value="720"><span>720p</span></label>
+          <label title="The video's own size: no enlarging, only the cleanup (or the AI at 1×)"><input type="radio" name="vres" value="orig"><span id="video-orig-text">Original</span></label>
+        </div>
+      </div>
+      <div class="opt-row" id="video-size-row"><span>Size</span>
+        <div class="chips">
+          <label id="video-fit-label"><input type="radio" name="vmode" value="fit" checked><span>Fit</span></label>
+          <label id="video-box-label"><input type="radio" name="vmode" value="box"><span>Letterbox</span></label>
+        </div>
+      </div>
+      <div class="opt-row"><span>Quality</span>
+        <div class="chips" id="video-rates"></div>
+      </div>
+      <p class="dialog-sub" id="video-out"></p>
+    </fieldset>
+    <div class="preview">
+      <div class="slider-row"><span>Frame at</span><input type="range" id="video-time" min="0" max="1" step="any" value="0"><output id="video-time-out">0:00</output></div>
+      <div class="vp-wrap" id="video-wrap"><canvas id="video-canvas" width="16" height="9"></canvas>
+        <div class="tile-spinner" id="video-spinner" hidden><div class="progress-spinner"></div><span>Upscaling frame…</span></div></div>
+      <div class="slider-row"><span>Before | after</span><input type="range" id="video-split" min="0" max="100" value="50"><output id="video-split-out">50%</output></div>
+      <label class="dialog-check"><input type="checkbox" id="video-zoom"> <span>Show 1:1 pixels</span></label>
+      <p id="video-status"></p>
+      <video id="video-clip" controls playsinline hidden></video>
+    </div>
+    <div class="dialog-foot">
+      <p class="dialog-sub" id="video-summary"></p>
+      <div class="dialog-actions">
+        <button type="button" id="video-close">Close</button>
+        <button type="button" id="video-clip-btn">▶ Preview 5 s</button>
+        <button type="button" id="video-stop" hidden>⏸ Stop after this video</button>
+        <button type="button" id="video-cancel" hidden>✕ Cancel</button>
+        <button type="button" class="primary" id="video-go">🎬 Convert all</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1401,7 +1545,7 @@ function sanitizeUpscale(raw) {
     engine: ENGINE_NAMES[raw.engine] ? raw.engine : null,
     denoise: raw.engine === 'generalv3' && num(raw.denoise) != null ? Math.max(0, Math.min(100, raw.denoise)) : null,
     cuganMode: raw.engine === 'cugan' && CUGAN_MODES[raw.cuganMode] ? raw.cuganMode : null,
-    device: raw.device === 'gpu' ? 'gpu' : null,
+    device: ['gpu', 'webgpu', 'webgl'].includes(raw.device) ? raw.device : null,
     extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges || num(raw.extras.aa))
       ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges,
           ...(num(raw.extras.aa) ? { aa: Math.max(10, Math.min(100, raw.extras.aa)) } : {}) }
@@ -1828,7 +1972,7 @@ function describeUpscale(u) {
     const names = extrasNames(u.extras);
     if (names) parts.push(names);
   }
-  if (u.device === 'gpu') parts.push('GPU');
+  if (u.device) parts.push({ gpu: 'GPU', webgpu: 'WebGPU', webgl: 'WebGL' }[u.device] || '');
   if (u.format) parts.push(u.format.toUpperCase());
   if (u.originalWidth && u.width) parts.push(u.originalWidth === u.width && u.originalHeight === u.height
     ? u.width + '×' + u.height : u.originalWidth + '×' + u.originalHeight + ' → ' + u.width + '×' + u.height);
@@ -3328,7 +3472,8 @@ function upscalerModule() {
     return out;
   }
 
-  return { upscale, prepare, finish, antialias, analyzePicture, chooseAuto, stageCosts, PREPARE_STAGES, FINISH_STAGES, PRESETS, LANCZOS2, LUT_RES };
+  return { upscale, prepare, finish, antialias, analyzePicture, chooseAuto, stageCosts, PREPARE_STAGES, FINISH_STAGES, PRESETS, LANCZOS2, LUT_RES,
+    tunePreset, flatFills };       // (the last two for the GPU cleanup, which runs prepare() as shaders)
 }
 
 // ── ENHANCE (UPSCALE) ─────────────────────────────────────────────────────────
@@ -3480,9 +3625,65 @@ function runUpscaleJob(rgba, w, h, opts, onProgress, cmd = 'upscale') {
   });
 }
 
+// The built-in engine fully on the GPU, without the edge anti-aliasing extra
+// (callers run that in the worker, as for 'gpu'). 'webgpu' falls back to
+// 'webgl'; 'webgl' falls back to null (→ the original processing). Each
+// fallback is told once. → { out: RGBA width×height, backend } or null.
+const GPU_CLEANUP_MAX_PIXELS = 8e6;     // input pixels; bigger pictures use the original engine
+let gpuCleanupNotes = new Set(), lastCleanupBackend = null;
+async function gpuCleanup(rgba, w, h, opts, device, onProgress, isCancelled) {
+  lastCleanupBackend = null;
+  const M = getMainUpscaler(), P = M.tunePreset(M.PRESETS[opts.preset] || M.PRESETS.balanced, opts.tuning);
+  const note = msg => { if (!gpuCleanupNotes.has(msg)) { gpuCleanupNotes.add(msg); showToast(msg); } };
+  const stopped = () => isCancelled && isCancelled();
+  if (device === 'webgpu') {
+    try {
+      const eng = await gpuCleanupEngine();
+      if (eng) {
+        const r = await eng.cleanup(rgba, w, h, opts, P, M.LANCZOS2, onProgress, isCancelled);
+        lastCleanupBackend = 'WebGPU';
+        return { out: r.out, aaDone: r.aaDone, backend: 'WebGPU' };
+      }
+      note('WebGPU isn’t available here, so the cleanup runs on WebGL.');
+    } catch (err) {
+      if (stopped()) throw err;
+      console.warn('WebGPU cleanup failed', err);
+      note('The WebGPU cleanup failed (' + (err.message || err) + '), so it runs on WebGL.');
+    }
+  }
+  if (w * h > GPU_CLEANUP_MAX_PIXELS) { note('This picture is too large for the full-GPU cleanup, so the original engine is used.'); return null; }
+  try {
+    const out = await withGpu(r => r.runCleanup(rgba, w, h, opts, P, M.LANCZOS2, M.flatFills, onProgress, isCancelled), isCancelled);
+    lastCleanupBackend = 'WebGL';
+    return { out, backend: 'WebGL' };
+  } catch (err) {
+    if (stopped()) throw err;
+    console.warn('WebGL cleanup failed', err);
+    note('The WebGL cleanup failed (' + (err.message || err) + '), so the original engine is used.');
+    lastCleanupBackend = null;
+    return null;
+  }
+}
+
 // Built-in engine with the chosen processing: CPU = all in the worker;
 // GPU = input-resolution half in the worker, output-resolution half on the GPU.
+// 'webgpu' / 'webgl' = both halves on the GPU (gpuCleanup), falling back to
+// WebGL and then to the original GPU/CPU processing when that isn't possible.
 async function builtinJob(rgba, w, h, opts, onProgress, device) {
+  const aaFull = opts.extras && opts.extras.aa;
+  if (device === 'webgpu' || device === 'webgl') {
+    let cancelled = false, r;
+    currentJob = { cancel() { cancelled = true; } };
+    try { r = await gpuCleanup(rgba, w, h, opts, device, f => onProgress(f * (aaFull ? 0.8 : 1), 'Cleaning up on the GPU…'), () => cancelled); }
+    catch (err) { if (cancelled) throw new CancelledError('Cancelled'); throw err; }
+    finally { currentJob = null; }
+    if (r) {
+      if (!aaFull || r.aaDone) return r.out;
+      return runUpscaleJob(r.out, opts.width, opts.height, { period: opts.lineScale || opts.width / w, strength: aaFull },
+        f => onProgress(0.8 + f * 0.2, 'Smoothing edges…'), 'antialias');
+    }
+    device = gpuBuiltinAvailable() ? 'gpu' : 'cpu';
+  }
   if (device !== 'gpu') return runUpscaleJob(rgba, w, h, opts, onProgress);
   // Share of the time spent preparing (CPU) vs finishing (GPU, assumed ~6× faster).
   const M = getMainUpscaler(), c = M.stageCosts(w, h, opts);
@@ -3593,7 +3794,9 @@ async function enhanceOne(original, settings, onProgress) {
       auto: !!settings.auto, engine: settings.engine || 'builtin',
       ...(settings.engine === 'generalv3' ? { denoise: settings.denoise } : {}),
       ...(settings.engine === 'cugan' ? { cuganMode: settings.cuganMode } : {}),
-      device: settings.device === 'gpu' && !(isAiEngine(settings) && settings.preset === 'none') ? 'gpu' : 'cpu',
+      device: isAiEngine(settings) && settings.preset === 'none' ? (lastAiBackend === 'WebGPU' ? 'webgpu' : 'cpu')
+        : settings.device === 'webgpu' || settings.device === 'webgl' ? (lastCleanupBackend ? lastCleanupBackend.toLowerCase() : gpuBuiltinAvailable() ? 'gpu' : 'cpu')
+        : settings.device === 'gpu' ? 'gpu' : 'cpu',
       originalWidth: w, originalHeight: h, width: size.W, height: size.H,
       created: Date.now(),
     },
@@ -3845,6 +4048,7 @@ function timeEstimate(st) {
     const t = timeEstimate({ ...st, scale: 2 }).split('–').map(v => v === '<1' ? 0.5 : Number(v));
     return '<1–' + Math.max(1, Math.round(t[1] * 0.4));
   }
+  if (st.device === 'webgpu' && (st.engine === 'animevideov3' || st.engine === 'generalv3')) return st.preset === 'none' ? '<1–2' : '<1–4';
   if (st.engine === 'animevideov3') return st.preset === 'none' ? '2–10' : '4–20';
   if (st.engine === 'generalv3') return st.preset === 'none' ? '4–20' : '6–30';
   if (st.engine === 'cugan') return st.preset === 'none' ? '8–40' : '10–50';
@@ -3858,6 +4062,7 @@ function timeEstimate(st) {
   if (x.aa) { lo += 0.5; hi += 2; }
   if (st.mode === 'scale' && st.scale > 2) { const k = (st.scale / 2) ** 2; lo *= k; hi *= k; }   // ∝ output pixels
   if (st.device === 'gpu') { lo = Math.max(0.5, lo * 0.3); hi = Math.max(1, hi * 0.35); }   // output stages on the GPU
+  else if (st.device === 'webgpu' || st.device === 'webgl') { lo = Math.max(0.5, lo * 0.12); hi = Math.max(1, hi * 0.2); }   // everything on the GPU
   return (lo < 1 ? '<1' : Math.round(lo)) + '–' + Math.round(hi);
 }
 
@@ -3880,13 +4085,19 @@ function updateEnhanceSummary() {
   if (ai && f.preset.value === 'auto') f.preset.value = 'none';
   if (!ai && f.preset.value === 'none') f.preset.value = 'lumity';
   document.getElementById('cleanup-legend').textContent = ai ? 'Cleanup after AI' : 'Cleanup';
-  // Processing only matters when a built-in step runs.
+  // Processing matters when a built-in step runs — and for the AI step of
+  // AI · Fast / Balanced, which 🚀 WebGPU runs on the WebGPU engine.
   const noBuiltin = ai && f.preset.value === 'none';
-  document.getElementById('device-fields').disabled = noBuiltin;
-  document.getElementById('device-hint').textContent = noBuiltin ? 'Not used: “None” keeps the AI result as it is.'
+  const gpuAi = ai && (f.engine.value === 'animevideov3' || f.engine.value === 'generalv3');
+  document.getElementById('device-fields').disabled = noBuiltin && !gpuAi;
+  document.getElementById('device-hint').textContent = noBuiltin && !gpuAi ? 'Not used: “None” keeps the AI result as it is.'
+    : noBuiltin ? (f.device.value === 'webgpu' ? 'Only the AI runs (“None”): on WebGPU — several times faster than WebGL.'
+      : 'Only the AI runs (“None”), on WebGL. Choose 🚀 WebGPU to run AI · Fast / Balanced on WebGPU, several times faster.')
     : !gpuBuiltinAvailable() ? 'CPU only: this browser offers no suitable GPU (WebGL2 with float rendering).'
-    : f.device.value === 'gpu' ? 'The upscaling steps run on your graphics card — much faster, especially at 3–4× and with extras. Results match the CPU (apart from tiny dithering differences).'
-    : 'Runs on the processor, in the background.';
+    : f.device.value === 'gpu' ? 'Original: the upscaling steps run on your graphics card — much faster, especially at 3–4× and with extras. Results match the CPU (apart from tiny dithering differences).'
+    : f.device.value === 'webgpu' ? 'Everything runs on your graphics card with WebGPU, the preparation too — the fastest; AI · Fast and Balanced also run on WebGPU. Uses WebGL where WebGPU is missing. Results match the original to within rounding; flat fills can differ slightly.'
+    : f.device.value === 'webgl' ? 'Everything runs on your graphics card with WebGL (flat fills on the processor). Results match the original to within rounding.'
+    : 'Original: runs on the processor, in the background.';
   const st = readEnhanceForm();
   document.getElementById('width-row').hidden = st.mode !== 'width';
   document.getElementById('scale-hint').hidden = !(st.mode === 'scale' && st.scale === 1);
@@ -3947,7 +4158,8 @@ function openEnhanceDialog(targets, mode) {
     if (document.getElementById('use-ai').checked) pickAiEngine();
     // "None (AI as-is)" was reset while the engine still read Built-in.
     if (saved.preset === 'none' && f.engine.value !== 'builtin') f.preset.value = 'none';
-    if (saved.device === 'gpu' && gpuBuiltinAvailable()) f.device.value = 'gpu';
+    if ((saved.device === 'gpu' || saved.device === 'webgl') && gpuBuiltinAvailable()) f.device.value = saved.device;
+    if (saved.device === 'webgpu' && navigator.gpu) f.device.value = 'webgpu';
     updateEnhanceSummary();                      // GPU availability is known now
   });
   if (saved.format === 'png' || saved.format === 'jpeg') f.format.value = saved.format;
@@ -4197,6 +4409,14 @@ function previewWorkerRun(region, rw, rh, opts, cmd) {
 }
 
 async function previewEngine(region, rw, rh, opts, device, isCancelled) {
+  if (device === 'webgpu' || device === 'webgl') {
+    const r = await gpuCleanup(region, rw, rh, opts, device, null, isCancelled);
+    if (r) {
+      const aa = opts.extras && opts.extras.aa && !r.aaDone;
+      return aa ? previewWorkerRun(r.out, opts.width, opts.height, { period: opts.lineScale || opts.width / rw, strength: aa }, 'antialias') : r.out;
+    }
+    device = gpuBuiltinAvailable() ? 'gpu' : 'cpu';
+  }
   if (device !== 'gpu') return previewWorkerRun(region, rw, rh, opts, 'upscale');
   const prep = await previewWorkerRun(region, rw, rh, opts, 'prepare');
   const out = await gpuFinish(prep, null, isCancelled, false);
@@ -4292,7 +4512,7 @@ async function runPreview() {
       if (preview.aiCache && preview.aiCache.key === aiKey && preview.aiCache.pixels === preview.pixels) {
         out = preview.aiCache.out.slice();
       } else {
-        out = await aiRun(settings.engine, region, rw, rh, RW, RH, f => {
+        out = await pictureAi(settings, region, rw, rh, RW, RH, f => {
           pct.textContent = Math.round(f * 100) + '%';
           previewEls.status.textContent = 'Rendering AI preview… ' + Math.round(f * 100) + '%';
         }, aiStale, { denoise: settings.denoise, cuganMode: settings.cuganMode, seFrom: { rgba, w, h } });
@@ -4793,6 +5013,180 @@ void main(){
     if (uFlatten == 1 && a < 255.0) { float t = a / 255.0; rgb = rgb * t + 255.0 * (1.0 - t); a = 255.0; }
   }
   outColor = vec4(roundEven(clamp(rgb, 0.0, 255.0)), a) / 255.0;
+}`;
+
+  // ── Built-in engine, input-resolution half (prepare), on the GPU ──
+  // Mirrors prepare() in upscalerModule: the same steps, borders and
+  // thresholds, on the whole picture (uOrig = 0, uSize = uImg = w×h).
+  // Planes are RGBA = (Y, Cb, Cr, alpha), 0–255; other textures are scratch.
+  const FS_P_PLANES = HEAD2 + `
+uniform sampler2D uSrc0;
+void main(){
+  vec4 c = roundEven(texelFetch(uSrc0, P(), 0) * 255.0);
+  outColor = vec4(0.299 * c.r + 0.587 * c.g + 0.114 * c.b, -0.168736 * c.r - 0.331264 * c.g + 0.5 * c.b + 128.0,
+                  0.5 * c.r - 0.418688 * c.g - 0.081312 * c.b + 128.0, c.a);
+}`;
+  // deblock(): soften steps across the 8×8 grid; uVert 0 = vertical edges
+  // (along x), 1 = horizontal edges. Edges never overlap, so one pass each.
+  const FS_P_DEBLOCK = HEAD2 + `
+uniform sampler2D uCur; uniform int uVert; uniform vec3 uT;
+void main(){
+  ivec2 p = P(); vec4 cur = texelFetch(uCur, p, 0); outColor = cur;
+  ivec2 d = uVert == 1 ? ivec2(0, 1) : ivec2(1, 0);
+  int pos = uVert == 1 ? p.y : p.x, len = uVert == 1 ? uSize.y : uSize.x, e; bool isQ;
+  if (pos % 8 == 0) { e = pos; isQ = true; } else if ((pos + 1) % 8 == 0) { e = pos + 1; isQ = false; } else return;
+  if (e < 8 || e + 1 >= len) return;
+  ivec2 qe = p + d * (e - pos);
+  vec3 p1 = texelFetch(uCur, qe - 2 * d, 0).rgb, p0 = texelFetch(uCur, qe - d, 0).rgb, q0 = texelFetch(uCur, qe, 0).rgb, q1 = texelFetch(uCur, qe + d, 0).rgb;
+  vec3 st = (q1 - p1) / 3.0;
+  vec3 res = isQ ? q0 + 0.75 * (p1 + 2.0 * st - q0) : p0 + 0.75 * (p1 + st - p0), old = isQ ? q0 : p0, v;
+  for (int k = 0; k < 3; k++) {
+    bool keep = abs(q0[k] - p0[k]) >= uT[k] || abs(p1[k] - p0[k]) >= uT[k] * 0.5 || abs(q1[k] - q0[k]) >= uT[k] * 0.5;
+    v[k] = keep ? old[k] : res[k];
+  }
+  outColor.rgb = v;
+}`;
+  // flatten(): line guard (3×3 range of any plane above the limit).
+  const FS_P_GUARD = HEAD2 + `
+uniform sampler2D uCur; uniform float uKeep;
+void main(){
+  ivec2 p = P(); vec3 lo = vec3(1e9), hi = vec3(-1e9);
+  for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) { vec3 v = texelFetch(uCur, C(p + ivec2(dx, dy)), 0).rgb; lo = min(lo, v); hi = max(hi, v); }
+  vec3 r = hi - lo;
+  outColor = vec4(r.x > uKeep || r.y > uKeep * 0.8 || r.z > uKeep * 0.8 ? 1.0 : 0.0);
+}`;
+  // flatten(): one joint bilateral iteration over a round window; colour
+  // distance quantised like the CPU's range LUT.
+  const FS_P_FLATTEN = HEAD2 + `
+uniform sampler2D uCur; uniform sampler2D uGuard; uniform int uR; uniform float uSpat; uniform float uRangeStep; uniform float uSig2;
+void main(){
+  ivec2 p = P(); vec4 cur = texelFetch(uCur, p, 0); outColor = cur;
+  if (texelFetch(uGuard, p, 0).r > 0.5) return;
+  float sw = 0.0; vec3 s = vec3(0.0);
+  for (int dy = -uR; dy <= uR; dy++) for (int dx = -uR; dx <= uR; dx++) {
+    int d2 = dx * dx + dy * dy;
+    if (d2 > uR * uR + uR) continue;
+    ivec2 q = p + ivec2(dx, dy);
+    if (q.x < 0 || q.y < 0 || q.x >= uSize.x || q.y >= uSize.y || texelFetch(uGuard, q, 0).r > 0.5) continue;
+    vec3 v = texelFetch(uCur, q, 0).rgb, dv = v - cur.rgb;
+    float k = floor((dv.x * dv.x + 0.5 * (dv.y * dv.y + dv.z * dv.z)) / uRangeStep);
+    if (k >= 1024.0) continue;
+    float wt = exp(-float(d2) / uSpat) * exp(-(k * uRangeStep) / uSig2);
+    sw += wt; s += wt * v;
+  }
+  if (sw > 0.0) outColor.rgb = s / sw;
+}`;
+  // 1-D box mean / max / min of all four channels, partial windows at edges.
+  const FS_P_BOX = HEAD2 + `
+uniform sampler2D uSrc0; uniform ivec2 uDir; uniform int uR; uniform int uMode;
+void main(){
+  ivec2 p = P(); vec4 acc = uMode == 1 ? vec4(-1e30) : (uMode == 2 ? vec4(1e30) : vec4(0.0)); int n = 0;
+  for (int k = -uR; k <= uR; k++) {
+    ivec2 q = p + uDir * k;
+    if (q.x < 0 || q.y < 0 || q.x >= uSize.x || q.y >= uSize.y) continue;
+    vec4 v = texelFetch(uSrc0, q, 0);
+    if (uMode == 0) acc += v; else if (uMode == 1) acc = max(acc, v); else acc = min(acc, v);
+    n++;
+  }
+  outColor = uMode == 0 ? acc / float(n) : acc;
+}`;
+  // guidedFilter(): products for the box means. uMode 0: luma (Y, Y²);
+  // 1: chroma guide terms (I, Cb, Cr, I²); 2: chroma cross terms (I·Cb, I·Cr).
+  const FS_P_GPROD = HEAD2 + `
+uniform sampler2D uCur; uniform int uMode;
+void main(){
+  vec4 c = texelFetch(uCur, P(), 0);
+  outColor = uMode == 0 ? vec4(c.r, c.r * c.r, 0.0, 0.0) : (uMode == 1 ? vec4(c.r, c.g, c.b, c.r * c.r) : vec4(c.r * c.g, c.r * c.b, 0.0, 0.0));
+}`;
+  // guidedFilter(): a = cov / (var + eps), b = mean(p) − a·mean(I).
+  const FS_P_GAB = HEAD2 + `
+uniform sampler2D uM1; uniform sampler2D uM2; uniform int uMode; uniform float uEps;
+void main(){
+  vec4 m = texelFetch(uM1, P(), 0);
+  if (uMode == 0) { float v = m.g - m.r * m.r, a = v / (v + uEps); outColor = vec4(a, m.r - a * m.r, 0.0, 0.0); return; }
+  vec4 x = texelFetch(uM2, P(), 0);
+  float v = m.a - m.r * m.r;
+  float a1 = (x.r - m.r * m.g) / (v + uEps), a2 = (x.g - m.r * m.b) / (v + uEps);
+  outColor = vec4(a1, m.g - a1 * m.r, a2, m.b - a2 * m.r);
+}`;
+  // guidedFilter(): q = mean(a)·I + mean(b) into the luma or the chroma planes.
+  const FS_P_GOUT = HEAD2 + `
+uniform sampler2D uCur; uniform sampler2D uAB; uniform int uMode;
+void main(){
+  vec4 c = texelFetch(uCur, P(), 0), ab = texelFetch(uAB, P(), 0);
+  outColor = c;
+  if (uMode == 0) outColor.r = ab.r * c.r + ab.g;
+  else { outColor.g = ab.r * c.r + ab.g; outColor.b = ab.b * c.r + ab.a; }
+}`;
+  // edgeField(): structure tensor terms from a clamped Sobel on luma.
+  const FS_P_TENSOR = HEAD2 + `
+uniform sampler2D uCur;
+float Yv(ivec2 q){ return texelFetch(uCur, C(q), 0).r; }
+void main(){
+  ivec2 p = P();
+  float gx = (Yv(p + ivec2(1, -1)) + 2.0 * Yv(p + ivec2(1, 0)) + Yv(p + ivec2(1, 1)) - Yv(p + ivec2(-1, -1)) - 2.0 * Yv(p + ivec2(-1, 0)) - Yv(p + ivec2(-1, 1))) / 8.0;
+  float gy = (Yv(p + ivec2(-1, 1)) + 2.0 * Yv(p + ivec2(0, 1)) + Yv(p + ivec2(1, 1)) - Yv(p + ivec2(-1, -1)) - 2.0 * Yv(p + ivec2(0, -1)) - Yv(p + ivec2(1, -1))) / 8.0;
+  outColor = vec4(gx * gx, gx * gy, gy * gy, 0.0);
+}`;
+  // edgeField(): direction (cos 2θ, sin 2θ) scaled by coherence × strength gate.
+  const FS_P_FIELD = HEAD2 + `
+uniform sampler2D uJ;
+void main(){
+  vec4 J = texelFetch(uJ, P(), 0);
+  float dxx = J.r - J.b, dxy = 2.0 * J.g, tr = J.r + J.b, diff = sqrt(dxx * dxx + dxy * dxy);
+  outColor = vec4(0.0);
+  if (diff < 1e-6) return;
+  float len = diff / (tr + 1e-6) * clamp((sqrt((tr + diff) / 2.0) - 2.0) / 10.0, 0.0, 1.0);
+  outColor = vec4(dxx / diff * len, dxy / diff * len, 0.0, 0.0);
+}`;
+  // edgeCleanup(): edge pixels (Sobel magnitude > 10, interior only).
+  const FS_P_EDGE = HEAD2 + `
+uniform sampler2D uCur;
+float Yv(ivec2 q){ return texelFetch(uCur, q, 0).r; }
+void main(){
+  ivec2 p = P(); outColor = vec4(0.0);
+  if (p.x < 1 || p.y < 1 || p.x >= uSize.x - 1 || p.y >= uSize.y - 1) return;
+  float gx = (Yv(p + ivec2(1, -1)) + 2.0 * Yv(p + ivec2(1, 0)) + Yv(p + ivec2(1, 1)) - Yv(p + ivec2(-1, -1)) - 2.0 * Yv(p + ivec2(-1, 0)) - Yv(p + ivec2(-1, 1))) / 8.0;
+  float gy = (Yv(p + ivec2(-1, 1)) + 2.0 * Yv(p + ivec2(0, 1)) + Yv(p + ivec2(1, 1)) - Yv(p + ivec2(-1, -1)) - 2.0 * Yv(p + ivec2(0, -1)) - Yv(p + ivec2(1, -1))) / 8.0;
+  outColor = vec4(sqrt(gx * gx + gy * gy) > 10.0 ? 1.0 : 0.0);
+}`;
+  // edgeCleanup(): on an edge, average along it (bilinear, skipping corners);
+  // next to one, a colour-weighted mean of the non-edge pixels around.
+  const FS_P_ECLEAN = HEAD2 + `
+uniform sampler2D uCur; uniform sampler2D uEdge; uniform sampler2D uNear; uniform sampler2D uField;
+vec3 bil(vec2 q){
+  q = clamp(q, vec2(0.0), vec2(uSize - 1));
+  ivec2 a = ivec2(floor(q)), b = min(a + 1, uSize - 1); vec2 f = q - vec2(a);
+  return mix(mix(texelFetch(uCur, a, 0).rgb, texelFetch(uCur, ivec2(b.x, a.y), 0).rgb, f.x),
+             mix(texelFetch(uCur, ivec2(a.x, b.y), 0).rgb, texelFetch(uCur, b, 0).rgb, f.x), f.y);
+}
+void main(){
+  ivec2 p = P(); vec4 cur = texelFetch(uCur, p, 0); outColor = cur;
+  if (texelFetch(uEdge, p, 0).r > 0.5) {
+    vec2 f = texelFetch(uField, p, 0).rg; float len = sqrt(f.x * f.x + f.y * f.y);
+    if (len < 1e-4 || len < 0.3) return;
+    float cc = f.x / len, c = sqrt(max(0.0, (1.0 + cc) / 2.0)), s = sqrt(max(0.0, (1.0 - cc) / 2.0)) * (f.y < 0.0 ? -1.0 : 1.0);
+    vec2 t = vec2(-s, c);
+    float sw = 4.0; vec3 acc = 4.0 * cur.rgb;
+    for (int k = -2; k <= 2; k++) {
+      if (k == 0) continue;
+      float wt = k == -1 || k == 1 ? 2.0 : 1.0;
+      vec3 v = bil(vec2(p) + t * float(k));
+      if (abs(v.x - cur.r) > 30.0) continue;
+      sw += wt; acc += wt * v;
+    }
+    outColor.rgb = acc / sw;
+  } else if (texelFetch(uNear, p, 0).r > 0.5) {
+    float sw = 0.0; vec3 acc = vec3(0.0);
+    for (int dy = -3; dy <= 3; dy++) for (int dx = -3; dx <= 3; dx++) {
+      ivec2 q = p + ivec2(dx, dy);
+      if (q.x < 0 || q.y < 0 || q.x >= uSize.x || q.y >= uSize.y || texelFetch(uEdge, q, 0).r > 0.5) continue;
+      vec3 v = texelFetch(uCur, q, 0).rgb, d = v - cur.rgb;
+      float wt = exp(-(d.x * d.x + 0.5 * (d.y * d.y + d.z * d.z)) / 392.0);
+      sw += wt; acc += wt * v;
+    }
+    if (sw > 0.0) outColor.rgb = acc / sw;
+  }
 }`;
 
   // opts.isUserBusy(ms): whether the user scrolled/touched within the last ms —
@@ -5479,6 +5873,11 @@ void main(){
       snap: prog2(FS_SNAP), out: prog2(FS_OUT),
     };
     function prog2(fs) { return prog(fs); }
+    const BP = {
+      planes: prog2(FS_P_PLANES), deblock: prog2(FS_P_DEBLOCK), guard: prog2(FS_P_GUARD), flatten: prog2(FS_P_FLATTEN),
+      box: prog2(FS_P_BOX), gprod: prog2(FS_P_GPROD), gab: prog2(FS_P_GAB), gout: prog2(FS_P_GOUT),
+      tensor: prog2(FS_P_TENSOR), field: prog2(FS_P_FIELD), edge: prog2(FS_P_EDGE), eclean: prog2(FS_P_ECLEAN),
+    };
     const tex2 = (w, h, fmt, data, type) => {
       const t = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, t);
@@ -5507,18 +5906,25 @@ void main(){
       return bpool;
     }
 
-    async function runBuiltin(prep, LUT, onProgress, isCancelled) {
+    // gpuIn: { tPlanes, tField } already on the GPU (runCleanup); they stay the
+    // caller's. Otherwise the prepare() arrays in `prep` are uploaded.
+    async function runBuiltin(prep, LUT, onProgress, isCancelled, gpuIn = null) {
       if (gl.isContextLost()) throw new Error('The GPU was reset — please try again.');
       await compiled();
       releaseExcept('builtin');
       const { w, h, W, H, P, extras, scale } = prep;
-      // Inputs: planes (Y, Cb, Cr, alpha) and edge field at input resolution.
-      const planes = new Float32Array(w * h * 4), field = new Float32Array(w * h * 2);
-      for (let i = 0; i < w * h; i++) {
-        planes[i * 4] = prep.Yc[i]; planes[i * 4 + 1] = prep.Cbc[i]; planes[i * 4 + 2] = prep.Crc[i]; planes[i * 4 + 3] = prep.A ? prep.A[i] : 255;
-        field[i * 2] = prep.C2[i]; field[i * 2 + 1] = prep.S2[i];
+      let tPlanes, tField;
+      if (gpuIn) ({ tPlanes, tField } = gpuIn);
+      else {
+        // Inputs: planes (Y, Cb, Cr, alpha) and edge field at input resolution.
+        const planes = new Float32Array(w * h * 4), field = new Float32Array(w * h * 2);
+        for (let i = 0; i < w * h; i++) {
+          planes[i * 4] = prep.Yc[i]; planes[i * 4 + 1] = prep.Cbc[i]; planes[i * 4 + 2] = prep.Crc[i]; planes[i * 4 + 3] = prep.A ? prep.A[i] : 255;
+          field[i * 2] = prep.C2[i]; field[i * 2 + 1] = prep.S2[i];
+        }
+        tPlanes = tex2(w, h, gl.RGBA32F, planes); tField = tex2(w, h, gl.RG32F, field);
       }
-      const tPlanes = tex2(w, h, gl.RGBA32F, planes), tField = tex2(w, h, gl.RG32F, field), tLut = tex2(LUT.length, 1, gl.R32F, LUT);
+      const tLut = tex2(LUT.length, 1, gl.R32F, LUT);
       const CORE = 768, HALO = 48;
       const out = new Uint8ClampedArray(W * H * 4);
       const tilesX = Math.ceil(W / CORE), tilesY = Math.ceil(H / CORE), total = tilesX * tilesY;
@@ -5621,12 +6027,137 @@ void main(){
         }
       } finally {
         queue = [];
-        gl.deleteTexture(tPlanes.t); gl.deleteTexture(tField.t); gl.deleteTexture(tLut.t);
+        if (!gpuIn) { gl.deleteTexture(tPlanes.t); gl.deleteTexture(tField.t); }
+        gl.deleteTexture(tLut.t);
       }
       return out;
     }
 
-    return { run, runBuiltin, releaseAll: () => releaseExcept('all'), float32, gl, lost: () => gl.isContextLost(), maxLayers, maxSize, info: gl.getParameter(gl.VERSION) };
+    // The built-in engine fully on the GPU: prepare() as shaders, then the
+    // same output half as runBuiltin. rgba: w×h picture; opts as for
+    // upscalerModule (width, height, extras, jpegSource, flattenWhite,
+    // lineScale); P: the tuned preset; flatFills(Y, Cb, Cr, w, h): the CPU
+    // step for the flat-fills extra (WebGL has no atomics for regions).
+    // debug: also returns the prepared planes and field (for tests).
+    async function runCleanup(rgba, w, h, opts, P, LUT, flatFills, onProgress, isCancelled, debug = false) {
+      if (gl.isContextLost()) throw new Error('The GPU was reset — please try again.');
+      await compiled();
+      const extras = opts.extras || {};
+      let alpha = false;
+      for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) { alpha = true; break; }
+      const T = [];
+      const t = () => { const x = tex2(w, h, gl.RGBA32F); T.push(x); return x; };
+      const src = tex2(w, h, gl.RGBA8, new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.length), gl.UNSIGNED_BYTE);
+      T.push(src);
+      let A = t(), B2 = t();
+      const s0 = t(), s1 = t(), s2 = t(), s3 = t(), s4 = t();
+      const swapPl = () => { const x = A; A = B2; B2 = x; };
+      const pass = (pr, dst, cost, set) => step(w * h * cost, () => {
+        gl.useProgram(pr.p);
+        gl.uniform2i(pr.loc.uSize, w, h); gl.uniform2i(pr.loc.uOrig, 0, 0); gl.uniform2i(pr.loc.uImg, w, h);
+        let unit = 0;
+        set((name, tex) => { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, tex.t); gl.uniform1i(pr.loc[name], unit); unit++; });
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, dst.t, 0);
+        gl.viewport(0, 0, w, h);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      });
+      const box = (srcT, dir, r, mode, dst) => pass(BP.box, dst, 2 * r + 1, bind => {
+        bind('uSrc0', srcT); const L = BP.box.loc; gl.uniform2i(L.uDir, dir[0], dir[1]); gl.uniform1i(L.uR, r); gl.uniform1i(L.uMode, mode);
+      });
+      const box2 = (srcT, r, mode, tmp, dst) => { box(srcT, [1, 0], r, mode, tmp); box(tmp, [0, 1], r, mode, dst); };
+      // Passes run later (queued), so each one captures its input textures
+      // now: A/B2 are swapped as passes are queued.
+      // edge field of the current luma into dst
+      const field = dst => {
+        const cur = A;
+        pass(BP.tensor, s0, 9, bind => bind('uCur', cur));
+        box2(s0, 1, 0, s1, s2);
+        pass(BP.field, dst, 2, bind => bind('uJ', s2));
+      };
+      const readPlanes = () => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, A.t, 0);
+        const px = new Float32Array(w * h * 4);
+        gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, px);
+        return px;
+      };
+      const progress = f => { if (onProgress) onProgress(f, 'Cleaning up on the GPU…'); };
+      try {
+        pass(BP.planes, A, 4, bind => bind('uSrc0', src));
+        if (opts.jpegSource !== false) {
+          for (const vert of [0, 1]) {
+            const cur = A;
+            pass(BP.deblock, B2, 4, bind => { bind('uCur', cur); gl.uniform1i(BP.deblock.loc.uVert, vert); gl.uniform3f(BP.deblock.loc.uT, P.deblock, P.deblock * 1.5, P.deblock * 1.5); });
+            swapPl();
+          }
+        }
+        if (P.flatten) {
+          const F = P.flatten, guard = s4;
+          const cur0 = A;
+          pass(BP.guard, guard, 9, bind => { bind('uCur', cur0); gl.uniform1f(BP.guard.loc.uKeep, F.keepEdges); });
+          for (let it = 0; it < F.iterations; it++) {
+            const cur = A;
+            pass(BP.flatten, B2, (2 * F.r + 1) ** 2, bind => {
+              bind('uCur', cur); bind('uGuard', guard); const L = BP.flatten.loc;
+              gl.uniform1i(L.uR, F.r); gl.uniform1f(L.uSpat, 2 * (F.r / 1.5) * (F.r / 1.5));
+              gl.uniform1f(L.uRangeStep, (9 * F.sigma * F.sigma) / 1024); gl.uniform1f(L.uSig2, 2 * F.sigma * F.sigma);
+            });
+            swapPl();
+          }
+        }
+        // Guided filter on luma (guide = itself), then chroma guided by the result.
+        const g0 = A;
+        pass(BP.gprod, s0, 2, bind => { bind('uCur', g0); gl.uniform1i(BP.gprod.loc.uMode, 0); });
+        box2(s0, P.r, 0, s1, s2);
+        pass(BP.gab, s0, 2, bind => { bind('uM1', s2); bind('uM2', s2); gl.uniform1i(BP.gab.loc.uMode, 0); gl.uniform1f(BP.gab.loc.uEps, P.eps); });
+        box2(s0, P.r, 0, s1, s3);
+        pass(BP.gout, B2, 2, bind => { bind('uCur', g0); bind('uAB', s3); gl.uniform1i(BP.gout.loc.uMode, 0); }); swapPl();
+        const g1 = A;
+        pass(BP.gprod, s0, 2, bind => { bind('uCur', g1); gl.uniform1i(BP.gprod.loc.uMode, 1); });
+        box2(s0, P.chromaR, 0, s1, s2);                                                   // s2 = means (I, Cb, Cr, I²)
+        pass(BP.gprod, s0, 2, bind => { bind('uCur', g1); gl.uniform1i(BP.gprod.loc.uMode, 2); });
+        box2(s0, P.chromaR, 0, s1, s3);                                                   // s3 = means (I·Cb, I·Cr)
+        pass(BP.gab, s0, 3, bind => { bind('uM1', s2); bind('uM2', s3); gl.uniform1i(BP.gab.loc.uMode, 1); gl.uniform1f(BP.gab.loc.uEps, P.chromaEps); });
+        box2(s0, P.chromaR, 0, s1, s4);
+        pass(BP.gout, B2, 2, bind => { bind('uCur', g1); bind('uAB', s4); gl.uniform1i(BP.gout.loc.uMode, 1); }); swapPl();
+        if (extras.edges) {
+          const e0 = A;
+          field(s3);
+          pass(BP.edge, s4, 9, bind => bind('uCur', e0));
+          box2(s4, 3, 1, s0, s2);                                                         // s2 = near an edge (dilated)
+          pass(BP.eclean, B2, 30, bind => { bind('uCur', e0); bind('uEdge', s4); bind('uNear', s2); bind('uField', s3); }); swapPl();
+        }
+        await drain(f => progress(f * (extras.fills ? 0.35 : 0.5)), isCancelled);
+        if (extras.fills) {
+          const px = readPlanes(), n = w * h;
+          const Y = new Float32Array(n), Cb = new Float32Array(n), Cr = new Float32Array(n);
+          for (let i = 0; i < n; i++) { Y[i] = px[i * 4]; Cb[i] = px[i * 4 + 1]; Cr[i] = px[i * 4 + 2]; }
+          flatFills(Y, Cb, Cr, w, h);
+          for (let i = 0; i < n; i++) { px[i * 4] = Y[i]; px[i * 4 + 1] = Cb[i]; px[i * 4 + 2] = Cr[i]; }
+          gl.bindTexture(gl.TEXTURE_2D, A.t);
+          gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.FLOAT, px);
+          progress(0.45);
+        }
+        const tField = s4;
+        field(tField);
+        await drain(null, isCancelled);
+        const dbg = debug ? { planes: readPlanes(), field: (() => {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tField.t, 0);
+          const f = new Float32Array(w * h * 4); gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, f); return f;
+        })() } : null;
+        const meta = { w, h, W: opts.width, H: opts.height, scale: opts.width / w, P, extras, flattenWhite: !!opts.flattenWhite,
+          lineScale: opts.lineScale || opts.width / w, A: alpha };
+        const out = await runBuiltin(meta, LUT, f => progress(0.5 + f * 0.5), isCancelled, { tPlanes: A, tField });
+        return debug ? { out, ...dbg } : out;
+      } finally {
+        queue = [];
+        T.forEach(x => gl.deleteTexture(x.t));
+      }
+    }
+
+    return { run, runBuiltin, runCleanup, releaseAll: () => releaseExcept('all'), float32, gl, lost: () => gl.isContextLost(), maxLayers, maxSize, info: gl.getParameter(gl.VERSION) };
   }
 
   return { parseParam, compile, cpuForward, createRunner };
@@ -5911,7 +6442,9 @@ async function aiRefreshUi() {
   }
   document.getElementById('ai-load-files').disabled = !!aiState.gpuError;
   enhanceForm.querySelector('input[name=device][value=gpu]').disabled = !gpuBuiltinAvailable();
-  if (!gpuBuiltinAvailable() && enhanceForm.elements.device.value === 'gpu') enhanceForm.elements.device.value = 'cpu';
+  enhanceForm.querySelector('input[name=device][value=webgl]').disabled = !gpuBuiltinAvailable();
+  enhanceForm.querySelector('input[name=device][value=webgpu]').disabled = !navigator.gpu;
+  if (enhanceForm.querySelector('input[name=device]:checked').disabled) enhanceForm.elements.device.value = 'cpu';
   const note = document.getElementById('ai-note');
   note.textContent = '';
   if (aiState.gpuError) note.textContent = 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). The built-in engine still works.';
@@ -5932,6 +6465,35 @@ async function aiRefreshUi() {
 document.getElementById('ai-load-files').addEventListener('click', () => document.getElementById('ai-file-input').click());
 document.getElementById('ai-file-input').addEventListener('change', e => { aiLoadFiles([...e.target.files]); e.target.value = ''; });
 
+// The AI step for pictures: with Processing 🚀 WebGPU, AI · Fast / Balanced
+// run on the WebGPU engine (as in the video tool; WebGL when that isn't
+// possible, told once), otherwise aiRun on WebGL. → RGBA W×H, alpha 255.
+let lastAiBackend = null;
+async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, opts) {
+  lastAiBackend = 'WebGL';
+  if (settings.device === 'webgpu' && VIDEO_GPU_MODELS.has(settings.engine) && w * h <= GPU_CLEANUP_MAX_PIXELS) {
+    const note = msg => { if (!gpuCleanupNotes.has(msg)) { gpuCleanupNotes.add(msg); showToast(msg); } };
+    try {
+      const gpu = await videoGpuFor(settings.engine, settings.denoise);
+      if (gpu) {
+        const bmp = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba), w, h), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+        const size = { iw: W, ih: H, W, H, x: 0, y: 0 };
+        try { gpu.eng.run(gpu.model, bmp, w, h, size); } finally { bmp.close(); }
+        const out = await gpu.eng.read(size);
+        if (onProgress) onProgress(1);
+        lastAiBackend = 'WebGPU';
+        return out;
+      }
+      note('WebGPU isn’t available here, so the AI runs on WebGL.');
+    } catch (err) {
+      if (isCancelled && isCancelled()) throw err;
+      console.warn('WebGPU AI failed', err);
+      note('The WebGPU AI failed (' + (err.message || err) + '), so it runs on WebGL.');
+    }
+  }
+  return aiRun(settings.engine, rgba, w, h, W, H, onProgress, isCancelled, opts);
+}
+
 // Picture → AI ×4 → requested size (GPU), then optional built-in cleanup.
 async function aiUpscale(px, W, H, settings, onProgress) {
   const { rgba, w, h } = px;
@@ -5941,7 +6503,7 @@ async function aiUpscale(px, W, H, settings, onProgress) {
   let out;
   try {
     onProgress(0.03, 'Loading AI model…');
-    out = await aiRun(settings.engine, rgba, w, h, W, H,
+    out = await pictureAi(settings, rgba, w, h, W, H,
       f => onProgress(0.05 + f * (post ? 0.55 : 0.85), 'AI upscaling…'), () => cancelled,
       { denoise: settings.denoise, cuganMode: settings.cuganMode });
   } catch (err) {
@@ -5970,6 +6532,2370 @@ async function aiUpscale(px, W, H, settings, onProgress) {
     extras: engineExtras(settings), jpegSource: false, flattenWhite: settings.format === 'jpeg', lineScale: W / w,
   }, (f, label) => onProgress(0.62 + f * 0.28, 'After AI: ' + label), settings.device);
 }
+
+// ── VIDEO: MP4 READER ─────────────────────────────────────────────────────────
+// Reads the sample tables of an MP4 so its frames can be decoded with
+// WebCodecs — no libraries. Only the moov box is loaded; samples are read from
+// the File when they are needed, so large videos never sit in memory.
+// Times are µs on the presentation timeline (edit lists applied).
+const mp4Type = (dv, p) => String.fromCharCode(dv.getUint8(p), dv.getUint8(p + 1), dv.getUint8(p + 2), dv.getUint8(p + 3));
+
+function mp4Children(dv, start, end) {
+  const out = [];
+  for (let p = start; p + 8 <= end;) {
+    let size = dv.getUint32(p), hdr = 8;
+    if (size === 1) { size = Number(dv.getBigUint64(p + 8)); hdr = 16; }
+    else if (size === 0) size = end - p;
+    if (size < hdr || p + size > end) break;
+    out.push({ type: mp4Type(dv, p + 4), start: p + hdr, end: p + size });
+    p += size;
+  }
+  return out;
+}
+
+// 'mdia/minf/stbl' → that box inside `box`, or null.
+function mp4Find(dv, box, path) {
+  for (const t of path.split('/')) {
+    box = box && mp4Children(dv, box.start, box.end).find(b => b.type === t);
+  }
+  return box || null;
+}
+
+const hex2 = n => n.toString(16).padStart(2, '0');
+
+// WebCodecs codec string from the sample entry (avcC / av1C / hvcC).
+function mp4CodecString(format, cfg) {
+  if (format === 'avc1' || format === 'avc3') return format + '.' + hex2(cfg[1]) + hex2(cfg[2]) + hex2(cfg[3]);
+  if (format === 'av01') {        // av01.<profile>.<level><tier>.<bit depth>
+    const depth = cfg[2] & 0x20 ? 12 : cfg[2] & 0x40 ? 10 : 8;
+    return 'av01.' + (cfg[1] >> 5) + '.' + String(cfg[1] & 31).padStart(2, '0') + (cfg[2] & 0x80 ? 'H' : 'M') + '.' + String(depth).padStart(2, '0');
+  }
+  // hvc1.<space><profile>.<compat, bit-reversed>.<tier><level>.<constraint bytes>
+  let compat = ((cfg[2] << 24) | (cfg[3] << 16) | (cfg[4] << 8) | cfg[5]) >>> 0, rev = 0;
+  for (let i = 0; i < 32; i++) { rev = (rev << 1) | (compat & 1); compat >>>= 1; }
+  const cons = [...cfg.subarray(6, 12)];
+  while (cons.length && !cons[cons.length - 1]) cons.pop();
+  return format + '.' + ['', 'A', 'B', 'C'][cfg[1] >> 6] + (cfg[1] & 31) + '.' + (rev >>> 0).toString(16) + '.' +
+    ((cfg[1] >> 5) & 1 ? 'H' : 'L') + cfg[12] + cons.map(b => '.' + b.toString(16)).join('');
+}
+
+function mp4Track(dv, trak, movieScale) {
+  const find = path => mp4Find(dv, trak, path);
+  const hdlr = find('mdia/hdlr'), mdhd = find('mdia/mdhd'), tkhd = find('tkhd'), stbl = find('mdia/minf/stbl');
+  if (!hdlr || !mdhd || !tkhd || !stbl) return null;
+  const kind = mp4Type(dv, hdlr.start + 8);
+  const scale = dv.getUint32(mdhd.start + (dv.getUint8(mdhd.start) ? 20 : 12));
+  // Edit list: an empty edit delays the track; the first real edit says which
+  // media time is shown first (e.g. skips AAC priming or B-frame delay).
+  let delay = 0, mediaTime = 0;
+  const elst = find('edts/elst');
+  if (elst) {
+    const v = dv.getUint8(elst.start), n = dv.getUint32(elst.start + 4);
+    for (let i = 0, p = elst.start + 8; i < n; i++, p += v ? 20 : 12) {
+      const dur = v ? Number(dv.getBigUint64(p)) : dv.getUint32(p);
+      const mt = v ? Number(dv.getBigInt64(p + 8)) : dv.getInt32(p + 4);
+      if (mt === -1) delay += dur / movieScale;
+      else { mediaTime = mt; break; }
+    }
+  }
+  const box = t => mp4Find(dv, stbl, t);
+  const stsd = box('stsd');
+  if (!stsd) return null;
+  const entry = stsd.start + 8, entryEnd = entry + dv.getUint32(entry), format = mp4Type(dv, entry + 4);
+  const track = {
+    kind, format, scale,
+    width: dv.getUint32(tkhd.end - 8) / 65536, height: dv.getUint32(tkhd.end - 4) / 65536,
+    stsd: new Uint8Array(dv.buffer, dv.byteOffset + stsd.start - 8, stsd.end - stsd.start + 8).slice(),
+  };
+  if (kind === 'vide') {
+    track.codedWidth = dv.getUint16(entry + 32); track.codedHeight = dv.getUint16(entry + 34);
+    if (!track.width || !track.height) { track.width = track.codedWidth; track.height = track.codedHeight; }
+    const cfg = mp4Children(dv, entry + 86, entryEnd).find(b => b.type === 'avcC' || b.type === 'hvcC' || b.type === 'av1C');
+    if (cfg) {
+      track.description = new Uint8Array(dv.buffer, dv.byteOffset + cfg.start, cfg.end - cfg.start).slice();
+      track.codec = mp4CodecString(format, track.description);
+    }
+  }
+
+  // Sample sizes
+  let sizes;
+  const stsz = box('stsz'), stz2 = box('stz2');
+  if (stsz) {
+    const fixed = dv.getUint32(stsz.start + 4), n = dv.getUint32(stsz.start + 8);
+    sizes = new Uint32Array(n);
+    for (let i = 0; i < n; i++) sizes[i] = fixed || dv.getUint32(stsz.start + 12 + i * 4);
+  } else if (stz2) {
+    const bits = dv.getUint8(stz2.start + 7), n = dv.getUint32(stz2.start + 8), p = stz2.start + 12;
+    sizes = new Uint32Array(n);
+    for (let i = 0; i < n; i++) {
+      sizes[i] = bits === 32 ? dv.getUint32(p + i * 4) : bits === 16 ? dv.getUint16(p + i * 2)
+        : bits === 8 ? dv.getUint8(p + i) : (dv.getUint8(p + (i >> 1)) >> (i & 1 ? 0 : 4)) & 15;
+    }
+  } else return null;
+  const n = sizes.length;
+  const samples = new Array(n);
+
+  // Offsets: chunks (stco/co64) split into samples by stsc
+  const stco = box('stco'), co64 = box('co64'), stsc = box('stsc');
+  if ((!stco && !co64) || !stsc) return null;
+  const chunkCount = dv.getUint32((stco || co64).start + 4);
+  const chunkOffset = c => stco ? dv.getUint32(stco.start + 8 + c * 4) : Number(dv.getBigUint64(co64.start + 8 + c * 8));
+  const runs = dv.getUint32(stsc.start + 4);
+  let s = 0;
+  for (let e = 0; e < runs && s < n; e++) {
+    const p = stsc.start + 8 + e * 12, first = dv.getUint32(p), per = dv.getUint32(p + 4);
+    const next = e + 1 < runs ? dv.getUint32(p + 12) : chunkCount + 1;
+    for (let c = first; c < next && s < n; c++) {
+      let off = chunkOffset(c - 1);
+      for (let k = 0; k < per && s < n; k++, s++) { samples[s] = { offset: off, size: sizes[s] }; off += sizes[s]; }
+    }
+  }
+  if (s < n) samples.length = s;
+
+  // Times: stts (decode deltas) + ctts (composition offsets), keyframes: stss
+  const stts = box('stts'), ctts = box('ctts'), stss = box('stss');
+  let dts = 0, i = 0;
+  for (let e = 0, m = stts ? dv.getUint32(stts.start + 4) : 0; e < m; e++) {
+    const count = dv.getUint32(stts.start + 8 + e * 8), delta = dv.getUint32(stts.start + 12 + e * 8);
+    for (let k = 0; k < count && i < samples.length; k++, i++) { samples[i].dts = dts; samples[i].dur = delta; dts += delta; }
+  }
+  for (; i < samples.length; i++) { samples[i].dts = dts; samples[i].dur = 0; }
+  const comp = new Int32Array(samples.length);
+  if (ctts) {
+    i = 0;
+    for (let e = 0, m = dv.getUint32(ctts.start + 4); e < m; e++) {
+      const count = dv.getUint32(ctts.start + 8 + e * 8), off = dv.getInt32(ctts.start + 12 + e * 8);
+      for (let k = 0; k < count && i < samples.length; k++) comp[i++] = off;
+    }
+  }
+  const keys = stss ? new Set() : null;
+  if (stss) for (let e = 0, m = dv.getUint32(stss.start + 4); e < m; e++) keys.add(dv.getUint32(stss.start + 8 + e * 4) - 1);
+  samples.forEach((x, k) => {
+    x.pts = Math.round(((x.dts + comp[k] - mediaTime) / scale + delay) * 1e6);
+    x.durUs = Math.round(x.dur / scale * 1e6);
+    x.key = !keys || keys.has(k);
+  });
+  track.samples = samples;
+  track.duration = dts / scale;
+  return track;
+}
+
+// → { duration (s), video: track, audio: track | null } — audio is copied as-is.
+async function mp4Demux(file) {
+  const read = async (a, b) => new DataView(await file.slice(a, b).arrayBuffer());
+  let moov = null, fragmented = false;
+  for (let pos = 0; pos + 8 <= file.size;) {
+    const h = await read(pos, pos + 16);
+    let size = h.getUint32(0), hdr = 8;
+    const type = mp4Type(h, 4);
+    if (size === 1 && h.byteLength >= 16) { size = Number(h.getBigUint64(8)); hdr = 16; }
+    else if (size === 0) size = file.size - pos;
+    if (size < hdr) break;
+    if (type === 'moov') moov = await read(pos + hdr, pos + size);
+    else if (type === 'moof') fragmented = true;
+    pos += size;
+  }
+  if (!moov) throw new Error('This file has no MP4 movie header — is it an MP4 video?');
+  const root = { start: 0, end: moov.byteLength };
+  if (fragmented || mp4Find(moov, root, 'mvex')) throw new Error('Fragmented MP4 files are not supported yet.');
+  const mvhd = mp4Find(moov, root, 'mvhd');
+  const movieScale = mvhd ? moov.getUint32(mvhd.start + (moov.getUint8(mvhd.start) ? 20 : 12)) : 1000;
+  const tracks = mp4Children(moov, 0, moov.byteLength).filter(b => b.type === 'trak')
+    .map(t => mp4Track(moov, t, movieScale)).filter(t => t && t.samples.length);
+  const video = tracks.find(t => t.kind === 'vide' && t.codec);
+  if (!video) {
+    const other = tracks.find(t => t.kind === 'vide');
+    throw new Error(!other ? 'This file has no video track.'
+      : other.format === 'mp4v' ? 'This video is MPEG-4 Part 2 (mp4v), which browsers can’t decode. Use an H.264, HEVC or AV1 copy.'
+      : 'Only H.264, HEVC and AV1 videos are supported (this one is ' + other.format + ').');
+  }
+  video.config = { codec: video.codec, description: video.description, codedWidth: video.codedWidth, codedHeight: video.codedHeight };
+  video.fps = video.samples.length / (video.duration || 1);
+  const audio = tracks.find(t => t.kind === 'soun') || null;
+  return { duration: video.duration, video, audio };
+}
+
+// Decoded frames with start ≤ timestamp < end (µs), in display order. Decoding
+// starts at the last keyframe at or before `start`. The caller closes frames.
+async function* mp4DecodeFrames(file, v, start, end, isCancelled) {
+  const S = v.samples;
+  let first = 0, last = S.length;
+  for (let i = 0; i < S.length; i++) {
+    if (!S[i].key) continue;
+    if (S[i].pts <= start) first = i; else break;
+  }
+  for (let i = first + 1; i < S.length; i++) if (S[i].key && S[i].pts >= end) { last = i; break; }
+  const ready = [];
+  let failed = null, wake = null, flushing = null, flushed = false, next = first;
+  const poke = () => { if (wake) { const w = wake; wake = null; w(); } };
+  const dec = new VideoDecoder({ output: f => { ready.push(f); poke(); }, error: e => { failed = e; poke(); } });
+  dec.ondequeue = poke;
+  dec.configure(v.config);
+  try {
+    for (;;) {
+      while (ready.length) {
+        const f = ready.shift();
+        if (f.timestamp < start || f.timestamp >= end) { f.close(); continue; }
+        yield f;
+      }
+      if (failed) throw failed;
+      if (isCancelled && isCancelled()) throw new CancelledError('Cancelled');
+      if (flushed) return;
+      // Keep a few samples queued, but don't pile up decoded frames (the
+      // hardware decoder only has a small pool of them).
+      if (next < last && dec.decodeQueueSize < 4 && ready.length < 3) {
+        const s = S[next++];
+        const data = new Uint8Array(await file.slice(s.offset, s.offset + s.size).arrayBuffer());
+        dec.decode(new EncodedVideoChunk({ type: s.key ? 'key' : 'delta', timestamp: s.pts, duration: s.durUs, data }));
+        continue;
+      }
+      if (next >= last && !flushing) flushing = dec.flush().then(() => { flushed = true; poke(); }, e => { failed = failed || e; poke(); });
+      await new Promise(r => { wake = r; setTimeout(r, 30); });
+    }
+  } finally {
+    for (const f of ready) f.close();
+    if (dec.state !== 'closed') dec.close();
+  }
+}
+
+// ── VIDEO: MP4 WRITER ─────────────────────────────────────────────────────────
+// Writes ftyp, then the samples into one mdat as they come (handed to a sink
+// in ~4 MB pieces), then moov at the end; the mdat size is patched in last.
+// Video: H.264 from VideoEncoder. Audio: the source track's samples and
+// sample description, copied unchanged.
+function mp4Box(type, ...parts) {
+  const bufs = parts.map(p => p instanceof Uint8Array ? p : Uint8Array.from(p));
+  const out = new Uint8Array(8 + bufs.reduce((n, b) => n + b.length, 0));
+  new DataView(out.buffer).setUint32(0, out.length);
+  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+  let o = 8;
+  for (const b of bufs) { out.set(b, o); o += b.length; }
+  return out;
+}
+const mp4Full = (type, version, flags, ...parts) => mp4Box(type, [version, (flags >> 16) & 255, (flags >> 8) & 255, flags & 255], ...parts);
+function mp4U32(values) {
+  const b = new Uint8Array(values.length * 4), dv = new DataView(b.buffer);
+  values.forEach((v, i) => dv.setUint32(i * 4, v >>> 0));
+  return b;
+}
+const mp4U16 = v => [(v >> 8) & 255, v & 255];
+const mp4Ascii = s => [...s].map(c => c.charCodeAt(0));
+const MP4_MATRIX = mp4U32([0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000]);
+// Run-length entries for stts/ctts: [count, value, count, value, …]
+function mp4Runs(values) {
+  const out = [];
+  for (const v of values) {
+    if (out.length && out[out.length - 1] === v) out[out.length - 2]++;
+    else out.push(1, v);
+  }
+  return out;
+}
+function mp4Elst(segments) {    // [[duration (movie ticks), media time], …]
+  return mp4Box('edts', mp4Full('elst', 0, 0, mp4U32([segments.length]), mp4U32(segments.flatMap(([d, t]) => [d, t, 0x10000]))));
+}
+function mp4SampleTables(sizes, offsets) {
+  const co = new Uint8Array(offsets.length * 8), dv = new DataView(co.buffer);
+  offsets.forEach((o, i) => dv.setBigUint64(i * 8, BigInt(o)));
+  return [
+    mp4Full('stsc', 0, 0, mp4U32([1, 1, 1, 1])),                 // one sample per chunk
+    mp4Full('stsz', 0, 0, mp4U32([0, sizes.length]), mp4U32(sizes)),
+    mp4Full('co64', 0, 0, mp4U32([offsets.length]), co),
+  ];
+}
+function mp4Trak(id, kind, width, height, duration, mediaScale, mediaDuration, edits, stsd, tables) {
+  const tkhd = mp4Full('tkhd', 0, 3, mp4U32([0, 0, id, 0, duration, 0, 0]), [0, 0, 0, 0], mp4U16(kind === 'soun' ? 0x100 : 0), [0, 0],
+    MP4_MATRIX, mp4U32([width * 65536, height * 65536]));
+  const mdhd = mp4Full('mdhd', 0, 0, mp4U32([0, 0, mediaScale, mediaDuration]), [0x55, 0xc4, 0, 0]);   // language 'und'
+  const hdlr = mp4Full('hdlr', 0, 0, mp4U32([0]), mp4Ascii(kind), mp4U32([0, 0, 0]), mp4Ascii(kind === 'vide' ? 'VideoHandler' : 'SoundHandler'), [0]);
+  const head = kind === 'vide' ? mp4Full('vmhd', 0, 1, new Uint8Array(8)) : mp4Full('smhd', 0, 0, new Uint8Array(4));
+  const dinf = mp4Box('dinf', mp4Full('dref', 0, 0, mp4U32([1]), mp4Full('url ', 0, 1)));
+  const stbl = mp4Box('stbl', stsd, ...tables);
+  return mp4Box('trak', tkhd, mp4Elst(edits), mp4Box('mdia', mdhd, hdlr, mp4Box('minf', head, dinf, stbl)));
+}
+// WebCodecs VideoColorSpace → 'colr' nclx codes (ISO/IEC 23091-2)
+const MP4_PRIMARIES = { bt709: 1, bt470bg: 5, smpte170m: 6, bt2020: 9, smpte432: 12 };
+const MP4_TRANSFER = { bt709: 1, smpte170m: 6, linear: 8, 'iec61966-2-1': 13, pq: 16, hlg: 18 };
+const MP4_MATRIXC = { rgb: 0, bt709: 1, bt470bg: 5, smpte170m: 6, 'bt2020-ncl': 9 };
+
+// sink: { write(parts) , patch(position, bytes), close() → result, abort() }
+// audio: { stsd, scale } | null. Video times are µs from the clip start.
+function mp4Muxer(sink, { width, height, scale, audio }) {
+  const ftyp = mp4Box('ftyp', mp4Ascii('isom'), mp4U32([0x200]), mp4Ascii('isomiso2avc1mp41'));
+  const mdatAt = ftyp.length, head = new Uint8Array(mdatAt + 16);
+  head.set(ftyp);
+  head.set([0, 0, 0, 1, ...mp4Ascii('mdat')], mdatAt);           // 64-bit size, patched at the end
+  const V = { pts: [], sizes: [], offsets: [], keys: [] }, A = { sizes: [], offsets: [], durs: [], start: null };
+  let pending = [head], pendingBytes = 0, pos = head.length, avcC = null, color = null;
+  const add = data => { pending.push(data); pendingBytes += data.length; pos += data.length; };
+  async function flush(force) {
+    if (!pending.length || (!force && pendingBytes < 4 << 20)) return;
+    const parts = pending;
+    pending = []; pendingBytes = 0;
+    await sink.write(parts);
+  }
+  return {
+    // From the encoder's first output metadata.
+    setConfig(cfg) {
+      if (cfg && cfg.description && !avcC) {
+        const d = cfg.description;
+        avcC = (ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : new Uint8Array(d)).slice();
+      }
+      if (cfg && cfg.colorSpace && !color) color = cfg.colorSpace;
+    },
+    addVideo(data, pts, key) { V.pts.push(pts); V.sizes.push(data.length); V.offsets.push(pos); V.keys.push(key); add(data); },
+    // start: this sample's time (µs) relative to the clip start
+    addAudio(data, dur, start) {
+      if (A.start === null) A.start = start;
+      A.sizes.push(data.length); A.offsets.push(pos); A.durs.push(dur); add(data);
+    },
+    flush: () => flush(false),
+    async finish(lastDurUs) {
+      if (!V.pts.length) throw new Error('No frames were encoded.');
+      if (!avcC) throw new Error('The video encoder gave no stream header.');
+      await flush(true);
+      const mdatSize = pos - mdatAt;
+      // Video: decode order is arrival order; decode times are the sorted
+      // presentation times, shifted back so none is later than its own
+      // presentation time (B-frames); the edit list undoes the shift.
+      const n = V.pts.length, pts = V.pts.map(us => Math.round(us * scale / 1e6));
+      const sorted = [...pts].sort((a, b) => a - b);
+      let shift = 0;
+      for (let i = 0; i < n; i++) shift = Math.max(shift, sorted[i] - pts[i]);
+      const durs = sorted.map((t, i) => i + 1 < n ? sorted[i + 1] - t : 0);
+      durs[n - 1] = Math.round(lastDurUs * scale / 1e6) || (n > 1 ? durs[n - 2] : Math.round(scale / 30)) || 1;
+      const vMedia = durs.reduce((a, b) => a + b, 0);
+      const vMs = Math.round(vMedia / scale * 1000);
+      const comp = pts.map((p, i) => p - (sorted[i] - shift));
+      const colr = color && color.primaries in MP4_PRIMARIES && color.transfer in MP4_TRANSFER && color.matrix in MP4_MATRIXC
+        ? [mp4Box('colr', mp4Ascii('nclx'), mp4U16(MP4_PRIMARIES[color.primaries]), mp4U16(MP4_TRANSFER[color.transfer]),
+          mp4U16(MP4_MATRIXC[color.matrix]), [color.fullRange ? 0x80 : 0])] : [];
+      const avc1 = mp4Box('avc1', [0, 0, 0, 0, 0, 0, 0, 1], new Uint8Array(16), mp4U16(width), mp4U16(height),
+        mp4U32([0x480000, 0x480000, 0]), [0, 1], new Uint8Array(32), [0, 0x18, 0xff, 0xff], mp4Box('avcC', avcC), ...colr);
+      const vTables = [mp4Full('stts', 0, 0, mp4U32([mp4Runs(durs).length / 2]), mp4U32(mp4Runs(durs)))];
+      if (comp.some(c => c)) vTables.push(mp4Full('ctts', 0, 0, mp4U32([mp4Runs(comp).length / 2]), mp4U32(mp4Runs(comp))));
+      const keys = V.keys.map((k, i) => k ? i + 1 : 0).filter(Boolean);
+      if (keys.length < n) vTables.push(mp4Full('stss', 0, 0, mp4U32([keys.length]), mp4U32(keys)));
+      vTables.push(...mp4SampleTables(V.sizes, V.offsets));
+      const traks = [mp4Trak(1, 'vide', width, height, vMs, scale, vMedia, [[vMs, shift]],
+        mp4Full('stsd', 0, 0, mp4U32([1]), avc1), vTables)];
+      let movieMs = vMs;
+      if (audio && A.sizes.length) {
+        // The first copied sample may start a little before the clip (trim it
+        // with the edit list) or a little after (wait with an empty edit).
+        const aMedia = A.durs.reduce((a, b) => a + b, 0);
+        const skip = A.start < 0 ? Math.round(-A.start / 1e6 * audio.scale) : 0, wait = A.start > 0 ? Math.round(A.start / 1000) : 0;
+        const aMs = Math.max(0, Math.round((aMedia - skip) / audio.scale * 1000));
+        const edits = wait ? [[wait, -1], [aMs, 0]] : [[aMs, skip]];
+        const aTables = [mp4Full('stts', 0, 0, mp4U32([mp4Runs(A.durs).length / 2]), mp4U32(mp4Runs(A.durs))), ...mp4SampleTables(A.sizes, A.offsets)];
+        traks.push(mp4Trak(2, 'soun', 0, 0, wait + aMs, audio.scale, aMedia, edits, audio.stsd, aTables));
+        movieMs = Math.max(movieMs, wait + aMs);
+      }
+      const mvhd = mp4Full('mvhd', 0, 0, mp4U32([0, 0, 1000, movieMs, 0x10000]), mp4U16(0x100), new Uint8Array(10), MP4_MATRIX,
+        new Uint8Array(24), mp4U32([traks.length + 1]));
+      await sink.write([mp4Box('moov', mvhd, ...traks)]);
+      const size = new Uint8Array(8);
+      new DataView(size.buffer).setBigUint64(0, BigInt(mdatSize));
+      await sink.patch(mdatAt + 8, size);
+      return sink.close();
+    },
+  };
+}
+
+// In-memory output (clip preview, browsers without file saving). Pieces are
+// turned into Blobs as they come, which the browser may keep on disk.
+function blobSink() {
+  let head = null;
+  const blobs = [];
+  return {
+    async write(parts) { if (!head) head = parts.shift(); if (parts.length) blobs.push(new Blob(parts)); },
+    // Only the mdat size is patched, and it lies in the first piece (ftyp + mdat header).
+    async patch(position, bytes) { head.set(bytes, position); },
+    async close() { return new Blob([head, ...blobs], { type: 'video/mp4' }); },
+    abort() { blobs.length = 0; head = null; },
+  };
+}
+
+// Straight to a file picked with showSaveFilePicker (Chrome/Edge). The browser
+// only replaces the file on close(); abort() leaves no partial file behind.
+async function fileSink(handle) {
+  const w = await handle.createWritable();
+  let at = 0;
+  return {
+    async write(parts) { const b = new Blob(parts); await w.write({ type: 'write', position: at, data: b }); at += b.size; },
+    async patch(position, bytes) { await w.write({ type: 'write', position, data: bytes }); },
+    async close() { await w.close(); return null; },
+    abort() { return w.abort().catch(() => {}); },
+  };
+}
+
+// ── VIDEO: WEBGPU ENGINE ──────────────────────────────────────────────────────
+// The compact Real-ESRGAN networks (AI · Fast and AI · Balanced) as WebGPU
+// compute shaders, for video: much faster than the WebGL runner, and a frame
+// never leaves the GPU (decoded frame → network → resize and letterbox →
+// canvas → encoder). Other models, and browsers without WebGPU, use aiRun.
+// Same maths as aiModule(): cpuForward, FS_SHUFFLE and FS_RESIZE.
+//
+// Activations live in storage buffers laid out [y][x][C/4] as vec4 (f16 where
+// the GPU supports it). Weights: per conv, tap and group of 4 input channels,
+// one 4×4 matrix per group of 4 output channels (column j = input channel j).
+// Pictures taller than the GPU's buffer limit run in horizontal bands with a
+// halo of one row per conv, so band edges don't change the result.
+let gpuCompactPromise = null;
+function gpuCompact() {
+  if (!gpuCompactPromise) gpuCompactPromise = createGpuCompact().catch(err => { console.warn('WebGPU unavailable', err); return null; });
+  return gpuCompactPromise;
+}
+
+// float32 → float16 bits (round to nearest even); weights only, so no NaN care.
+const toHalfBits = (() => {
+  const f = new Float32Array(1), u = new Uint32Array(f.buffer);
+  return v => {
+    f[0] = v;
+    const x = u[0], sign = (x >>> 16) & 0x8000, e = ((x >>> 23) & 0xff) - 112;
+    let m = x & 0x7fffff;
+    if (e >= 31) return sign | 0x7c00;
+    if (e <= 0) {
+      if (e < -10) return sign;
+      m |= 0x800000;
+      const sh = 14 - e, rem = m & ((1 << sh) - 1), half = 1 << (sh - 1);
+      let r = m >> sh;
+      if (rem > half || (rem === half && (r & 1))) r++;
+      return sign | r;
+    }
+    let r = (e << 10) | (m >> 13);
+    const rem = m & 0x1fff;
+    if (rem > 0x1000 || (rem === 0x1000 && (r & 1))) r++;
+    return sign | r;
+  };
+})();
+
+async function createGpuCompact(opts = {}) {
+  if (!navigator.gpu) return null;
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) return null;
+  const f16 = opts.f16 !== false && adapter.features.has('shader-f16');
+  const device = await adapter.requestDevice({
+    requiredFeatures: f16 ? ['shader-f16'] : [],
+    requiredLimits: Object.fromEntries(['maxStorageBufferBindingSize', 'maxBufferSize', 'maxComputeWorkgroupStorageSize', 'maxComputeInvocationsPerWorkgroup']
+      .map(k => [k, adapter.limits[k]])),
+  });
+  let lost = null;
+  device.lost.then(info => { lost = info.message || 'The GPU was reset.'; gpuCompactPromise = null; });
+  const S = f16 ? 'f16' : 'f32', VS = f16 ? 8 : 16;                // storage type, bytes per vec4
+  const head = (f16 ? 'enable f16;\n' : '') + 'alias S = ' + S + ';\n';
+  // Conv threads: PX neighbouring pixels × 16 output channels each; a
+  // workgroup covers (WX·PX)×WY pixels and OG groups of 16 channels, and
+  // shares each step's input tile and weights (IC×4 input channels) through
+  // workgroup memory, so every value is read from the buffers once.
+  // Defaults measured fastest on an Apple M5 Pro (≈110 ms for a 853×480 frame with AI · Fast).
+  const PX = opts.px || 1, WX = opts.wx || 8, WY = opts.wy || 8, IC = opts.ic || 1, OG = opts.og || 4;
+  const NT = WX * WY * OG, TW = WX * PX + 2, TH = WY + 2, NIN = TW * TH * IC;
+
+  // Input: picture rows [y0, y0 + bh) sampled from the source texture at w×h.
+  const inputCode = head + `
+struct P { w: u32, bh: u32, y0: u32, h: u32 }
+@group(0) @binding(0) var tex: texture_2d<f32>;
+@group(0) @binding(1) var smp: sampler;
+@group(0) @binding(2) var<storage, read_write> dst: array<vec4<S>>;
+@group(0) @binding(3) var<uniform> p: P;
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) g: vec3u) {
+  if (g.x >= p.w || g.y >= p.bh) { return; }
+  let uv = (vec2f(f32(g.x), f32(g.y + p.y0)) + 0.5) / vec2f(f32(p.w), f32(p.h));
+  let c = textureSampleLevel(tex, smp, uv, 0.0).rgb;
+  dst[g.y * p.w + g.x] = vec4<S>(vec3<S>(c), S(0));
+}`;
+
+  // 3×3 conv (zero padding at the band edges), bias, optional PReLU.
+  // Generated unrolled so the 4×PX accumulators stay in registers.
+  const acc = (o, x) => 'a' + o + '_' + x;
+  let body = '';
+  for (let o = 0; o < 4; o++) for (let x = 0; x < PX; x++) body += `  var ${acc(o, x)} = bias[p.bBase + ob + ${o}u];\n`;
+  body += `  for (var i = 0u; i < p.inC4; i += ${IC}u) {
+    for (var k = li; k < ${NIN}u; k += ${NT}u) {
+      let c = k % ${IC}u; let t = k / ${IC}u;
+      let gx = tx0 + i32(t % ${TW}u); let gy = ty0 + i32(t / ${TW}u);
+      var v = vec4<S>();
+      if (i + c < p.inC4 && gx >= 0 && gy >= 0 && gx < i32(p.w) && gy < i32(p.bh)) { v = src[(u32(gy) * p.w + u32(gx)) * p.inC4 + i + c]; }
+      tin[k] = v;
+    }
+    for (var k = li; k < 9u * ${IC}u * p.outC4; k += ${NT}u) {
+      let o4 = k % p.outC4; let r = k / p.outC4; let c = r % ${IC}u; let t = r / ${IC}u;
+      var m = mat4x4<S>();
+      if (i + c < p.inC4) { m = wts[p.wBase + (t * p.inC4 + i + c) * p.outC4 + o4]; }
+      tw[k] = m;
+    }
+    workgroupBarrier();
+    if (live) {\n`;
+  for (let c = 0; c < IC; c++) for (let ky = 0; ky < 3; ky++) {
+    body += `      {\n`;
+    for (let k = 0; k < PX + 2; k++) body += `        let r${k} = tin[((lid.y + ${ky}u) * ${TW}u + lid.x * ${PX}u + ${k}u) * ${IC}u + ${c}u];\n`;
+    for (let kx = 0; kx < 3; kx++) {
+      body += `        { let wi = (${(ky * 3 + kx) * IC + c}u) * p.outC4 + ob;\n`;
+      for (let o = 0; o < 4; o++) {
+        body += `          { let m = tw[wi + ${o}u];`;
+        for (let x = 0; x < PX; x++) body += ` ${acc(o, x)} += vec4f(m * r${kx + x});`;
+        body += ` }\n`;
+      }
+      body += `        }\n`;
+    }
+    body += `      }\n`;
+  }
+  body += `    }\n    workgroupBarrier();\n  }\n  if (!live || y >= i32(p.bh)) { return; }\n`;
+  for (let o = 0; o < 4; o++) {
+    body += `  { let sl = bias[p.sBase + ob + ${o}u];\n`;
+    for (let x = 0; x < PX; x++) {
+      body += `    if (x0 + ${x} < i32(p.w)) { var v = ${acc(o, x)}; if (p.act == 2u) { v = max(v, vec4f(0.0)) + sl * min(v, vec4f(0.0)); }` +
+        ` dst[(u32(y) * p.w + u32(x0 + ${x})) * p.outC4 + ob + ${o}u] = vec4<S>(v); }\n`;
+    }
+    body += `  }\n`;
+  }
+  const convCode = head + `
+struct P { w: u32, bh: u32, inC4: u32, outC4: u32, wBase: u32, bBase: u32, sBase: u32, act: u32 }
+@group(0) @binding(0) var<storage, read> src: array<vec4<S>>;
+@group(0) @binding(1) var<storage, read_write> dst: array<vec4<S>>;
+@group(0) @binding(2) var<storage, read> wts: array<mat4x4<S>>;
+@group(0) @binding(3) var<storage, read> bias: array<vec4f>;
+@group(0) @binding(4) var<uniform> p: P;
+var<workgroup> tin: array<vec4<S>, ${NIN}>;
+var<workgroup> tw: array<mat4x4<S>, ${9 * IC * 16}>;
+@compute @workgroup_size(${WX}, ${WY}, ${OG})
+fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: vec3u, @builtin(local_invocation_index) li: u32) {
+  let og = wid.z * ${OG}u + lid.z;
+  let x0 = i32(wid.x * ${WX * PX}u + lid.x * ${PX}u); let y = i32(wid.y * ${WY}u + lid.y);
+  let tx0 = i32(wid.x * ${WX * PX}u) - 1; let ty0 = i32(wid.y * ${WY}u) - 1;
+  let live = og * 4u < p.outC4;
+  let ob = select(0u, og * 4u, live);
+${body}}`;
+
+  // Output: pixel-shuffle ×4 of the last conv + nearest-upsampled input
+  // (FS_SHUFFLE), area-averaged to the target size (FS_RESIZE), black outside
+  // the picture (letterbox). Writes target rows [ty0, ty1) for one band.
+  const outputCode = head + `
+struct P { w: u32, bh: u32, by0: u32, n: u32, step: f32, px: i32, py: i32, pw: i32, ph: i32, pad0: u32, pad1: u32, pad2: u32 }
+@group(0) @binding(0) var<storage, read> last: array<vec4<S>>;
+@group(0) @binding(1) var<storage, read> inp: array<vec4<S>>;
+@group(0) @binding(2) var<uniform> p: P;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let q = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(q * 2.0 - 1.0, 0.0, 1.0);
+}
+fn t4(u: i32, v: i32) -> vec3f {
+  let sx = u32(u >> 2); let sy = u32(v >> 2); let sub = u32((v & 3) * 4 + (u & 3));
+  let base = (sy * p.w + sx) * 12u;
+  var c = vec3f(inp[sy * p.w + sx].rgb);
+  for (var k = 0u; k < 3u; k++) { let ch = k * 16u + sub; c[k] += f32(last[base + (ch >> 2u)][ch & 3u]); }
+  return c;
+}
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let X = i32(pos.x) - p.px; let Y = i32(pos.y) - p.py;
+  if (X < 0 || Y < 0 || X >= p.pw || Y >= p.ph) { return vec4f(0.0, 0.0, 0.0, 1.0); }
+  let c = (vec2f(f32(X), f32(Y)) + 0.5) * p.step - vec2f(0.0, f32(p.by0 * 4u));
+  let lim = vec2f(f32(p.w * 4u), f32(p.bh * 4u));
+  var s = vec3f(0.0);
+  for (var j = 0u; j < p.n; j++) {
+    for (var i = 0u; i < p.n; i++) {
+      let q = clamp(c + ((vec2f(f32(i), f32(j)) + 0.5) / f32(p.n) - 0.5) * p.step, vec2f(0.5), lim - 0.5) - 0.5;
+      let a = vec2i(floor(q)); let f = q - floor(q);
+      let b = min(a + 1, vec2i(lim) - 1);
+      s += mix(mix(t4(a.x, a.y), t4(b.x, a.y), f.x), mix(t4(a.x, b.y), t4(b.x, b.y), f.x), f.y);
+    }
+  }
+  return vec4f(clamp(s / f32(p.n * p.n), vec3f(0.0), vec3f(1.0)), 1.0);
+}`;
+
+  const mod = code => device.createShaderModule({ code });
+  const [inputMod, convMod, outputMod] = [inputCode, convCode, outputCode].map(mod);
+  for (const [name, m] of [['input', inputMod], ['conv', convMod], ['output', outputMod]]) {
+    const info = await m.getCompilationInfo();
+    const errs = info.messages.filter(x => x.type === 'error');
+    if (errs.length) throw new Error('WebGPU ' + name + ' shader: ' + errs.map(x => x.lineNum + ': ' + x.message).join('; '));
+  }
+  const inputPipe = device.createComputePipeline({ layout: 'auto', compute: { module: inputMod, entryPoint: 'main' } });
+  const convPipe = device.createComputePipeline({ layout: 'auto', compute: { module: convMod, entryPoint: 'main' } });
+  const outputPipe = device.createRenderPipeline({ layout: 'auto', vertex: { module: outputMod, entryPoint: 'vs' },
+    fragment: { module: outputMod, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] }, primitive: { topology: 'triangle-list' } });
+  const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+  const canvas = new OffscreenCanvas(16, 16);
+  const ctx = canvas.getContext('webgpu');
+  const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+
+  // Weights of one model version: one f16/f32 matrix buffer + f32 bias/slopes.
+  let packed = null;
+  function pack(model) {
+    if (packed && packed.model === model && packed.version === model.version) return packed;
+    if (packed) { packed.wBuf.destroy(); packed.bBuf.destroy(); }
+    let nm = 0, nb = 0;
+    const convs = model.convs.map(c => {
+      const inC4 = Math.ceil(c.inC / 4), outC4 = Math.ceil(c.outC / 4);
+      const L = { inC4, outC4, wBase: nm, bBase: 0, sBase: 0, act: c.prelu ? 2 : 0 };
+      nm += 9 * inC4 * outC4;
+      L.bBase = nb; nb += outC4;
+      L.sBase = nb; nb += outC4;
+      return L;
+    });
+    const W = new Float32Array(nm * 16), B = new Float32Array(nb * 4);
+    model.convs.forEach((c, k) => {
+      const L = convs[k];
+      for (let t = 0; t < 9; t++) for (let i = 0; i < L.inC4; i++) for (let o4 = 0; o4 < L.outC4; o4++) {
+        const base = ((L.wBase + (t * L.inC4 + i) * L.outC4 + o4)) * 16;
+        for (let j = 0; j < 4; j++) for (let r = 0; r < 4; r++) {
+          const ic = i * 4 + j, oc = o4 * 4 + r;
+          if (ic < c.inC && oc < c.outC) W[base + j * 4 + r] = c.weight[(oc * c.inC + ic) * 9 + t];
+        }
+      }
+      for (let o = 0; o < c.outC; o++) { B[L.bBase * 4 + o] = c.bias[o]; if (c.prelu) B[L.sBase * 4 + o] = c.prelu[o]; }
+    });
+    let wData = W;
+    if (f16) { wData = new Uint16Array(W.length); for (let i = 0; i < W.length; i++) wData[i] = toHalfBits(W[i]); }
+    const wBuf = device.createBuffer({ size: Math.max(16, wData.byteLength), usage: STORAGE });
+    const bBuf = device.createBuffer({ size: Math.max(16, B.byteLength), usage: STORAGE });
+    device.queue.writeBuffer(wBuf, 0, wData);
+    device.queue.writeBuffer(bBuf, 0, B);
+    packed = { model, version: model.version, convs, wBuf, bBuf };
+    plan = null;
+    return packed;
+  }
+
+  // Buffers, uniforms and bind groups for one geometry (model × size).
+  let plan = null;
+  function planFor(pk, w, h, size) {
+    const key = [w, h, size.iw, size.ih, size.W, size.H, size.x, size.y].join(',');
+    if (plan && plan.pk === pk && plan.key === key) return plan;
+    if (plan) plan.destroy();
+    const halo = pk.convs.length, maxC4 = Math.max(...pk.convs.map(L => L.outC4));
+    const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize, 1 << 30);
+    const fitRows = Math.floor(limit / (w * maxC4 * VS));
+    const core = fitRows >= h ? h : Math.max(8, fitRows - 2 * halo);
+    if (fitRows < 2 * halo + 8) throw new Error('This video is too large for the GPU’s buffer limits.');
+    const bandRows = Math.min(h, core + 2 * halo);
+    const buf = c4 => device.createBuffer({ size: w * bandRows * c4 * VS, usage: GPUBufferUsage.STORAGE });
+    const inp = buf(1), A = buf(maxC4), B = buf(maxC4);
+    const s = size.iw / w, step = 4 / s, n = Math.max(1, Math.ceil(step - 1e-6));
+    const bands = [];
+    for (let c0 = 0; c0 < h; c0 += core) {
+      const c1 = Math.min(h, c0 + core), b0 = Math.max(0, c0 - halo), b1 = Math.min(h, c1 + halo);
+      const ty0 = c0 === 0 ? 0 : Math.round(c0 * s), ty1 = c1 === h ? size.ih : Math.round(c1 * s);
+      const uniforms = [];
+      const ubuf = (words, f32idx = []) => {
+        const u = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        const a = new Uint32Array(12), fa = new Float32Array(a.buffer);
+        words.forEach((v, i) => { if (f32idx.includes(i)) fa[i] = v; else a[i] = v | 0; });
+        device.queue.writeBuffer(u, 0, a);
+        uniforms.push(u);
+        return u;
+      };
+      const bh = b1 - b0;
+      const inputU = ubuf([w, bh, b0, h]);
+      let src = inp, dst = A;
+      const convs = pk.convs.map(L => {
+        const bg = device.createBindGroup({ layout: convPipe.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: { buffer: src } }, { binding: 1, resource: { buffer: dst } },
+          { binding: 2, resource: { buffer: pk.wBuf } }, { binding: 3, resource: { buffer: pk.bBuf } },
+          { binding: 4, resource: { buffer: ubuf([w, bh, L.inC4, L.outC4, L.wBase, L.bBase, L.sBase, L.act]) } },
+        ] });
+        const r = { bg, groups: [Math.ceil(w / (WX * PX)), Math.ceil(bh / WY), Math.ceil(L.outC4 / 4 / OG)] };
+        src = dst; dst = dst === A ? B : A;
+        return r;
+      });
+      const output = device.createBindGroup({ layout: outputPipe.getBindGroupLayout(0), entries: [
+        { binding: 0, resource: { buffer: src } }, { binding: 1, resource: { buffer: inp } },
+        { binding: 2, resource: { buffer: ubuf([w, bh, b0, n, step, size.x, size.y, size.iw, size.ih, 0, 0, 0], [4]) } },
+      ] });
+      bands.push({ b0, bh, ty0, ty1, inputU, convs, output, uniforms, input: null });
+    }
+    const outTex = device.createTexture({ size: [size.W, size.H], format: 'rgba8unorm',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING });
+    plan = { pk, key, bands, inp, inTex: null, outTex,
+      destroy() { inp.destroy(); A.destroy(); B.destroy(); outTex.destroy(); bands.forEach(b => b.uniforms.forEach(u => u.destroy())); } };
+    return plan;
+  }
+
+  let inTex = null;
+  // Runs the network on `source` (a canvas or ImageBitmap; see videoUpscale
+  // for why not a VideoFrame), drawn at w×h, into a size.W×size.H frame: picture at (size.x, size.y), size
+  // size.iw×size.ih, black around it. The result is in `canvas` (for a
+  // VideoFrame) and can be read back with read(). Work is queued, not awaited.
+  function run(model, source, w, h, size) {
+    if (lost) throw new Error(lost);
+    const pk = pack(model), pl = planFor(pk, w, h, size);
+    const sw = source.displayWidth || source.width, sh = source.displayHeight || source.height;
+    if (!inTex || inTex.width !== sw || inTex.height !== sh) {
+      if (inTex) inTex.destroy();
+      inTex = device.createTexture({ size: [sw, sh], format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+    }
+    if (pl.inTex !== inTex) {
+      pl.inTex = inTex;
+      for (const b of pl.bands) {
+        b.input = device.createBindGroup({ layout: inputPipe.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: inTex.createView() }, { binding: 1, resource: sampler },
+          { binding: 2, resource: { buffer: pl.inp } }, { binding: 3, resource: { buffer: b.inputU } },
+        ] });
+      }
+    }
+    device.queue.copyExternalImageToTexture({ source }, { texture: inTex }, [sw, sh]);
+    if (canvas.width !== size.W || canvas.height !== size.H) { canvas.width = size.W; canvas.height = size.H; }
+    if (!ctx.configured) { ctx.configure({ device, format: 'rgba8unorm', alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST }); ctx.configured = true; }
+    const enc = device.createCommandEncoder();
+    pl.bands.forEach((b, k) => {
+      const cp = enc.beginComputePass();
+      cp.setPipeline(inputPipe); cp.setBindGroup(0, b.input);
+      cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(b.bh / 8));
+      cp.setPipeline(convPipe);
+      for (const c of b.convs) { cp.setBindGroup(0, c.bg); cp.dispatchWorkgroups(...c.groups); }
+      cp.end();
+      const rp = enc.beginRenderPass({ colorAttachments: [{ view: pl.outTex.createView(), loadOp: k ? 'load' : 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+      rp.setPipeline(outputPipe); rp.setBindGroup(0, b.output);
+      // Picture rows of this band; the first and last band also draw the bars.
+      const y0 = k ? size.y + b.ty0 : 0, y1 = k === pl.bands.length - 1 ? size.H : size.y + b.ty1;
+      rp.setScissorRect(0, y0, size.W, y1 - y0);
+      rp.draw(3);
+      rp.end();
+    });
+    enc.copyTextureToTexture({ texture: pl.outTex }, { texture: ctx.getCurrentTexture() }, [size.W, size.H]);
+    device.queue.submit([enc.finish()]);
+    return pl;
+  }
+
+  // The last result as RGBA bytes (W×H×4), e.g. for the preview.
+  async function read(size) {
+    const pl = plan, bpr = Math.ceil(size.W * 4 / 256) * 256;
+    const buf = device.createBuffer({ size: bpr * size.H, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const enc = device.createCommandEncoder();
+    enc.copyTextureToBuffer({ texture: pl.outTex }, { buffer: buf, bytesPerRow: bpr }, [size.W, size.H]);
+    device.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const src = new Uint8Array(buf.getMappedRange()), out = new Uint8ClampedArray(size.W * size.H * 4);
+    for (let y = 0; y < size.H; y++) out.set(src.subarray(y * bpr, y * bpr + size.W * 4), y * size.W * 4);
+    buf.unmap(); buf.destroy();
+    return out;
+  }
+
+  // Puts a picture texture (e.g. the WebGPU cleanup's result) into `canvas`
+  // as a size.W×size.H frame, at (size.x, size.y) on black.
+  function present(tex, size) {
+    if (lost) throw new Error(lost);
+    if (canvas.width !== size.W || canvas.height !== size.H) { canvas.width = size.W; canvas.height = size.H; }
+    if (!ctx.configured) { ctx.configure({ device, format: 'rgba8unorm', alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST }); ctx.configured = true; }
+    const enc = device.createCommandEncoder(), ct = ctx.getCurrentTexture();
+    enc.beginRenderPass({ colorAttachments: [{ view: ct.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] }).end();
+    enc.copyTextureToTexture({ texture: tex }, { texture: ct, origin: [size.x, size.y] }, [size.iw, size.ih]);
+    device.queue.submit([enc.finish()]);
+  }
+
+  return { f16, canvas, run, read, present, device, result: () => plan && plan.outTex,
+    done: () => device.queue.onSubmittedWorkDone(), destroy: () => device.destroy(), get lost() { return lost; },
+    info: (f16 ? 'f16' : 'f32') + ' · ' + (adapter.info ? [adapter.info.vendor, adapter.info.architecture].filter(Boolean).join(' ') : '') };
+}
+
+// ── CLEANUP: WEBGPU ───────────────────────────────────────────────────────────
+// The built-in engine (prepare, the output half and edge anti-aliasing) as
+// WebGPU passes, on the device of the WebGPU AI engine. The fragment shaders
+// are WGSL ports of the WebGL ones (FS_P_*, FS_RESAMPLE … FS_OUT) and of
+// antialias(), with the same region conventions (P, G = P + orig, C clamps
+// to the region; size / orig / img). Flat fills runs as compute: regions by
+// label propagation, region means and variances by atomic sums.
+let gpuCleanupPromise = null;
+function gpuCleanupEngine() {
+  if (!gpuCleanupPromise) {
+    gpuCleanupPromise = gpuCompact().then(ai => ai ? createGpuCleanup(ai) : null)
+      .catch(err => { console.warn('WebGPU cleanup unavailable', err); gpuCleanupPromise = null; return null; });
+  }
+  return gpuCleanupPromise.then(c => {
+    if (c && c.ai.lost) { gpuCleanupPromise = null; return gpuCleanupEngine(); }
+    return c;
+  });
+}
+
+async function createGpuCleanup(ai) {
+  const device = ai.device;
+  const TU = GPUTextureUsage, BU = GPUBufferUsage;
+  // Uniforms shared by every pass: region size / origin, picture size, source
+  // size, 8 floats, 4 ints, a direction.
+  const HEAD = `
+struct U { size: vec2i, orig: vec2i, img: vec2i, src: vec2i, f0: vec4f, f1: vec4f, i0: vec4i, dir: vec2i, pad: vec2i }
+@group(0) @binding(0) var<uniform> u: U;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let q = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(q * 2.0 - 1.0, 0.0, 1.0);
+}
+fn C(q: vec2i) -> vec2i { return clamp(q, vec2i(0), u.size - 1); }
+fn outside(q: vec2i) -> bool { return q.x < 0 || q.y < 0 || q.x >= u.size.x || q.y >= u.size.y; }
+`;
+  const frag = (n, pre, body) => HEAD + Array.from({ length: n }, (_, k) => `@group(0) @binding(${k + 1}) var t${k + 1}: texture_2d<f32>;\n`).join('') +
+    pre + `\n@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {\n  let p = vec2i(pos.xy); let g = p + u.orig;\n${body}\n}`;
+  const SOBEL = `
+  let gx = (Yv(p + vec2i(1, -1)) + 2.0 * Yv(p + vec2i(1, 0)) + Yv(p + vec2i(1, 1)) - Yv(p + vec2i(-1, -1)) - 2.0 * Yv(p + vec2i(-1, 0)) - Yv(p + vec2i(-1, 1))) / 8.0;
+  let gy = (Yv(p + vec2i(-1, 1)) + 2.0 * Yv(p + vec2i(0, 1)) + Yv(p + vec2i(1, 1)) - Yv(p + vec2i(-1, -1)) - 2.0 * Yv(p + vec2i(0, -1)) - Yv(p + vec2i(1, -1))) / 8.0;`;
+  const SRC = {
+    // ── prepare (input resolution) ──
+    planes: frag(1, '', `
+  let c = round(textureLoad(t1, p, 0) * 255.0);
+  return vec4f(0.299 * c.r + 0.587 * c.g + 0.114 * c.b, -0.168736 * c.r - 0.331264 * c.g + 0.5 * c.b + 128.0,
+               0.5 * c.r - 0.418688 * c.g - 0.081312 * c.b + 128.0, c.a);`),
+    deblock: frag(1, '', `
+  let cur = textureLoad(t1, p, 0); let vert = u.i0.x == 1;
+  let d = select(vec2i(1, 0), vec2i(0, 1), vert); let ps = select(p.x, p.y, vert); let len = select(u.size.x, u.size.y, vert);
+  var e: i32; var isQ: bool;
+  if (ps % 8 == 0) { e = ps; isQ = true; } else if ((ps + 1) % 8 == 0) { e = ps + 1; isQ = false; } else { return cur; }
+  if (e < 8 || e + 1 >= len) { return cur; }
+  let qe = p + d * (e - ps);
+  let p1 = textureLoad(t1, qe - 2 * d, 0).rgb; let p0 = textureLoad(t1, qe - d, 0).rgb; let q0 = textureLoad(t1, qe, 0).rgb; let q1 = textureLoad(t1, qe + d, 0).rgb;
+  let st = (q1 - p1) / 3.0; let T = u.f0.xyz;
+  let res = select(p0 + 0.75 * (p1 + st - p0), q0 + 0.75 * (p1 + 2.0 * st - q0), isQ); let old = select(p0, q0, isQ);
+  let keep = (abs(q0 - p0) >= T) | (abs(p1 - p0) >= T * 0.5) | (abs(q1 - q0) >= T * 0.5);
+  return vec4f(select(res, old, keep), cur.a);`),
+    guard: frag(1, '', `
+  var lo = vec3f(1e9); var hi = vec3f(-1e9);
+  for (var dy = -1; dy <= 1; dy++) { for (var dx = -1; dx <= 1; dx++) { let v = textureLoad(t1, C(p + vec2i(dx, dy)), 0).rgb; lo = min(lo, v); hi = max(hi, v); } }
+  let r = hi - lo; let k = u.f0.x;
+  return vec4f(select(0.0, 1.0, r.x > k || r.y > k * 0.8 || r.z > k * 0.8));`),
+    flatten: frag(2, '', `
+  let cur = textureLoad(t1, p, 0);
+  if (textureLoad(t2, p, 0).r > 0.5) { return cur; }
+  let R = u.i0.x; var sw = 0.0; var s = vec3f(0.0);
+  for (var dy = -R; dy <= R; dy++) { for (var dx = -R; dx <= R; dx++) {
+    let d2 = dx * dx + dy * dy;
+    if (d2 > R * R + R) { continue; }
+    let q = p + vec2i(dx, dy);
+    if (outside(q)) { continue; }
+    if (textureLoad(t2, q, 0).r > 0.5) { continue; }
+    let v = textureLoad(t1, q, 0).rgb; let dv = v - cur.rgb;
+    let k = floor((dv.x * dv.x + 0.5 * (dv.y * dv.y + dv.z * dv.z)) / u.f0.y);
+    if (k >= 1024.0) { continue; }
+    let wt = exp(-f32(d2) / u.f0.x) * exp(-(k * u.f0.y) / u.f0.z);
+    sw += wt; s += wt * v;
+  } }
+  if (sw > 0.0) { return vec4f(s / sw, cur.a); }
+  return cur;`),
+    box: frag(1, '', `
+  let R = u.i0.x; let mode = u.i0.y;
+  var acc = select(select(vec4f(0.0), vec4f(1e30), mode == 2), vec4f(-1e30), mode == 1); var n = 0;
+  for (var k = -R; k <= R; k++) {
+    let q = p + u.dir * k;
+    if (outside(q)) { continue; }
+    let v = textureLoad(t1, q, 0);
+    if (mode == 0) { acc += v; } else if (mode == 1) { acc = max(acc, v); } else { acc = min(acc, v); }
+    n++;
+  }
+  if (mode == 0) { return acc / f32(n); }
+  return acc;`),
+    gprod: frag(1, '', `
+  let c = textureLoad(t1, p, 0); let m = u.i0.x;
+  if (m == 0) { return vec4f(c.r, c.r * c.r, 0.0, 0.0); }
+  if (m == 1) { return vec4f(c.r, c.g, c.b, c.r * c.r); }
+  return vec4f(c.r * c.g, c.r * c.b, 0.0, 0.0);`),
+    gab: frag(2, '', `
+  let m = textureLoad(t1, p, 0); let eps = u.f0.x;
+  let x = textureLoad(t2, p, 0);
+  if (u.i0.x == 0) { let v = m.g - m.r * m.r; let a = v / (v + eps); return vec4f(a, m.r - a * m.r, 0.0, 0.0); }
+  let v = m.a - m.r * m.r;
+  let a1 = (x.r - m.r * m.g) / (v + eps); let a2 = (x.g - m.r * m.b) / (v + eps);
+  return vec4f(a1, m.g - a1 * m.r, a2, m.b - a2 * m.r);`),
+    gout: frag(2, '', `
+  let c = textureLoad(t1, p, 0); let ab = textureLoad(t2, p, 0); var o = c;
+  if (u.i0.x == 0) { o.r = ab.r * c.r + ab.g; } else { o.g = ab.r * c.r + ab.g; o.b = ab.b * c.r + ab.a; }
+  return o;`),
+    tensor: frag(1, 'fn Yv(q: vec2i) -> f32 { return textureLoad(t1, C(q), 0).r; }', SOBEL + `
+  return vec4f(gx * gx, gx * gy, gy * gy, 0.0);`),
+    field: frag(1, '', `
+  let J = textureLoad(t1, p, 0);
+  let dxx = J.r - J.b; let dxy = 2.0 * J.g; let tr = J.r + J.b; let diff = sqrt(dxx * dxx + dxy * dxy);
+  if (diff < 1e-6) { return vec4f(0.0); }
+  let len = diff / (tr + 1e-6) * clamp((sqrt((tr + diff) / 2.0) - 2.0) / 10.0, 0.0, 1.0);
+  return vec4f(dxx / diff * len, dxy / diff * len, 0.0, 0.0);`),
+    edge: frag(1, 'fn Yv(q: vec2i) -> f32 { return textureLoad(t1, q, 0).r; }', `
+  if (p.x < 1 || p.y < 1 || p.x >= u.size.x - 1 || p.y >= u.size.y - 1) { return vec4f(0.0); }` + SOBEL + `
+  return vec4f(select(0.0, 1.0, sqrt(gx * gx + gy * gy) > 10.0));`),
+    eclean: frag(4, `
+fn bil(q0: vec2f) -> vec3f {
+  let q = clamp(q0, vec2f(0.0), vec2f(u.size - 1));
+  let a = vec2i(floor(q)); let b = min(a + 1, u.size - 1); let f = q - vec2f(a);
+  return mix(mix(textureLoad(t1, a, 0).rgb, textureLoad(t1, vec2i(b.x, a.y), 0).rgb, f.x),
+             mix(textureLoad(t1, vec2i(a.x, b.y), 0).rgb, textureLoad(t1, b, 0).rgb, f.x), f.y);
+}`, `
+  let cur = textureLoad(t1, p, 0);
+  let fv = textureLoad(t4, p, 0).rg;
+  if (textureLoad(t2, p, 0).r > 0.5) {
+    let len = sqrt(fv.x * fv.x + fv.y * fv.y);
+    if (len < 1e-4 || len < 0.3) { return cur; }
+    let cc = fv.x / len; let c = sqrt(max(0.0, (1.0 + cc) / 2.0)); let s = sqrt(max(0.0, (1.0 - cc) / 2.0)) * select(1.0, -1.0, fv.y < 0.0);
+    let t = vec2f(-s, c);
+    var sw = 4.0; var acc = 4.0 * cur.rgb;
+    for (var k = -2; k <= 2; k++) {
+      if (k == 0) { continue; }
+      let wt = select(1.0, 2.0, k == -1 || k == 1);
+      let v = bil(vec2f(p) + t * f32(k));
+      if (abs(v.x - cur.r) > 30.0) { continue; }
+      sw += wt; acc += wt * v;
+    }
+    return vec4f(acc / sw, cur.a);
+  }
+  if (textureLoad(t3, p, 0).r > 0.5) {
+    var sw = 0.0; var acc = vec3f(0.0);
+    for (var dy = -3; dy <= 3; dy++) { for (var dx = -3; dx <= 3; dx++) {
+      let q = p + vec2i(dx, dy);
+      if (outside(q)) { continue; }
+      if (textureLoad(t2, q, 0).r > 0.5) { continue; }
+      let v = textureLoad(t1, q, 0).rgb; let d = v - cur.rgb;
+      let wt = exp(-(d.x * d.x + 0.5 * (d.y * d.y + d.z * d.z)) / 392.0);
+      sw += wt; acc += wt * v;
+    } }
+    if (sw > 0.0) { return vec4f(acc / sw, cur.a); }
+  }
+  return cur;`),
+    // ── output half (output resolution, per tile) ──
+    resample: frag(3, 'fn lz(d2: f32) -> f32 { return textureLoad(t3, vec2i(i32(d2 * 512.0), 0), 0).r; }', `
+  let w = u.src.x; let h = u.src.y;
+  let sx = (f32(g.x) + 0.5) * (f32(w) / f32(u.img.x)) - 0.5;
+  let sy = (f32(g.y) + 0.5) * (f32(h) / f32(u.img.y)) - 0.5;
+  let ix = i32(floor(sx)); let iy = i32(floor(sy)); let fx = sx - f32(ix); let fy = sy - f32(iy);
+  let x0 = clamp(ix, 0, w - 1); let x1 = clamp(ix + 1, 0, w - 1); let y0 = clamp(iy, 0, h - 1); let y1 = clamp(iy + 1, 0, h - 1);
+  let f = textureLoad(t2, vec2i(x0, y0), 0).rg * ((1.0 - fx) * (1.0 - fy)) + textureLoad(t2, vec2i(x1, y0), 0).rg * (fx * (1.0 - fy))
+        + textureLoad(t2, vec2i(x0, y1), 0).rg * ((1.0 - fx) * fy) + textureLoad(t2, vec2i(x1, y1), 0).rg * (fx * fy);
+  var len = sqrt(f.x * f.x + f.y * f.y); var c = 1.0; var s = 0.0;
+  if (len > 1e-4) { let cc = f.x / len; c = sqrt(max(0.0, (1.0 + cc) / 2.0)); s = sqrt(max(0.0, (1.0 - cc) / 2.0)) * select(1.0, -1.0, f.y < 0.0); len = min(len, 1.0); }
+  else { len = 0.0; }
+  let across = 1.0 + 0.5 * len; let along = 1.0 / (1.0 + 1.2 * len);
+  var sum = vec3f(0.0); var ws = 0.0;
+  for (var j = -1; j <= 2; j++) {
+    let yy = clamp(iy + j, 0, h - 1); let vy = f32(j) - fy;
+    for (var i = -1; i <= 2; i++) {
+      let xx = clamp(ix + i, 0, w - 1); let vx = f32(i) - fx;
+      let uu = (vx * c + vy * s) * across; let vv = (vy * c - vx * s) * along; let d2 = uu * uu + vv * vv;
+      if (d2 >= 4.0) { continue; }
+      let wt = lz(d2);
+      sum += wt * textureLoad(t1, vec2i(xx, yy), 0).rgb; ws += wt;
+    }
+  }
+  let a = textureLoad(t1, vec2i(x0, y0), 0).rgb; let b = textureLoad(t1, vec2i(x1, y0), 0).rgb;
+  let cq = textureLoad(t1, vec2i(x0, y1), 0).rgb; let d = textureLoad(t1, vec2i(x1, y1), 0).rgb;
+  var val = a;
+  if (ws > 1e-6) { val = sum / ws; }
+  val = clamp(val, min(min(a, b), min(cq, d)), max(max(a, b), max(cq, d)));
+  return vec4f(val.r, round(clamp(val.g, 0.0, 255.0)), round(clamp(val.b, 0.0, 255.0)), 0.0);`),
+    line: frag(1, '', `
+  let ch = u.i0.x; let R = u.i0.y; let mode = u.i0.z;
+  var acc = select(select(0.0, 1e30, mode == 2), -1e30, mode == 1); var n = 0;
+  for (var k = -R; k <= R; k++) {
+    let q = p + u.dir * k;
+    if (outside(q)) { continue; }
+    let v = textureLoad(t1, q, 0)[ch];
+    if (mode == 0) { acc += v; } else if (mode == 1) { acc = max(acc, v); } else { acc = min(acc, v); }
+    n++;
+  }
+  if (mode == 0) { return vec4f(acc / f32(n)); }
+  return vec4f(acc);`),
+    shock: frag(2, 'fn Yc(q: vec2i) -> f32 { return textureLoad(t1, C(q), 0).r; }\nfn Sm(q: vec2i) -> f32 { return textureLoad(t2, C(q), 0).r; }', `
+  let cur = textureLoad(t1, p, 0); var o = cur;
+  if (g.x < 1 || g.y < 1 || g.x >= u.img.x - 1 || g.y >= u.img.y - 1) { return cur; }
+  let gx = (Sm(p + vec2i(1, 0)) - Sm(p - vec2i(1, 0))) / 2.0; let gy = (Sm(p + vec2i(0, 1)) - Sm(p - vec2i(0, 1))) / 2.0;
+  let g2 = gx * gx + gy * gy;
+  if (g2 < 4.0) { return cur; }
+  let s0 = Sm(p);
+  let ixx = Sm(p + vec2i(1, 0)) - 2.0 * s0 + Sm(p - vec2i(1, 0));
+  let iyy = Sm(p + vec2i(0, 1)) - 2.0 * s0 + Sm(p - vec2i(0, 1));
+  let ixy = (Sm(p + vec2i(1, 1)) - Sm(p + vec2i(-1, 1)) - Sm(p + vec2i(1, -1)) + Sm(p + vec2i(-1, -1))) / 4.0;
+  let vnn = (gx * gx * ixx + 2.0 * gx * gy * ixy + gy * gy * iyy) / g2;
+  let ux = (Yc(p + vec2i(1, 0)) - Yc(p - vec2i(1, 0))) / 2.0; let uy = (Yc(p + vec2i(0, 1)) - Yc(p - vec2i(0, 1))) / 2.0;
+  let sg = select(select(0.0, -1.0, vnn < -1e-3), 1.0, vnn > 1e-3);
+  let v = cur.r - sg * sqrt(ux * ux + uy * uy) * u.f0.x;
+  var lo = cur.r; var hi = cur.r;
+  for (var k = -1; k <= 1; k++) { for (var d = -1; d <= 1; d++) { let q = Yc(p + vec2i(d, k)); lo = min(lo, q); hi = max(hi, q); } }
+  o.r = clamp(v, lo, hi);
+  return o;`),
+    sharpen: frag(1, 'fn Yc(q: vec2i) -> f32 { return textureLoad(t1, C(q), 0).r; }', `
+  let cur = textureLoad(t1, p, 0); var o = cur;
+  if (g.x < 1 || g.y < 1 || g.x >= u.img.x - 1 || g.y >= u.img.y - 1) { return cur; }
+  let c = cur.r; let l = Yc(p - vec2i(1, 0)); let r = Yc(p + vec2i(1, 0)); let up = Yc(p - vec2i(0, 1)); let d = Yc(p + vec2i(0, 1));
+  let lo = min(min(min(c, l), min(r, up)), d); let hi = max(max(max(c, l), max(r, up)), d);
+  let room = min(lo, 255.0 - hi) / select(1.0, max(hi, 1.0), hi > 0.0);
+  let k = u.f0.x * sqrt(max(0.0, min(1.0, room + 0.25)));
+  o.r = clamp(c + k * (4.0 * c - l - r - up - d) / 4.0, lo, hi);
+  return o;`),
+    fflat: frag(2, 'fn Yc(q: vec2i) -> f32 { return textureLoad(t1, C(q), 0).r; }', `
+  let cur = textureLoad(t1, p, 0); var o = cur;
+  let mean = textureLoad(t2, p, 0).r;
+  if (g.x < 1 || g.y < 1 || g.x >= u.img.x - 1 || g.y >= u.img.y - 1) { return cur; }
+  var lo = cur.r; var hi = cur.r;
+  for (var k = -1; k <= 1; k++) { for (var d = -1; d <= 1; d++) { let q = Yc(p + vec2i(d, k)); lo = min(lo, q); hi = max(hi, q); } }
+  let range = hi - lo;
+  if (range < u.f0.x) { let t = range / u.f0.x; o.r = mean * (1.0 - t) + cur.r * t; }
+  return o;`),
+    cov: frag(3, '', `
+  let cl = textureLoad(t2, p, 0).r; let c = cl - textureLoad(t3, p, 0).r; let cur = textureLoad(t1, p, 0).r;
+  var v = 0.0;
+  if (c >= 24.0) { v = clamp((cl - cur) / c, 0.0, 1.0); }
+  return vec4f(v);`),
+    redraw: frag(6, '', `
+  let cur = textureLoad(t1, p, 0); var o = cur;
+  let cl = textureLoad(t2, p, 0).r; let er = textureLoad(t3, p, 0).r; let c = cl - er; let pk = textureLoad(t5, p, 0).r;
+  let ls = textureLoad(t4, p, 0).r; let ly = textureLoad(t6, p, 0).r;
+  if (c < 24.0 || pk < 0.15) { return cur; }
+  let t = 0.5 * pk;
+  let Cv = clamp((ls - t) / (pk / u.f0.x) + 0.5, 0.0, 1.0);
+  let core = min(cl, 0.6 * ly + 0.4 * min(cur.r, cl));
+  let tg = cl * (1.0 - Cv) + core * Cv;
+  let z = min(1.0, (c - 24.0) / 24.0) * min(1.0, (pk - 0.15) / 0.15);
+  o.r = cur.r + (tg - cur.r) * z;
+  return o;`),
+    darken: frag(2, '', `
+  let cur = textureLoad(t1, p, 0);
+  let hat = max(0.0, textureLoad(t2, p, 0).r - cur.r);
+  return vec4f(max(0.0, cur.r - u.f0.x * hat), cur.g, cur.b, hat);`),
+    snap: frag(1, '', `
+  let cur = textureLoad(t1, p, 0); var o = cur;
+  if (g.x < 2 || g.y < 2 || g.x >= u.img.x - 2 || g.y >= u.img.y - 2) { return cur; }
+  var lo = p; var hi = p; var ylo = cur.r; var yhi = cur.r;
+  for (var dy = -2; dy <= 2; dy++) { for (var dx = -2; dx <= 2; dx++) {
+    let q = C(p + vec2i(dx, dy)); let v = textureLoad(t1, q, 0).r;
+    if (v < ylo) { ylo = v; lo = q; }
+    if (v > yhi) { yhi = v; hi = q; }
+  } }
+  var b = cur.g; var c = cur.b; let range = yhi - ylo;
+  if (range > u.f0.x) {
+    let t = clamp((cur.r - ylo) / range * 2.2 - 0.6, 0.0, 1.0);
+    let L = textureLoad(t1, lo, 0); let Hh = textureLoad(t1, hi, 0);
+    b = L.g * (1.0 - t) + Hh.g * t; c = L.b * (1.0 - t) + Hh.b * t;
+  }
+  let boost = select(1.0, 1.0 + u.f0.y * min(1.0, cur.a / 30.0), u.i0.x == 1);
+  o.g = round(clamp(128.0 + (b - 128.0) * boost, 0.0, 255.0));
+  o.b = round(clamp(128.0 + (c - 128.0) * boost, 0.0, 255.0));
+  return o;`),
+    out: frag(2, `
+fn hash(v: vec2u) -> f32 {
+  var h = v.x * 1664525u + v.y * 1013904223u; h ^= h >> 16u; h *= 2246822519u; h ^= h >> 13u; h *= 3266489917u; h ^= h >> 16u;
+  return f32(h) / 4294967296.0;
+}`, `
+  let cur = textureLoad(t1, p, 0);
+  let y = cur.r; let cb = cur.g - 128.0; let cr = cur.b - 128.0;
+  let gu = vec2u(g);
+  let dither = (hash(gu * 2u) - hash(gu * 2u + vec2u(1u, 7u))) * 0.5;
+  var rgb = vec3f(y + 1.402 * cr, y - 0.344136 * cb - 0.714136 * cr, y + 1.772 * cb) + dither;
+  var a = 255.0;
+  let w = u.src.x; let h = u.src.y;
+  let sy = clamp((f32(g.y) + 0.5) * f32(h) / f32(u.img.y) - 0.5, 0.0, f32(h - 1));
+  let sx = clamp((f32(g.x) + 0.5) * f32(w) / f32(u.img.x) - 0.5, 0.0, f32(w - 1));
+  let y0 = i32(floor(sy)); let x0 = i32(floor(sx)); let y1 = min(y0 + 1, h - 1); let x1 = min(x0 + 1, w - 1);
+  let fy = sy - f32(y0); let fx = sx - f32(x0);
+  let av = (textureLoad(t2, vec2i(x0, y0), 0).a * (1.0 - fx) + textureLoad(t2, vec2i(x1, y0), 0).a * fx) * (1.0 - fy)
+         + (textureLoad(t2, vec2i(x0, y1), 0).a * (1.0 - fx) + textureLoad(t2, vec2i(x1, y1), 0).a * fx) * fy;
+  if (u.i0.x == 1) {
+    a = round(clamp(av, 0.0, 255.0));
+    if (u.i0.y == 1 && a < 255.0) { let t = a / 255.0; rgb = rgb * t + 255.0 * (1.0 - t); a = 255.0; }
+  }
+  return vec4f(round(clamp(rgb, vec3f(0.0), vec3f(255.0))), a) / 255.0;`),
+    // ── edge anti-aliasing (antialias() in upscalerModule) ──
+    aaluma: frag(1, '', `
+  let c = round(textureLoad(t1, p, 0) * 255.0);
+  return vec4f(0.299 * c.r + 0.587 * c.g + 0.114 * c.b);`),
+    aagrad: frag(1, 'fn Ys(q: vec2i) -> f32 { return textureLoad(t1, C(q), 0).r; }', `
+  let gx = (Ys(p + vec2i(1, 0)) - Ys(p - vec2i(1, 0))) * 0.5; let gy = (Ys(p + vec2i(0, 1)) - Ys(p - vec2i(0, 1))) * 0.5;
+  return vec4f(gx * gx, gx * gy, gy * gy, 0.0);`),
+    aaalong: frag(2, 'fn px(q: vec2i) -> vec3f { return round(textureLoad(t1, q, 0).rgb * 255.0); }', `
+  let src = px(p);
+  let J = textureLoad(t2, p, 0); let a = J.r; let b = J.g; let c = J.b;
+  let half = (a + c) / 2.0; let d = sqrt((a - c) * (a - c) / 4.0 + b * b); let l1 = half + d; let l2 = half - d;
+  if (l1 < 4.0) { return vec4f(src, 0.0); }
+  let coh = (l1 - l2) / (l1 + l2 + 1e-6);
+  let e = clamp((sqrt(l1) - 2.0) / 6.0, 0.0, 1.0); let q = clamp((coh - 0.35) / 0.4, 0.0, 1.0);
+  let wgt = u.f0.x * e * q;
+  if (wgt < 0.02) { return vec4f(src, 0.0); }
+  var gx = l1 - c; var gy = b;
+  if (abs(gx) + abs(gy) < 1e-6) { gx = b; gy = l1 - a; }
+  var gl = sqrt(gx * gx + gy * gy);
+  if (gl == 0.0) { gl = 1.0; }
+  let tx = -gy / gl; let ty = gx / gl;
+  let L = u.i0.x; let W = u.size.x; let H = u.size.y;
+  var acc = vec3f(0.0); var ws = 0.0;
+  for (var k = -L; k <= L; k++) {
+    let fxp = clamp(f32(p.x) + f32(k) * tx, 0.0, f32(W - 1)); let fyp = clamp(f32(p.y) + f32(k) * ty, 0.0, f32(H - 1));
+    let x0 = i32(fxp); let y0 = i32(fyp); let x1 = select(x0, x0 + 1, x0 < W - 1); let y1 = select(y0, y0 + 1, y0 < H - 1);
+    let fx = fxp - f32(x0); let fy = fyp - f32(y0); let wk = exp(-f32(k * k) / u.f0.y);
+    acc += (px(vec2i(x0, y0)) * ((1.0 - fx) * (1.0 - fy)) + px(vec2i(x1, y0)) * (fx * (1.0 - fy))
+          + px(vec2i(x0, y1)) * ((1.0 - fx) * fy) + px(vec2i(x1, y1)) * (fx * fy)) * wk;
+    ws += wk;
+  }
+  return vec4f(round(clamp(src + (acc / ws - src) * wgt, vec3f(0.0), vec3f(255.0))), wgt);`),
+    aaya: frag(1, '', `
+  let c = textureLoad(t1, p, 0);
+  return vec4f(0.299 * c.r + 0.587 * c.g + 0.114 * c.b);`),
+    aaapply: frag(4, '', `
+  let al = textureLoad(t1, p, 0); var rgb = al.rgb;
+  let dl = textureLoad(t3, p, 0).r - textureLoad(t2, p, 0).r;
+  if (al.a > 0.0) { rgb = round(clamp(rgb + dl * min(1.0, al.a * 1.5), vec3f(0.0), vec3f(255.0))); }
+  return vec4f(rgb / 255.0, textureLoad(t4, p, 0).a);`),
+  };
+  // Flat fills: regions of similar neighbouring non-edge pixels (labels = the
+  // smallest pixel index in the region, by propagation), their mean and
+  // variance (64-bit fixed-point sums with a carry word), then flat regions
+  // are pulled to their mean — flatFills() in upscalerModule.
+  const FF = `
+struct F { w: u32, h: u32, pad0: u32, pad1: u32 }
+@group(0) @binding(0) var<uniform> fu: F;
+@group(0) @binding(1) var planes: texture_2d<f32>;
+@group(0) @binding(2) var<storage, read_write> lab: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> flag: array<atomic<u32>>;
+@group(0) @binding(4) var<storage, read_write> cnt: array<atomic<u32>>;
+@group(0) @binding(5) var<storage, read_write> sums: array<atomic<u32>>;
+@group(0) @binding(6) var<storage, read_write> vars: array<atomic<u32>>;
+@group(0) @binding(7) var outT: texture_storage_2d<rgba32float, write>;
+const NONE = 0xffffffffu;
+fn ok(gid: vec3u) -> bool { return gid.x < fu.w && gid.y < fu.h; }
+fn close(a: vec3f, b: vec3f) -> bool { let d = a - b; return d.x * d.x + 0.5 * (d.y * d.y + d.z * d.z) < 12.25; }
+fn add64(i: u32, v: u32, buf: u32) {
+  if (buf == 0u) { let old = atomicAdd(&sums[i], v); if (old > NONE - v) { atomicAdd(&sums[i + 1u], 1u); } }
+  else { let old = atomicAdd(&vars[i], v); if (old > NONE - v) { atomicAdd(&vars[i + 1u], 1u); } }
+}
+fn mean(l: u32, k: u32, n: f32) -> f32 {
+  let i = l * 6u + k * 2u;
+  return (f32(atomicLoad(&sums[i + 1u])) * 4294967296.0 + f32(atomicLoad(&sums[i]))) / 64.0 / n - 64.0;
+}
+@compute @workgroup_size(8, 8) fn init(@builtin(global_invocation_id) gid: vec3u) {
+  if (!ok(gid)) { return; }
+  let p = vec2i(gid.xy); let mx = vec2i(i32(fu.w) - 1, i32(fu.h) - 1);
+  var lo = 1e9; var hi = -1e9;
+  for (var dy = -1; dy <= 1; dy++) { for (var dx = -1; dx <= 1; dx++) { let v = textureLoad(planes, clamp(p + vec2i(dx, dy), vec2i(0), mx), 0).r; lo = min(lo, v); hi = max(hi, v); } }
+  let i = gid.y * fu.w + gid.x;
+  atomicStore(&lab[i], select(i, NONE, hi - lo >= 14.0));
+  atomicStore(&cnt[i], 0u);
+  for (var k = 0u; k < 6u; k++) { atomicStore(&sums[i * 6u + k], 0u); }
+  atomicStore(&vars[i * 2u], 0u); atomicStore(&vars[i * 2u + 1u], 0u);
+}
+@compute @workgroup_size(8, 8) fn prop(@builtin(global_invocation_id) gid: vec3u) {
+  if (!ok(gid)) { return; }
+  let i = gid.y * fu.w + gid.x; let li = atomicLoad(&lab[i]);
+  if (li == NONE) { return; }
+  let p = vec2i(gid.xy); let c = textureLoad(planes, p, 0).rgb;
+  var m = li;
+  var nb = array<vec2i, 4>(vec2i(1, 0), vec2i(-1, 0), vec2i(0, 1), vec2i(0, -1));
+  for (var k = 0; k < 4; k++) {
+    let q = p + nb[k];
+    if (q.x < 0 || q.y < 0 || q.x >= i32(fu.w) || q.y >= i32(fu.h)) { continue; }
+    let lj = atomicLoad(&lab[u32(q.y) * fu.w + u32(q.x)]);
+    if (lj != NONE && lj < m && close(c, textureLoad(planes, q, 0).rgb)) { m = lj; }
+  }
+  let lm = atomicLoad(&lab[m]);
+  if (lm < m) { m = lm; }
+  if (m < li) { atomicMin(&lab[i], m); atomicMin(&lab[li], m); atomicStore(&flag[0], 1u); }
+}
+@compute @workgroup_size(8, 8) fn stats(@builtin(global_invocation_id) gid: vec3u) {
+  if (!ok(gid)) { return; }
+  let l = atomicLoad(&lab[gid.y * fu.w + gid.x]);
+  if (l == NONE) { return; }
+  let c = textureLoad(planes, vec2i(gid.xy), 0).rgb;
+  atomicAdd(&cnt[l], 1u);
+  for (var k = 0u; k < 3u; k++) { add64(l * 6u + k * 2u, u32(round((clamp(c[k], -64.0, 960.0) + 64.0) * 64.0)), 0u); }
+}
+@compute @workgroup_size(8, 8) fn vari(@builtin(global_invocation_id) gid: vec3u) {
+  if (!ok(gid)) { return; }
+  let l = atomicLoad(&lab[gid.y * fu.w + gid.x]);
+  if (l == NONE) { return; }
+  let n = f32(atomicLoad(&cnt[l])); let c = textureLoad(planes, vec2i(gid.xy), 0).rgb;
+  let d = c - vec3f(mean(l, 0u, n), mean(l, 1u, n), mean(l, 2u, n));
+  add64(l * 2u, u32(round(min(d.x * d.x + 0.5 * (d.y * d.y + d.z * d.z), 2.0e8) * 16.0)), 1u);
+}
+@compute @workgroup_size(8, 8) fn apply(@builtin(global_invocation_id) gid: vec3u) {
+  if (!ok(gid)) { return; }
+  let p = vec2i(gid.xy); let c = textureLoad(planes, p, 0); var o = c;
+  let l = atomicLoad(&lab[gid.y * fu.w + gid.x]);
+  if (l != NONE) {
+    let n = f32(atomicLoad(&cnt[l]));
+    let v = (f32(atomicLoad(&vars[l * 2u + 1u])) * 4294967296.0 + f32(atomicLoad(&vars[l * 2u]))) / 16.0 / n;
+    if (n >= 40.0 && sqrt(v) <= 6.0) {
+      let m = vec3f(mean(l, 0u, n), mean(l, 1u, n), mean(l, 2u, n));
+      o = vec4f(m + (c.rgb - m) * 0.15, c.a);
+    }
+  }
+  textureStore(outT, p, o);
+}`;
+
+  const mods = {};
+  for (const [k, code] of Object.entries(SRC)) mods[k] = device.createShaderModule({ code });
+  const ffMod = device.createShaderModule({ code: FF });
+  for (const [k, m] of [...Object.entries(mods), ['flatfills', ffMod]]) {
+    const errs = (await m.getCompilationInfo()).messages.filter(x => x.type === 'error');
+    if (errs.length) throw new Error('WebGPU cleanup shader ' + k + ': ' + errs.map(x => x.lineNum + ': ' + x.message).join('; '));
+  }
+  const pipes = {};
+  const pipeDesc = (name, format) => ({ layout: 'auto', vertex: { module: mods[name], entryPoint: 'vs' },
+    fragment: { module: mods[name], entryPoint: 'fs', targets: [{ format }] }, primitive: { topology: 'triangle-list' } });
+  const pipeline = (name, format) => pipes[name + ':' + format] || (pipes[name + ':' + format] = device.createRenderPipeline(pipeDesc(name, format)));
+  // Built up front (in parallel) so the first picture or frame doesn't wait for them.
+  await Promise.all(Object.keys(SRC).map(async name => {
+    const format = name === 'out' || name === 'aaapply' ? 'rgba8unorm' : 'rgba32float';
+    pipes[name + ':' + format] = await device.createRenderPipelineAsync(pipeDesc(name, format));
+  }));
+  const ffLayout = device.createBindGroupLayout({ entries: [
+    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+    { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float' } },
+    ...[2, 3, 4, 5, 6].map(binding => ({ binding, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } })),
+    { binding: 7, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba32float' } },
+  ] });
+  const ffPipes = Object.fromEntries(['init', 'prop', 'stats', 'vari', 'apply'].map(e => [e, device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [ffLayout] }), compute: { module: ffMod, entryPoint: e } })]));
+
+  const views = new WeakMap();
+  const view = t => views.get(t) || (views.set(t, t.createView()), views.get(t));
+  const tex = (w, h, format = 'rgba32float', extra = 0) => device.createTexture({ size: [w, h], format,
+    usage: TU.TEXTURE_BINDING | TU.RENDER_ATTACHMENT | TU.COPY_SRC | TU.COPY_DST | extra });
+  // Texture sets, kept while the size stays the same (video frames).
+  const pools = {};
+  const pool = (key, w, h, make) => {
+    const p = pools[key];
+    if (p && p.w === w && p.h === h) return p;
+    if (p) p.all.forEach(t => t.destroy());
+    const all = [], mk = (...a) => { const t = tex(...a); all.push(t); return t; };
+    return (pools[key] = { w, h, all, ...make(mk) });
+  };
+  let lutTex = null;
+
+  // Recorded passes, encoded in one go by flush() with one uniform buffer.
+  const U_SIZE = 96, U_STRIDE = 256;
+  let passes = [];
+  const pass = (name, dst, rw, rh, texs, uo) => passes.push({ name, dst, rw, rh, texs, uo });
+  function flush(extra) {
+    const n = passes.length;
+    const enc = device.createCommandEncoder();
+    let ub = null;
+    if (n) {
+      const data = new ArrayBuffer(n * U_STRIDE), dv = new DataView(data);
+      passes.forEach((ps, k) => {
+        const o = ps.uo, b = k * U_STRIDE;
+        const I = (at, v) => dv.setInt32(b + at, v | 0, true), Fl = (at, v) => dv.setFloat32(b + at, v, true);
+        I(0, o.size[0]); I(4, o.size[1]); I(8, o.orig[0]); I(12, o.orig[1]); I(16, o.img[0]); I(20, o.img[1]);
+        if (o.src) { I(24, o.src[0]); I(28, o.src[1]); }
+        (o.f || []).forEach((v, j) => Fl(32 + 4 * j, v));
+        (o.i || []).forEach((v, j) => I(64 + 4 * j, v));
+        if (o.dir) { I(80, o.dir[0]); I(84, o.dir[1]); }
+      });
+      ub = device.createBuffer({ size: n * U_STRIDE, usage: BU.UNIFORM | BU.COPY_DST });
+      device.queue.writeBuffer(ub, 0, data);
+      passes.forEach((ps, k) => {
+        const pipe = pipeline(ps.name, ps.dst.format);
+        const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: { buffer: ub, offset: k * U_STRIDE, size: U_SIZE } },
+          ...ps.texs.map((t, j) => ({ binding: j + 1, resource: view(t) })) ] });
+        const rp = enc.beginRenderPass({ colorAttachments: [{ view: view(ps.dst), loadOp: 'load', storeOp: 'store' }] });
+        rp.setPipeline(pipe); rp.setBindGroup(0, bg);
+        rp.setViewport(0, 0, ps.rw, ps.rh, 0, 1); rp.setScissorRect(0, 0, ps.rw, ps.rh);
+        rp.draw(3); rp.end();
+      });
+    }
+    if (extra) extra(enc);
+    device.queue.submit([enc.finish()]);
+    if (ub) ub.destroy();              // freed once the submitted work is done
+    passes = [];
+  }
+  const check = isCancelled => {
+    if (ai.lost) throw new Error(ai.lost);
+    if (isCancelled && isCancelled()) throw new Error('cancelled');
+  };
+
+  // flatFills() on the planes in `src`, written to `dst` (same size).
+  async function flatFills(src, dst, w, h, isCancelled) {
+    const n = w * h;
+    const fb = pools.ff && pools.ff.n === n ? pools.ff : (() => {
+      if (pools.ff) pools.ff.all.forEach(b => b.destroy());
+      const buf = (size, usage = BU.STORAGE) => device.createBuffer({ size, usage });
+      const all = [buf(n * 4), buf(16, BU.STORAGE | BU.COPY_SRC | BU.COPY_DST), buf(n * 4), buf(n * 24), buf(n * 8),
+        buf(16, BU.MAP_READ | BU.COPY_DST), buf(16, BU.UNIFORM | BU.COPY_DST)];
+      return (pools.ff = { n, all, lab: all[0], flag: all[1], cnt: all[2], sums: all[3], vars: all[4], rb: all[5], ub: all[6] });
+    })();
+    device.queue.writeBuffer(fb.ub, 0, new Uint32Array([w, h, 0, 0]));
+    const bg = device.createBindGroup({ layout: ffLayout, entries: [
+      { binding: 0, resource: { buffer: fb.ub } }, { binding: 1, resource: view(src) },
+      { binding: 2, resource: { buffer: fb.lab } }, { binding: 3, resource: { buffer: fb.flag } }, { binding: 4, resource: { buffer: fb.cnt } },
+      { binding: 5, resource: { buffer: fb.sums } }, { binding: 6, resource: { buffer: fb.vars } }, { binding: 7, resource: view(dst) } ] });
+    const gx = Math.ceil(w / 8), gy = Math.ceil(h / 8);
+    const run = (enc, e) => { const cp = enc.beginComputePass(); cp.setPipeline(ffPipes[e]); cp.setBindGroup(0, bg); cp.dispatchWorkgroups(gx, gy); cp.end(); };
+    let enc = device.createCommandEncoder();
+    run(enc, 'init');
+    device.queue.submit([enc.finish()]);
+    for (let it = 0; it < 8192; it += 16) {
+      check(isCancelled);
+      enc = device.createCommandEncoder();
+      enc.clearBuffer(fb.flag);
+      for (let k = 0; k < 16; k++) run(enc, 'prop');
+      enc.copyBufferToBuffer(fb.flag, 0, fb.rb, 0, 4);
+      device.queue.submit([enc.finish()]);
+      await fb.rb.mapAsync(GPUMapMode.READ);
+      const changed = new Uint32Array(fb.rb.getMappedRange())[0];
+      fb.rb.unmap();
+      if (!changed) break;
+    }
+    enc = device.createCommandEncoder();
+    run(enc, 'stats'); run(enc, 'vari'); run(enc, 'apply');
+    device.queue.submit([enc.finish()]);
+  }
+
+  // prepare() → { planes, field } textures at w×h.
+  async function prepare(srcTex, w, h, opts, P, isCancelled) {
+    const pp = pool('prep', w, h, mk => ({ A: mk(w, h, 'rgba32float', TU.STORAGE_BINDING), B: mk(w, h, 'rgba32float', TU.STORAGE_BINDING),
+      s: [mk(w, h), mk(w, h), mk(w, h), mk(w, h), mk(w, h)] }));
+    const extras = opts.extras || {}, [s0, s1, s2, s3, s4] = pp.s;
+    let A = pp.A, B = pp.B;
+    const swap = () => { const x = A; A = B; B = x; };
+    const U = (o = {}) => ({ size: [w, h], orig: [0, 0], img: [w, h], ...o });
+    const ps = (name, dst, texs, o) => pass(name, dst, w, h, texs, U(o));
+    const box2 = (src, r, mode, tmp, dst) => { ps('box', tmp, [src], { dir: [1, 0], i: [r, mode] }); ps('box', dst, [tmp], { dir: [0, 1], i: [r, mode] }); };
+    const field = (cur, dst) => { ps('tensor', s0, [cur]); box2(s0, 1, 0, s1, s2); ps('field', dst, [s2]); };
+    ps('planes', A, [srcTex]);
+    if (opts.jpegSource !== false) for (const vert of [0, 1]) { ps('deblock', B, [A], { i: [vert], f: [P.deblock, P.deblock * 1.5, P.deblock * 1.5] }); swap(); }
+    if (P.flatten) {
+      const F = P.flatten;
+      ps('guard', s4, [A], { f: [F.keepEdges] });
+      for (let it = 0; it < F.iterations; it++) {
+        ps('flatten', B, [A, s4], { i: [F.r], f: [2 * (F.r / 1.5) * (F.r / 1.5), (9 * F.sigma * F.sigma) / 1024, 2 * F.sigma * F.sigma] }); swap();
+      }
+    }
+    ps('gprod', s0, [A], { i: [0] }); box2(s0, P.r, 0, s1, s2);
+    ps('gab', s0, [s2, s2], { i: [0], f: [P.eps] }); box2(s0, P.r, 0, s1, s3);
+    ps('gout', B, [A, s3], { i: [0] }); swap();
+    ps('gprod', s0, [A], { i: [1] }); box2(s0, P.chromaR, 0, s1, s2);
+    ps('gprod', s0, [A], { i: [2] }); box2(s0, P.chromaR, 0, s1, s3);
+    ps('gab', s0, [s2, s3], { i: [1], f: [P.chromaEps] }); box2(s0, P.chromaR, 0, s1, s4);
+    ps('gout', B, [A, s4], { i: [1] }); swap();
+    if (extras.edges) {
+      field(A, s3); ps('edge', s4, [A]); box2(s4, 3, 1, s0, s2);
+      ps('eclean', B, [A, s4, s2, s3]); swap();
+    }
+    if (extras.fills) { flush(); await flatFills(A, B, w, h, isCancelled); swap(); }
+    field(A, s4);
+    flush();
+    return { planes: A, field: s4 };
+  }
+
+  // The output half, tile by tile as runBuiltin, into outTex (W×H rgba8unorm).
+  function finish(planes, fieldT, meta, outTex, isCancelled) {
+    const { w, h, W, H, P, extras, scale } = meta;
+    const CORE = 768, HALO = 48;
+    const T = pool('fin', Math.min(W, CORE + 2 * HALO), Math.min(H, CORE + 2 * HALO), mk => {
+      const tw = Math.min(W, CORE + 2 * HALO), th = Math.min(H, CORE + 2 * HALO);
+      return { m: [mk(tw, th), mk(tw, th)], s: Array.from({ length: 9 }, () => mk(tw, th)), o: mk(tw, th, 'rgba8unorm') };
+    });
+    const iterations = P.shock + (scale > 2.5 ? 1 : 0), smoothR = scale > 2.5 ? 2 : 1;
+    for (let ty = 0; ty < Math.ceil(H / CORE); ty++) for (let tx = 0; tx < Math.ceil(W / CORE); tx++) {
+      check(isCancelled);
+      const cx0 = tx * CORE, cy0 = ty * CORE, cx1 = Math.min(W, cx0 + CORE), cy1 = Math.min(H, cy0 + CORE);
+      const rx0 = Math.max(0, cx0 - HALO), ry0 = Math.max(0, cy0 - HALO), rx1 = Math.min(W, cx1 + HALO), ry1 = Math.min(H, cy1 + HALO);
+      const rw = rx1 - rx0, rh = ry1 - ry0, S = T.s;
+      let m = 0;
+      const M = () => T.m[m], Mo = () => T.m[1 - m], swap = () => { m = 1 - m; };
+      const ps = (name, dst, texs, o = {}) => pass(name, dst, rw, rh, texs, { size: [rw, rh], orig: [rx0, ry0], img: [W, H], ...o });
+      const line = (src, ch, dir, r, mode, dst) => ps('line', dst, [src], { i: [ch, r, mode], dir });
+      const box2 = (src, ch, r, tmp, dst) => { line(src, ch, [1, 0], r, 0, tmp); line(tmp, 0, [0, 1], r, 0, dst); };
+      const morph2 = (src, ch, r, isMax, tmp, dst) => { line(src, ch, [1, 0], r, isMax ? 1 : 2, tmp); line(tmp, 0, [0, 1], r, isMax ? 1 : 2, dst); };
+      const gauss = (src, sigma, a, b) => {
+        const rb = Math.max(0, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2));
+        if (rb === 0) return src;
+        box2(src, 0, rb, b, a); box2(a, 0, rb, b, a); box2(a, 0, rb, b, a);
+        return a;
+      };
+      ps('resample', Mo(), [planes, fieldT, lutTex], { src: [w, h] }); swap();
+      for (let it = 0; it < iterations; it++) { box2(M(), 0, smoothR, S[0], S[1]); const cur = M(); ps('shock', Mo(), [cur, S[1]], { f: [P.dt] }); swap(); }
+      if (P.sharpen > 0) { const cur = M(); ps('sharpen', Mo(), [cur], { f: [P.sharpen] }); swap(); }
+      if (P.finalFlatten) { box2(M(), 0, 2, S[0], S[1]); const cur = M(); ps('fflat', Mo(), [cur, S[1]], { f: [P.finalFlatten] }); swap(); }
+      if (extras.lines) {
+        const ls = meta.lineScale || scale, r = Math.max(2, Math.ceil(1.5 * ls)), sigma = 0.4 * ls;
+        morph2(M(), 0, r, true, S[0], S[1]); morph2(S[1], 0, r, false, S[0], S[2]);
+        morph2(M(), 0, r, false, S[0], S[3]);
+        const cur = M();
+        ps('cov', S[4], [cur, S[2], S[3]]);
+        const Ls = gauss(S[4], sigma, S[5], S[0]);
+        morph2(Ls, 0, r, true, S[0], S[6]);
+        const lineY = gauss(S[3], Math.max(0.7, sigma * 0.5), S[7], S[8]);
+        ps('redraw', Mo(), [cur, S[2], S[3], Ls, S[6], lineY], { f: [2.5 * sigma] }); swap();
+      }
+      if (P.lines) {
+        const r = Math.max(2, Math.round(scale));
+        morph2(M(), 0, r, true, S[0], S[1]); morph2(S[1], 0, r, false, S[0], S[2]);
+        const cur = M();
+        ps('darken', Mo(), [cur, S[2]], { f: [P.lines.darken] }); swap();
+        const cur2 = M();
+        ps('snap', Mo(), [cur2], { f: [P.lines.snap, P.lines.saturate], i: [1] }); swap();
+      } else if (extras.lines) {
+        const cur = M();
+        ps('snap', Mo(), [cur], { f: [18, 0], i: [0] }); swap();
+      }
+      ps('out', T.o, [M(), planes], { src: [w, h], i: [meta.A ? 1 : 0, meta.flattenWhite ? 1 : 0] });
+      flush(enc => enc.copyTextureToTexture({ texture: T.o, origin: [cx0 - rx0, cy0 - ry0] }, { texture: outTex, origin: [cx0, cy0] }, [cx1 - cx0, cy1 - cy0]));
+    }
+  }
+
+  // antialias() on inTex (W×H rgba8unorm) → a new rgba8unorm texture.
+  function antialias(inTex, W, H, period, strength) {
+    const s = Math.max(0, Math.min(1, strength / 100));
+    const ap = pool('aa', W, H, mk => ({ t: Array.from({ length: 7 }, () => mk(W, H)), o: mk(W, H, 'rgba8unorm') }));
+    const [a0, a1, a2, a3, a4, a5, a6] = ap.t;
+    const ps = (name, dst, texs, o = {}) => pass(name, dst, W, H, texs, { size: [W, H], orig: [0, 0], img: [W, H], ...o });
+    const box2 = (src, r, tmp, dst) => { ps('box', tmp, [src], { dir: [1, 0], i: [r, 0] }); ps('box', dst, [tmp], { dir: [0, 1], i: [r, 0] }); };
+    const gauss = (src, sigma, a, b) => {
+      const rb = Math.max(0, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2));
+      if (rb === 0) return src;
+      box2(src, rb, b, a); box2(a, rb, b, a); box2(a, rb, b, a);
+      return a;
+    };
+    ps('aaluma', a0, [inTex]);
+    const Ys = gauss(a0, 0.7, a1, a2);
+    ps('aagrad', a3, [Ys]);
+    const J = gauss(a3, Math.max(1, 2 * period), a1, a2);
+    const L = Math.max(2, Math.min(14, Math.round(2.5 * period)));
+    ps('aaalong', a4, [inTex, J], { f: [s, 2 * (L / 2) * (L / 2)], i: [L] });
+    ps('aaya', a0, [a4]);
+    const smoothR = Math.max(1, Math.round(period / 2));
+    let cur = a0;
+    for (const next of [a5, a6]) {
+      ps('line', a1, [cur], { i: [0, smoothR, 0], dir: [1, 0] }); ps('line', a3, [a1], { i: [0, smoothR, 0], dir: [0, 1] });
+      ps('shock', next, [cur, a3], { f: [0.3] });
+      cur = next;
+    }
+    ps('aaapply', ap.o, [a4, a0, cur, inTex]);
+    flush();
+    return ap.o;
+  }
+
+  const AA_MAX_PIXELS = 4.2e6;     // bigger outputs leave the anti-aliasing to the worker
+  // The whole built-in engine on srcTex (w×h rgba8unorm) → { tex: W×H rgba8unorm, aaDone }.
+  async function cleanupTex(srcTex, w, h, opts, P, LUT, isCancelled, onProgress) {
+    check(isCancelled);
+    if (!lutTex) {
+      lutTex = device.createTexture({ size: [LUT.length, 1], format: 'r32float', usage: TU.TEXTURE_BINDING | TU.COPY_DST });
+      device.queue.writeTexture({ texture: lutTex }, LUT, { bytesPerRow: LUT.length * 4 }, [LUT.length, 1]);
+    }
+    const W = opts.width, H = opts.height, extras = opts.extras || {};
+    const { planes, field } = await prepare(srcTex, w, h, opts, P, isCancelled);
+    if (onProgress) onProgress(0.4);
+    check(isCancelled);
+    const out = pool('out', W, H, mk => ({ t: mk(W, H, 'rgba8unorm') })).t;
+    finish(planes, field, { w, h, W, H, scale: W / w, P, extras, flattenWhite: !!opts.flattenWhite,
+      lineScale: opts.lineScale || W / w, A: !!opts.alpha }, out, isCancelled);
+    if (onProgress) onProgress(0.9);
+    if (extras.aa && W * H <= AA_MAX_PIXELS) return { tex: antialias(out, W, H, opts.lineScale || W / w, extras.aa), aaDone: true };
+    return { tex: out, aaDone: !extras.aa };
+  }
+
+  async function read(t, W, H) {
+    const bpr = Math.ceil(W * 4 / 256) * 256;
+    const buf = device.createBuffer({ size: bpr * H, usage: BU.COPY_DST | BU.MAP_READ });
+    const enc = device.createCommandEncoder();
+    enc.copyTextureToBuffer({ texture: t }, { buffer: buf, bytesPerRow: bpr }, [W, H]);
+    device.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const src = new Uint8Array(buf.getMappedRange()), out = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < H; y++) out.set(src.subarray(y * bpr, y * bpr + W * 4), y * W * 4);
+    buf.unmap(); buf.destroy();
+    return out;
+  }
+
+  // Upload: an RGBA array or a canvas/ImageBitmap into a w×h texture.
+  function upload(source, w, h) {
+    const up = pool('in', w, h, mk => ({ t: mk(w, h, 'rgba8unorm') })).t;
+    if (ArrayBuffer.isView(source)) {               // (instanceof fails for arrays from a worker or another frame)
+      device.queue.writeTexture({ texture: up }, source, { bytesPerRow: w * 4 }, [w, h]);
+    } else device.queue.copyExternalImageToTexture({ source }, { texture: up }, [w, h]);
+    return up;
+  }
+
+  // Pictures: RGBA in, RGBA out. → { out, aaDone }
+  async function cleanup(rgba, w, h, opts, P, LUT, onProgress, isCancelled) {
+    let alpha = false;
+    for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) { alpha = true; break; }
+    const r = await cleanupTex(upload(rgba, w, h), w, h, { ...opts, alpha }, P, LUT, isCancelled, onProgress);
+    const out = await read(r.tex, opts.width, opts.height);
+    if (onProgress) onProgress(1);
+    return { out, aaDone: r.aaDone };
+  }
+
+  return { ai, cleanup, cleanupTex, upload, read };
+}
+
+// ── VIDEO: PIPELINE ───────────────────────────────────────────────────────────
+// decode (WebCodecs) → AI upscale on the GPU (aiRun, as for pictures) → encode
+// H.264 (WebCodecs) → MP4. The audio track is copied unchanged.
+// Output resolutions: frame size and bitrate choices (Mbps, middle = default).
+// 'orig' keeps the video's own size: cleanup only (or the AI at 1×).
+const VIDEO_RES = {
+  1080: { W: 1920, H: 1080, rates: [6, 10, 16] },
+  720: { W: 1280, H: 720, rates: [3, 5, 8] },
+  orig: { rates: [1.5, 2.5, 4] },
+};
+
+// The lowest H.264 level for a frame size and rate: [code, max macroblocks
+// per frame, max macroblocks per second] (3.0 … 5.1).
+function videoLevel(W, H, fps) {
+  const mbs = Math.ceil(W / 16) * Math.ceil(H / 16), rate = mbs * fps;
+  for (const [code, fs, mbps] of [['1e', 1620, 40500], ['1f', 3600, 108000], ['20', 5120, 216000], ['28', 8192, 245760],
+    ['2a', 8704, 522240], ['32', 22080, 589824], ['33', 36864, 983040]]) if (mbs <= fs && rate <= mbps) return code;
+  return '33';
+}
+
+// Upscaled picture size and the frame it is placed in: Fit = that size rounded
+// up to even numbers; Letterbox = always the full frame (e.g. 1920×1080). null
+// when the video is already that big. w×h is the exact display size
+// (853.33×480 for a 16:9 DVD frame), so such videos fill the frame exactly.
+function videoTargetSize(w, h, mode, res = 1080) {
+  if (res === 'orig') {                    // own size, in even numbers (853.33 → 854)
+    const iw = Math.round(w / 2) * 2 || 2, ih = Math.round(h / 2) * 2 || 2;
+    return { iw, ih, W: iw, H: ih, x: 0, y: 0 };
+  }
+  const { W: MW, H: MH } = VIDEO_RES[res];
+  if (w >= MW || h >= MH) return null;
+  const s = Math.min(MW / w, MH / h);
+  const iw = Math.min(MW, Math.round(w * s)), ih = Math.min(MH, Math.round(h * s));
+  const W = mode === 'box' ? MW : iw + (iw & 1), H = mode === 'box' ? MH : ih + (ih & 1);
+  return { iw, ih, W, H, x: (W - iw) >> 1, y: (H - ih) >> 1 };
+}
+
+// H.264 High profile first, in latencyMode 'quality' where that works and
+// 'realtime' where it doesn't: Safari 27's encoder takes High and Main
+// profile frames in 'quality' mode but holds them all until a flush, which
+// stalls a running job. Each config is tried before it is used.
+async function videoEncoderConfig(W, H, fps, bitrate) {
+  const level = videoLevel(W, H, fps);
+  const base = { width: W, height: H, bitrate, framerate: fps, bitrateMode: 'variable', avc: { format: 'avc' } };
+  for (const codec of ['avc1.6400' + level, 'avc1.4d00' + level, 'avc1.42e0' + level]) {
+    for (const latencyMode of ['quality', 'realtime']) {
+      for (const hardwareAcceleration of ['prefer-hardware', 'no-preference']) {
+        const cfg = { ...base, latencyMode, codec, hardwareAcceleration };
+        try { if ((await VideoEncoder.isConfigSupported(cfg)).supported && await videoEncoderWorks(cfg)) return cfg; } catch { /* try the next */ }
+      }
+    }
+  }
+  throw new Error('This browser cannot encode H.264 video at ' + W + '×' + H + '.');
+}
+
+// Once per config and page: encodes 8 frames *without* a flush, as a running
+// job does, and checks that output starts coming back within 2 s. (Safari's
+// 'quality' mode does return frames on a flush, so a flush would hide it.)
+const videoEncoderChecks = new Map();
+function videoEncoderWorks(cfg) {
+  const key = JSON.stringify(cfg);
+  if (!videoEncoderChecks.has(key)) videoEncoderChecks.set(key, (async () => {
+    let out = 0;
+    const enc = new VideoEncoder({ output: () => { out++; }, error: () => {} });
+    try {
+      enc.configure(cfg);
+      const c = new OffscreenCanvas(cfg.width, cfg.height), x = c.getContext('2d');
+      for (let i = 0; i < 8; i++) {
+        x.fillStyle = 'hsl(' + i * 40 + ',60%,50%)'; x.fillRect(0, 0, cfg.width, cfg.height);
+        const f = new VideoFrame(c, { timestamp: i * 40000 });
+        enc.encode(f, { keyFrame: i === 0 }); f.close();
+      }
+      for (let t = 0; t < 40 && !out; t++) await new Promise(r => setTimeout(r, 50));
+      return out > 0;
+    } catch { return false; }
+    finally { try { enc.close(); } catch { /* already closed */ } }
+  })());
+  return videoEncoderChecks.get(key);
+}
+
+// Draw a decoded frame at the video's display size and return its pixels.
+function videoFramePixels(frame, w, h, canvas) {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(frame, 0, 0, w, h);
+  return ctx.getImageData(0, 0, w, h).data;
+}
+
+// One frame at time t (µs): the first one shown at or after t.
+async function videoFrameAt(src, t) {
+  const v = src.info.video, w = Math.round(v.width), h = Math.round(v.height);
+  const canvas = new OffscreenCanvas(w, h);
+  for await (const frame of mp4DecodeFrames(src.file, v, t, Infinity)) {
+    try { videoFramePixels(frame, w, h, canvas); return { canvas, timestamp: frame.timestamp }; }
+    finally { frame.close(); }
+  }
+  throw new Error('No frame found at that time.');
+}
+
+// The WebGPU engine and model for an AI engine id, or null when that model
+// isn't a compact network or WebGPU isn't available (→ the WebGL aiRun path).
+const VIDEO_GPU_MODELS = new Set(['animevideov3', 'generalv3']);
+async function videoGpuFor(engine, denoise) {
+  if (!VIDEO_GPU_MODELS.has(engine)) return null;
+  const eng = await gpuCompact();
+  if (!eng || eng.lost) return null;
+  return { eng, model: await aiGetModel(engine, { denoise }) };
+}
+
+// The per-frame chain for some settings: an AI model (WebGPU or WebGL) and/or
+// the built-in engine with a cleanup preset and extras — the same processing
+// as for pictures (builtinJob; after AI at the same size, as aiUpscale does).
+// run(canvas) takes a w×h 2D canvas holding the frame and returns the picture
+// as iw×ih RGBA, or null when `direct`: then the whole frame (with any bars)
+// is already in gpu.eng.canvas, ready for the encoder.
+async function videoChain(st, w, h, size, direct) {
+  const ai = st.engine !== 'builtin';
+  const gpu = ai ? await videoGpuFor(st.engine, st.denoise) : null;
+  const cleanup = !ai || st.preset !== 'none' ? {
+    width: size.iw, height: size.ih, preset: st.preset, tuning: engineTuning(st), extras: engineExtras(st),
+    jpegSource: false, flattenWhite: false, ...(ai ? { lineScale: size.iw / w } : {}),
+  } : null;
+  // Where the cleanup runs: Original (prepare on the CPU, the rest on WebGL
+  // where available), or fully on the GPU through builtinJob('webgpu' /
+  // 'webgl'). WebGPU with the AI on WebGPU (or the built-in engine) keeps the
+  // frame on the GPU: AI result or frame → cleanup → encoder canvas.
+  const on = st.cleanupOn || 'original';
+  const device = on === 'original' ? (gpuBuiltinAvailable() ? 'gpu' : 'cpu') : on;
+  const cg = cleanup && on === 'webgpu' && (gpu || !ai) ? await gpuCleanupEngine() : null;
+  const M = getMainUpscaler(), P = cleanup && M.tunePreset(M.PRESETS[st.preset] || M.PRESETS.balanced, cleanup.tuning);
+  const pic = { iw: size.iw, ih: size.ih, W: size.iw, H: size.ih, x: 0, y: 0 };     // the picture only
+  const quiet = () => {};
+  const chain = {
+    // The frame canvas lives on the GPU only for the AI on WebGPU; the built-in
+    // engine always gets the CPU-drawn frame, so every mode starts from the
+    // same pixels (the browser converts video colours slightly differently
+    // when drawing on the GPU).
+    gpu, gpuInput: !!gpu, direct: direct && (cg ? true : !!gpu && !cleanup),
+    backend: !ai ? '' : gpu ? 'WebGPU' : 'WebGL',
+    cleanBackend: !cleanup ? '' : cg ? 'WebGPU' : on === 'original' ? (device === 'gpu' ? 'GPU' : 'CPU') : 'WebGL',
+    async run(canvas, isCancelled) {
+      if (cg) {
+        let src;
+        if (gpu) { gpu.eng.run(gpu.model, canvas, w, h, pic); src = gpu.eng.result(); }
+        else src = cg.upload(canvas, w, h);
+        const r = await cg.cleanupTex(src, gpu ? size.iw : w, gpu ? size.ih : h, cleanup, P, M.LANCZOS2, isCancelled);
+        if (chain.direct) { cg.ai.present(r.tex, size); return null; }
+        return cg.read(r.tex, size.iw, size.ih);
+      }
+      let px;
+      if (gpu) {
+        if (chain.direct) { gpu.eng.run(gpu.model, canvas, w, h, size); return null; }
+        gpu.eng.run(gpu.model, canvas, w, h, pic);
+        px = await gpu.eng.read(pic);
+      } else {
+        const rgba = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+        if (!ai) return builtinJob(rgba, w, h, cleanup, quiet, device);
+        px = await aiRun(st.engine, rgba, w, h, size.iw, size.ih, null, isCancelled, { denoise: st.denoise });
+      }
+      return cleanup ? builtinJob(px, size.iw, size.ih, cleanup, quiet, device) : px;
+    },
+  };
+  return chain;
+}
+
+// settings: { engine ('builtin' or an AI model), denoise, preset ('none' = AI
+// as-is), flatness, lines, extras, res (1080 | 720), mode, bitrate (bit/s) };
+// range: { start, end } µs. onProgress(done, total). Resolves with sink.close()'s result.
+async function videoUpscale(src, settings, range, sink, onProgress, isCancelled) {
+  const { file, info } = src, v = info.video;
+  const w = Math.round(v.width), h = Math.round(v.height);
+  const size = videoTargetSize(v.width, v.height, settings.mode, settings.res);
+  if (!size) throw new Error('This video is already ' + settings.res + 'p or larger.');
+  const total = v.samples.filter(s => s.pts >= range.start && s.pts < range.end).length || 1;
+  const config = await videoEncoderConfig(size.W, size.H, v.fps, settings.bitrate);
+  const scale = v.scale >= 600 ? v.scale : 90000;
+  const A = info.audio;
+  const mux = mp4Muxer(sink, { width: size.W, height: size.H, scale, audio: A && { stsd: A.stsd, scale: A.scale } });
+  let encError = null, wake = null, lastOutput = performance.now();
+  const poke = () => { if (wake) { const f = wake; wake = null; f(); } };
+  // An encoder that holds frames without ever returning any would otherwise
+  // leave the job waiting forever.
+  const STALL_MS = 30000, stalled = () => new Error('The video encoder stopped responding. Please try again or use another browser.');
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => {
+      lastOutput = performance.now();
+      if (meta && meta.decoderConfig) mux.setConfig(meta.decoderConfig);
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      mux.addVideo(data, chunk.timestamp, chunk.type === 'key');
+    },
+    error: e => { encError = e; poke(); },
+  });
+  encoder.ondequeue = poke;
+  encoder.configure(config);
+  // Each frame is drawn into a 2D canvas first (kept on the GPU when nothing
+  // reads its pixels back; copying a VideoFrame into WebGPU directly converts
+  // its BT.709 transfer curve and lifts the mid-tones, unlike players). With
+  // AI on WebGPU and no cleanup the result goes straight from the engine's
+  // canvas to the encoder; otherwise it is put into a 2D canvas.
+  const chain = await videoChain(settings, w, h, size, true);
+  const inCanvas = new OffscreenCanvas(w, h), inCtx = inCanvas.getContext('2d', { willReadFrequently: !chain.gpuInput });
+  const outCanvas = chain.direct ? (await gpuCompact()).canvas : new OffscreenCanvas(size.W, size.H);
+  const out = chain.direct ? null : outCanvas.getContext('2d');
+  if (out) { out.fillStyle = '#000'; out.fillRect(0, 0, size.W, size.H); }
+  let origin = null, nextKey = 0, lastDur = 0, done = 0, ai = 0;
+  // Audio up to `until` (µs, clip time), never past the end of the range.
+  async function copyAudio(until) {
+    if (!A) return;
+    while (ai < A.samples.length) {
+      const s = A.samples[ai];
+      if (s.pts + s.durUs <= origin) { ai++; continue; }          // ends before the clip starts
+      if (s.pts - origin >= until || s.pts >= range.end) return;
+      mux.addAudio(new Uint8Array(await file.slice(s.offset, s.offset + s.size).arrayBuffer()), s.dur, s.pts - origin);
+      ai++;
+    }
+  }
+  const before = aiState.batching;
+  aiState.batching = true;                                       // keep GPU textures between frames
+  try {
+    for await (const frame of mp4DecodeFrames(file, v, range.start, range.end, isCancelled)) {
+      let ts, dur;
+      try { ts = frame.timestamp; dur = frame.duration || 0; inCtx.drawImage(frame, 0, 0, w, h); }
+      finally { frame.close(); }
+      if (dur) lastDur = dur;
+      if (origin === null) origin = ts;
+      const px = await chain.run(inCanvas, isCancelled);
+      if (px) out.putImageData(new ImageData(new Uint8ClampedArray(px.buffer, px.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), size.x, size.y);
+      while (encoder.encodeQueueSize > 2 && !encError) {
+        if (performance.now() - lastOutput > STALL_MS) throw stalled();
+        await new Promise(r => { wake = r; setTimeout(r, 30); });
+      }
+      if (encError) throw encError;
+      const t = ts - origin, keyFrame = t >= nextKey;
+      if (keyFrame) nextKey = t + 2e6;                            // a keyframe every 2 s, for seeking
+      const vf = new VideoFrame(outCanvas, { timestamp: t, duration: dur || undefined });
+      try { encoder.encode(vf, { keyFrame }); } finally { vf.close(); }
+      await copyAudio(t + 5e5);
+      await mux.flush();
+      onProgress(++done, total);
+    }
+    if (origin === null) throw new Error('No frames in that part of the video.');
+    let flushed = false;
+    await Promise.race([encoder.flush().finally(() => { flushed = true; }), new Promise((_, reject) => {
+      const check = () => { if (flushed) return; if (performance.now() - lastOutput > STALL_MS) reject(stalled()); else setTimeout(check, 1000); };
+      check();
+    })]);
+    if (encError) throw encError;
+    await copyAudio(Infinity);
+    return await mux.finish(lastDur);
+  } catch (err) {
+    await sink.abort();
+    if (isCancelled && isCancelled()) throw new CancelledError('Cancelled');
+    throw err;
+  } finally {
+    aiState.batching = before;
+    if (encoder.state !== 'closed') encoder.close();
+  }
+}
+
+// ── VIDEO: DIALOG ─────────────────────────────────────────────────────────────
+// 🎬 Video: pick an MP4, compare single frames before/after, render a 5 s
+// clip to check for flicker, then convert the whole file. Videos are not
+// added to the gallery or its storage.
+const videoDialog = document.getElementById('video-dialog');
+const vEls = Object.fromEntries(['info', 'engines', 'denoise-row', 'denoise', 'denoise-out', 'models-hint', 'dl', 'out', 'time', 'time-out',
+  'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close', 'rates', 'fit-label', 'box-label',
+  'presets', 'preset-none', 'tuning', 'flatness', 'flatness-out', 'lines', 'lines-out', 'extras', 'x-lines', 'x-fills', 'x-edges', 'x-aa',
+  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text',
+  'queue', 'add', 'clear', 'qsum', 'stop', 'cancel']
+  .map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('video-' + k)]));
+const vid = { file: null, info: null, frame: null, after: null, afterKey: '', ms: {}, busy: false, dirty: false, timer: null, job: null, clipUrl: null };
+
+function videoClock(sec) {
+  sec = Math.max(0, sec);
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = Math.floor(sec % 60);
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
+}
+
+function videoSettings() {
+  const pick = name => (videoDialog.querySelector('input[name=' + name + ']:checked') || {}).value;
+  const res = pick('vres') === 'orig' ? 'orig' : +pick('vres') || 1080, engine = pick('vengine') || null;
+  let preset = pick('vpreset') || 'none';
+  if (engine === 'builtin' && preset === 'none') preset = 'lumity';     // the built-in engine always cleans up
+  return { engine, denoise: +vEls.denoise.value, preset, flatness: +vEls.flatness.value, lines: +vEls.lines.value,
+    extras: { lines: vEls.xLines.checked, fills: vEls.xFills.checked, edges: vEls.xEdges.checked, aa: vEls.xAa.checked ? +vEls.aa.value : 0 },
+    cleanupOn: pick('von') || 'original',
+    res, mode: pick('vmode') || 'fit', bitrate: (+pick('vbitrate') || VIDEO_RES[res].rates[1]) * 1e6 };
+}
+
+// Everything that changes the picture (not the time or file settings).
+function videoChainKey(st, size) {
+  return JSON.stringify([st.engine, st.engine === 'generalv3' ? st.denoise : 0, st.preset,
+    st.preset === 'lumity' ? [st.flatness, st.lines] : 0, engineExtras(st), st.preset === 'none' ? '' : st.cleanupOn, size.iw, size.ih]);
+}
+// "AI · Fast on WebGPU → Lumity · flat fills on WebGPU"
+function videoDescribe(st, backend, cleanBackend) {
+  const name = st.engine === 'builtin' ? 'Built-in engine' : AI_MODELS.find(m => m.id === st.engine).title;
+  const x = engineExtras(st);
+  if (st.engine === 'builtin') return name + ' · ' + PRESET_NAMES[st.preset] + (x ? ' · ' + extrasNames(x) : '') + (cleanBackend ? ' on ' + cleanBackend : '');
+  return name + (backend ? ' on ' + backend : '') + (st.preset === 'none' ? '' : ' → ' +
+    PRESET_NAMES[st.preset] + (x ? ' · ' + extrasNames(x) : '') + (cleanBackend ? ' on ' + cleanBackend : ''));
+}
+function videoSize() {
+  const v = vid.info.video, st = videoSettings();
+  return videoTargetSize(v.width, v.height, st.mode, st.res);
+}
+
+// Bitrate chips and size tooltips for the chosen resolution; the same
+// position (low / middle / high) stays selected.
+function videoRefreshRes() {
+  const R = VIDEO_RES[videoSettings().res];
+  const boxes = [...vEls.rates.querySelectorAll('input')], at = Math.max(0, boxes.findIndex(b => b.checked));
+  vEls.rates.innerHTML = '';
+  R.rates.forEach((mbps, i) => {
+    const label = document.createElement('label');
+    label.innerHTML = '<input type="radio" name="vbitrate"><span></span>';
+    label.querySelector('input').value = mbps;
+    label.querySelector('input').checked = i === (boxes.length ? at : 1);
+    label.querySelector('span').textContent = mbps + ' Mbps';
+    vEls.rates.appendChild(label);
+  });
+  vEls.sizeRow.hidden = !R.W;                       // Fit / Letterbox don't apply at the own size
+  if (!R.W) return;
+  vEls.fitLabel.title = 'Fit inside ' + R.W + '×' + R.H + ' and keep the shape (4:3 becomes ' + R.H * 4 / 3 + '×' + R.H + ')';
+  vEls.boxLabel.title = 'Always ' + R.W + '×' + R.H + ', black bars where the shape differs';
+}
+
+// Model chips: downloaded models can be picked; the others get a Download button.
+function videoRefreshModels() {
+  const current = videoSettings().engine;
+  vEls.engines.innerHTML = ''; vEls.dl.innerHTML = '';
+  for (const m of AI_MODELS) {
+    const label = document.createElement('label');
+    label.title = m.detail;
+    label.innerHTML = '<input type="radio" name="vengine"><span></span>';
+    const input = label.querySelector('input');
+    input.value = m.id; input.disabled = !aiReady(m.id);
+    label.querySelector('span').textContent = m.title;
+    vEls.engines.appendChild(label);
+    if (aiState.stored.has(m.id) || aiState.gpuError) continue;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = '⬇ ' + m.title + ' · ' + formatBytes(m.bytes);
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      const tick = setInterval(() => { b.textContent = 'Downloading ' + m.title + '… ' + (aiState.progress[m.id] || 0) + '%'; }, 200);
+      try { await aiDownload(m.id); }
+      catch (err) { showToast('Download failed: ' + err.message); }
+      finally { clearInterval(tick); }
+      videoRefreshModels(); videoUpdate();
+    });
+    vEls.dl.appendChild(b);
+  }
+  const builtin = document.createElement('label');
+  builtin.title = 'No AI: the gallery’s own upscaler with the cleanup below. Needs no download.';
+  builtin.innerHTML = '<input type="radio" name="vengine" value="builtin"><span>🧰 Built-in</span>';
+  vEls.engines.appendChild(builtin);
+  const pick = [current, 'animevideov3', ...AI_MODELS.map(m => m.id), 'builtin'].find(id => id && (id === 'builtin' || aiReady(id)));
+  vEls.engines.querySelector('input[value="' + pick + '"]').checked = true;
+  vEls.modelsHint.textContent = (aiState.gpuError
+    ? 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). '
+    : AI_MODELS.some(m => aiReady(m.id)) ? 'AI · Fast is made for anime video and is the quickest AI. AI · Fast and Balanced run on WebGPU where the browser has it; Best and Anime+ use the slower WebGL engine. '
+    : 'Download an AI model for the best result — it runs on your GPU and is kept in this browser. ') +
+    'Built-in needs no AI model.';
+}
+
+// Texts and buttons for the current settings.
+function videoTexts() {
+  if (!vid.info) return;
+  const st = videoSettings(), v = vid.info.video, size = videoSize();
+  vEls.denoiseRow.hidden = st.engine !== 'generalv3';
+  vEls.denoiseOut.textContent = vEls.denoise.value;
+  // Cleanup: "Off" only after AI; Lumity has its sliders; extras need a preset.
+  const isBuiltin = st.engine === 'builtin';
+  vEls.presetNone.hidden = isBuiltin;
+  vEls.presets.querySelector('input[value="' + st.preset + '"]').checked = true;
+  vEls.tuning.hidden = st.preset !== 'lumity';
+  vEls.extras.classList.toggle('off', st.preset === 'none');
+  vEls.extras.querySelectorAll('input').forEach(i => { i.disabled = st.preset === 'none'; });
+  vEls.aaRow.hidden = !vEls.xAa.checked;
+  vEls.onRow.hidden = st.preset === 'none';
+  vEls.on.querySelector('input[value=webgpu]').disabled = !navigator.gpu;
+  vEls.on.querySelector('input[value=webgl]').disabled = !gpuBuiltinAvailable();
+  if (vEls.on.querySelector('input:checked').disabled) vEls.on.querySelector('input[value=original]').checked = true;
+  vEls.cleanupHint.textContent = st.preset === 'none'
+    ? 'Off: the AI result as-is. A cleanup preset runs the gallery’s picture engine on every frame after the AI.'
+    : 'Runs on every frame, which adds time (see the estimate below). Lumity, flat fills and line redraw decide per frame and can shimmer — check with ▶ Preview 5 s.';
+  const est = st.bitrate / 8 * vid.info.duration + vid.audioBytes;
+  vEls.out.textContent = !size ? 'This video is already ' + st.res + 'p or larger — nothing to upscale.'
+    : 'Output ' + size.W + '×' + size.H + (size.W !== size.iw || size.H !== size.ih ? ' (picture ' + size.iw + '×' + size.ih + ')' : '') +
+      ' · H.264 · about ' + formatBytes(est);
+  const ms = st.engine && size && vid.ms[videoChainKey(st, size)];
+  vEls.summary.textContent = !size ? '' : !st.engine ? 'Download an AI model above to preview and convert.'
+    : ms ? 'About ' + Math.round(ms) + ' ms per frame here, so the whole video takes ' + formatEta(v.samples.length * (ms + 10) / 1000) + '.'
+    : 'The time per frame is measured with the frame preview.';
+  vEls.clipBtn.disabled = !size || !st.engine || !!vid.job || vq.running;
+  queueRender();
+}
+function videoUpdate() { videoTexts(); videoSchedulePreview(200); }
+function videoSchedulePreview(delay) { clearTimeout(vid.timer); vid.timer = setTimeout(videoRenderPreview, delay); }
+
+// Preview canvas at output size: the upscaled frame, with the original
+// (stretched the way a player would show it) left of the split.
+function videoDraw() {
+  if (!vid.frame) return;
+  const src = vid.frame.canvas, size = videoSize(), c = vEls.canvas;
+  const W = size ? size.W : src.width, H = size ? size.H : src.height;
+  const x = size ? size.x : 0, y = size ? size.y : 0, iw = size ? size.iw : W, ih = size ? size.ih : H;
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  const split = vid.after ? +vEls.split.value / 100 : 1, sx = Math.round(W * split);
+  if (vid.after) ctx.drawImage(vid.after, x, y, iw, ih);
+  if (sx > 0) { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, sx, H); ctx.clip(); ctx.drawImage(src, x, y, iw, ih); ctx.restore(); }
+  if (vid.after && sx > 0 && sx < W) { ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fillRect(sx - 1, 0, 2, H); }
+}
+
+// One render at a time; a change while rendering re-runs once it finishes.
+async function videoRenderPreview() {
+  if (!vid.info || vid.job || vq.running || !videoDialog.classList.contains('open')) return;
+  if (vid.busy) { vid.dirty = true; return; }
+  vid.busy = true;
+  const file = vid.file, gone = () => vid.file !== file || !videoDialog.classList.contains('open');
+  try {
+    const t = Math.round(+vEls.time.value * 1e6);
+    if (!vid.frame || vid.frame.t !== t) {
+      vEls.status.textContent = 'Decoding frame…';
+      const f = await videoFrameAt(vid, t);
+      if (gone()) return;
+      vid.frame = { t, canvas: f.canvas, timestamp: f.timestamp };
+      vid.after = null; vid.afterKey = '';
+      videoDraw();
+    }
+    const st = videoSettings(), size = videoSize();
+    const where = 'Frame at ' + videoClock(vid.frame.timestamp / 1e6);
+    if (!st.engine || !size) { vEls.status.textContent = where; return; }
+    const ck = videoChainKey(st, size), key = ck + '|' + t;
+    if (vid.afterKey !== key) {
+      vEls.spinner.hidden = false;
+      vEls.status.textContent = where + ' · upscaling…';
+      const { canvas } = vid.frame, w = canvas.width, h = canvas.height;
+      const chain = await videoChain(st, w, h, size, false);
+      const t0 = performance.now();
+      const up = await chain.run(canvas, gone);
+      // The first run also sends the model to the GPU, so the fastest is kept.
+      vid.ms[ck] = Math.min(vid.ms[ck] || Infinity, performance.now() - t0);
+      vid.backend = chain.backend; vid.cleanBackend = chain.cleanBackend;
+      const c = new OffscreenCanvas(size.iw, size.ih);
+      c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(up.buffer, up.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), 0, 0);
+      vid.after = c; vid.afterKey = key;
+    }
+    vEls.status.textContent = where + ' · ' + videoDescribe(st, vid.backend, vid.cleanBackend);
+    videoDraw(); videoTexts();
+  } catch (err) {
+    if (!gone()) { console.error('Video preview failed', err); vEls.status.textContent = 'Preview failed: ' + (err.message || err); }
+  } finally {
+    vid.busy = false; vEls.spinner.hidden = true;
+    if (vid.dirty) { vid.dirty = false; videoSchedulePreview(0); }
+  }
+}
+
+// The selected queue item drives the frame preview and the 5 s clip.
+async function selectVideo(item) {
+  if (!item) return;
+  vq.sel = item.id;
+  queueRender();
+  if (!item.file && item.handle) {
+    try {
+      if ((await item.handle.queryPermission({ mode: 'read' })) !== 'granted') await item.handle.requestPermission({ mode: 'read' });
+      item.file = await item.handle.getFile();
+      if (item.state === 'needs-file') { item.state = 'waiting'; vqSave(item); queueRender(); }
+    } catch { showToast('Allow access to ' + item.name + ' to preview it.'); return; }
+  }
+  if (!item.file || item.state === 'failed' && !item.demux) {
+    Object.assign(vid, { file: null, info: null, frame: null, after: null, afterKey: '' });
+    vEls.info.textContent = item.file ? '' : 'Add ' + item.name + ' again to preview it.';
+    return;
+  }
+  let info = item.demux;
+  if (!info) {
+    try { info = item.demux = await mp4Demux(item.file); }
+    catch (err) { showToast(err.message || String(err)); return; }
+  }
+  if (vq.sel !== item.id) return;
+  Object.assign(vid, { file: item.file, info, frame: null, after: null, afterKey: '', ms: {} });
+  vid.audioBytes = info.audio ? info.audio.samples.reduce((n, s) => n + s.size, 0) : 0;
+  videoClearClip();
+  const v = info.video;
+  vEls.info.textContent = [item.name, Math.round(v.width) + '×' + Math.round(v.height), v.fps.toFixed(2).replace(/\.?0+$/, '') + ' fps',
+    videoClock(info.duration), v.format.startsWith('avc') ? 'H.264' : v.format === 'av01' ? 'AV1' : 'HEVC', info.audio ? 'audio copied as-is' : 'no audio', formatBytes(item.file.size)].join(' · ');
+  vEls.origText.textContent = 'Original (' + Math.round(v.height) + 'p)';
+  vEls.time.max = Math.max(0, info.duration - 1 / v.fps);
+  vEls.time.value = info.duration * 0.1;                         // past the usual black intro frames
+  vEls.timeOut.textContent = videoClock(+vEls.time.value);
+  vEls.canvas.width = Math.round(v.width); vEls.canvas.height = Math.round(v.height);
+  vEls.canvas.getContext('2d').clearRect(0, 0, vEls.canvas.width, vEls.canvas.height);
+  vEls.status.textContent = '';
+  videoUpdate();
+}
+
+async function openVideoDialog() {
+  videoDialog.classList.add('open');
+  await aiRefreshUi();
+  videoRefreshModels();
+  if (vq.restoredSettings) { videoApplySettings(vq.restoredSettings); vq.restoredSettings = null; }
+  videoUpdate();
+  queueRender();
+}
+
+function videoClearClip() {
+  vEls.clip.pause(); vEls.clip.removeAttribute('src'); vEls.clip.hidden = true;
+  if (vid.clipUrl) { URL.revokeObjectURL(vid.clipUrl); vid.clipUrl = null; }
+}
+
+// Closing doesn't stop a running queue; the 🎬 button shows its progress.
+function closeVideo() {
+  if (vid.job) return;
+  videoDialog.classList.remove('open');
+  clearTimeout(vid.timer);
+  videoClearClip();
+  Object.assign(vid, { frame: null, after: null, afterKey: '' });
+}
+
+// 5 s from the preview time of the selected video, played in the dialog.
+async function videoRun() {
+  const st = videoSettings(), size = vid.info && videoSize();
+  if (!st.engine || !size || vid.job || vq.running) return;
+  const start = Math.round(+vEls.time.value * 1e6), range = { start, end: start + 5e6 };
+  let cancelled = false;
+  const sink = blobSink();
+  vid.job = { cancel() { cancelled = true; } };
+  videoTexts();
+  showProgress('Rendering a 5 s preview…', 0, () => { cancelled = true; setProgress('Cancelling…', null); setProgressEta(null); });
+  setProgress('Starting…', null);
+  try {
+    const result = await videoUpscale(vid, st, range, sink, (done, total) => { if (!cancelled) setProgress('Frame ' + done + ' of ' + total, done, total); }, () => cancelled);
+    videoClearClip();
+    vid.clipUrl = URL.createObjectURL(result);
+    vEls.clip.src = vid.clipUrl; vEls.clip.hidden = false;
+    vEls.clip.play().catch(() => {});
+  } catch (err) {
+    if (cancelled || err instanceof CancelledError) showToast('Cancelled');
+    else { console.error('Video preview failed', err); showToast('Preview failed: ' + (err.message || err)); }
+  } finally {
+    vid.job = null;
+    hideProgress();
+    videoTexts();
+  }
+}
+
+// Puts saved queue settings back into the dialog controls.
+function videoApplySettings(st) {
+  const set = (name, value) => { const el = videoDialog.querySelector('input[name=' + name + '][value="' + value + '"]'); if (el && !el.disabled) el.checked = true; };
+  set('vengine', st.engine); set('vpreset', st.preset); set('von', st.cleanupOn); set('vres', st.res); set('vmode', st.mode);
+  vEls.denoise.value = st.denoise; vEls.flatness.value = st.flatness; vEls.lines.value = st.lines;
+  const x = st.extras || {};
+  vEls.xLines.checked = !!x.lines; vEls.xFills.checked = !!x.fills; vEls.xEdges.checked = !!x.edges; vEls.xAa.checked = !!x.aa;
+  if (x.aa) vEls.aa.value = x.aa;
+  videoRefreshRes();
+  set('vbitrate', st.bitrate / 1e6);
+}
+
+// ── VIDEO: QUEUE ──────────────────────────────────────────────────────────────
+// Several videos converted one after another with the same settings, each
+// with its state: waiting → converting → done / skipped / failed, or
+// needs-file (restored without access to the file). Results stream into one
+// output folder (Chrome/Edge: picked once, remembered) or are downloaded.
+// The queue is kept in its own IndexedDB database with the files' handles
+// where the browser gives them, so it can continue after a reload; a file
+// that was being converted then starts again from the beginning.
+const vq = { items: [], sel: null, running: false, stopAfter: false, cancelled: false, job: null, dir: null, settings: null, restored: false, restoredSettings: null, lock: null };
+const VQ_DB = 'lumity-video-queue';
+function vqDb() {
+  return vqDb.p || (vqDb.p = new Promise((resolve, reject) => {
+    const r = indexedDB.open(VQ_DB, 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore('items', { keyPath: 'id' }); r.result.createObjectStore('meta'); };
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  }));
+}
+async function vqTx(store, mode, fn) {
+  try {
+    const db = await vqDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(store, mode); let result;
+      const req = fn(tx.objectStore(store));
+      if (req) req.onsuccess = () => { result = req.result; };
+      tx.oncomplete = () => resolve(result);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) { console.warn('Video queue storage', err); return null; }
+}
+const VQ_FIELDS = ['id', 'order', 'name', 'size', 'lastModified', 'handle', 'info', 'state', 'done', 'total', 'outName', 'outBytes', 'note', 'error', 'elapsedMs', 'finishedAt'];
+const vqSave = it => vqTx('items', 'readwrite', st => st.put(Object.fromEntries(VQ_FIELDS.map(k => [k, it[k] ?? null]))));
+const vqSaveMeta = () => vqTx('meta', 'readwrite', st => st.put({ settings: vq.settings, dir: vq.dir }, 'queue'));
+const vqKey = x => x.name + '|' + x.size + '|' + x.lastModified;
+
+async function queueLoad() {
+  const [items, meta] = await Promise.all([vqTx('items', 'readonly', st => st.getAll()), vqTx('meta', 'readonly', st => st.get('queue'))]);
+  if (!items || !items.length) return;
+  vq.items = items.sort((a, b) => a.order - b.order);
+  for (const it of vq.items) {
+    if (it.state === 'converting') { it.state = 'waiting'; it.done = 0; }        // interrupted: starts again
+    if (it.state === 'waiting' && !it.handle) it.state = 'needs-file';
+  }
+  vq.restored = vq.items.some(it => it.state === 'waiting' || it.state === 'needs-file');
+  if (meta) { vq.settings = meta.settings; vq.dir = meta.dir || null; vq.restoredSettings = meta.settings; }
+  queueRender();
+}
+
+// files: [{ file, handle? }]. Checks each video once; unsupported ones are
+// listed as failed with the reason. Re-added files reconnect to their item.
+async function queueAdd(entries) {
+  let first = null;
+  for (const { file, handle } of entries) {
+    const known = vq.items.find(it => vqKey(it) === vqKey(file));
+    if (known) {
+      if (!known.file) { known.file = file; known.handle = handle || known.handle; if (known.state === 'needs-file') known.state = 'waiting'; vqSave(known); }
+      first = first || known;
+      continue;
+    }
+    const it = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), order: Date.now() + vq.items.length,
+      name: file.name, size: file.size, lastModified: file.lastModified, handle: handle || null, file, state: 'waiting', done: 0, total: 0 };
+    try {
+      const info = it.demux = await mp4Demux(file), v = info.video;
+      const support = await VideoDecoder.isConfigSupported(v.config).catch(() => ({ supported: false }));
+      if (!support.supported) throw new Error('This browser cannot decode this video (' + v.codec + ').');
+      it.info = { w: Math.round(v.width), h: Math.round(v.height), fps: v.fps, duration: info.duration, frames: v.samples.length,
+        codec: v.format.startsWith('avc') ? 'H.264' : v.format === 'av01' ? 'AV1' : 'HEVC' };
+      it.total = v.samples.length;
+    } catch (err) { it.state = 'failed'; it.error = err.message || String(err); }
+    vq.items.push(it);
+    vqSave(it);
+    first = first || it;
+  }
+  queueRender();
+  if (first && (!vid.info || !vq.items.some(it => it.id === vq.sel))) selectVideo(first);
+}
+
+function queueOutName(name, st, size) {
+  return stripExt(name) + (st.res === 'orig' ? '.cleaned-' + size.ih + 'p.mp4' : '.upscaled-' + st.res + 'p.mp4');
+}
+
+// Remaining work in seconds: frames left at the current (or measured) rate.
+function queueEta() {
+  const cur = vq.items.find(it => it.state === 'converting');
+  let fps = cur && cur.fps;
+  if (!fps && vid.info) {
+    const st = videoSettings(), size = videoSize(), ms = size && vid.ms[videoChainKey(st, size)];
+    if (ms) fps = 1000 / (ms + 10);
+  }
+  if (!fps) return null;
+  const frames = vq.items.reduce((n, it) => n + (it.state === 'waiting' || it.state === 'needs-file' ? it.total || 0 : it.state === 'converting' ? (it.total || 0) - (it.done || 0) : 0), 0);
+  return frames / fps;
+}
+
+const VQ_LABEL = { waiting: 'Waiting', converting: 'Converting', done: 'Done', skipped: 'Skipped', failed: 'Failed', 'needs-file': 'Needs file' };
+function queueRender() {
+  const box = vEls.queue;
+  const rows = new Map([...box.children].map(r => [r.dataset.id, r]));
+  vq.items.forEach((it, k) => {
+    let row = rows.get(it.id);
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'vq-row'; row.dataset.id = it.id;
+      row.innerHTML = '<div class="vq-name"><b></b> <small></small></div><span class="vq-state"></span>' +
+        '<span class="vq-actions"><button type="button" data-act="retry" title="Convert again">↻</button><button type="button" data-act="remove" title="Remove from the queue">✕</button></span>' +
+        '<div class="vq-bar"><i></i></div><div class="vq-detail"></div>';
+      row.querySelector('b').textContent = it.name;
+    }
+    if (box.children[k] !== row) box.insertBefore(row, box.children[k] || null);
+    rows.delete(it.id);
+    const I = it.info;
+    row.querySelector('small').textContent = I ? I.w + '×' + I.h + ' · ' + videoClock(I.duration) + ' · ' + I.codec : '';
+    const chip = row.querySelector('.vq-state');
+    chip.className = 'vq-state ' + it.state; chip.textContent = VQ_LABEL[it.state] || it.state;
+    row.classList.toggle('sel', it.id === vq.sel);
+    const pct = it.state === 'done' ? 100 : it.total ? Math.min(100, (it.done || 0) / it.total * 100) : 0;
+    row.querySelector('.vq-bar i').style.width = pct + '%';
+    row.querySelector('.vq-detail').textContent =
+      it.state === 'converting' ? 'Frame ' + (it.done || 0) + ' of ' + it.total + (it.fps ? ' · ' + it.fps.toFixed(1) + ' frames/s · ' + formatEta((it.total - it.done) / it.fps) + ' left' : ' · starting…')
+      : it.state === 'done' ? '✓ ' + (it.outName || '') + (it.outBytes ? ' · ' + formatBytes(it.outBytes) : '') + (it.elapsedMs ? ' · took ' + formatEta(it.elapsedMs / 1000).replace('about ', '') : '')
+      : it.state === 'skipped' ? 'Skipped: ' + (it.note || '')
+      : it.state === 'failed' ? it.error || 'Failed'
+      : it.state === 'needs-file' ? (it.handle ? 'Click to allow access to this file again.' : 'Add this file again to continue it.')
+      : 'Waiting';
+    row.querySelector('[data-act=retry]').hidden = it.state !== 'failed';
+    row.querySelector('[data-act=remove]').disabled = it.state === 'converting';
+  });
+  rows.forEach(r => r.remove());
+  // Summary, buttons and the 🎬 button's progress
+  const count = st => vq.items.filter(it => it.state === st).length;
+  const waiting = count('waiting') + count('needs-file'), done = count('done'), conv = vq.items.find(it => it.state === 'converting');
+  const eta = waiting || conv ? queueEta() : null;
+  vEls.qsum.textContent = !vq.items.length ? '' : [waiting && waiting + ' waiting', conv && '1 converting', done && done + ' done',
+    count('skipped') && count('skipped') + ' skipped', count('failed') && count('failed') + ' failed'].filter(Boolean).join(' · ') +
+    (eta ? ' · ' + formatEta(eta) + ' left' : '') +
+    (vq.dir ? ' · saving to “' + vq.dir.name + '”' : window.showDirectoryPicker ? '' : ' · finished videos are downloaded');
+  vEls.go.hidden = vq.running; vEls.stop.hidden = !vq.running; vEls.cancel.hidden = !vq.running;
+  vEls.go.textContent = (vq.restored ? '▶ Continue' : '🎬 Convert all') + (waiting ? ' (' + waiting + ')' : '');
+  vEls.go.disabled = !waiting || !!vid.job;
+  vEls.stop.disabled = vq.stopAfter;
+  vEls.clear.disabled = vq.running || !vq.items.some(it => ['done', 'skipped', 'failed'].includes(it.state));
+  const lbl = document.querySelector('#video-btn .lbl');
+  if (lbl) {
+    const total = vq.items.filter(it => it.state !== 'failed' && it.state !== 'skipped').length;
+    lbl.textContent = vq.running && conv ? 'Video ' + (done + 1) + '/' + total + ' · ' + Math.floor((conv.done || 0) / (conv.total || 1) * 100) + '%' : 'Video';
+  }
+  // Settings are fixed while the queue runs.
+  for (const fs of videoDialog.querySelectorAll('#video-card > fieldset:not(#video-queue-fs)')) fs.disabled = vq.running;
+}
+
+async function queueWakeLock(on) {
+  try {
+    if (on && navigator.wakeLock && document.visibilityState === 'visible' && !vq.lock) vq.lock = await navigator.wakeLock.request('screen');
+    if (!on && vq.lock) { await vq.lock.release(); vq.lock = null; }
+  } catch { /* not allowed now: the Mac may sleep */ }
+}
+document.addEventListener('visibilitychange', () => { if (vq.running) { vq.lock = null; queueWakeLock(true); } });
+
+// Runs the waiting items with the dialog's settings. opts.dir: an output
+// folder to use without asking (tests); otherwise the remembered folder, a
+// folder picker (Chrome/Edge), or downloads.
+async function queueRun(opts = {}) {
+  if (vq.running) return;
+  const st = videoSettings();
+  let dir = opts.dir || vq.dir;
+  if (!opts.dir && window.showDirectoryPicker) {
+    try {
+      if (dir && (await dir.queryPermission({ mode: 'readwrite' })) !== 'granted' && (await dir.requestPermission({ mode: 'readwrite' })) !== 'granted') dir = null;
+    } catch { dir = null; }
+    if (!dir) {
+      try { dir = await window.showDirectoryPicker({ id: 'lumity-video-out', mode: 'readwrite' }); }
+      catch (err) { if (err.name === 'AbortError') return; console.warn('Folder picker unavailable', err); dir = null; }
+    }
+  }
+  // Files restored from an earlier visit need their access allowed again.
+  for (const it of vq.items) {
+    if ((it.state !== 'waiting' && it.state !== 'needs-file') || it.file) continue;
+    if (!it.handle) { it.state = 'needs-file'; continue; }
+    try {
+      if ((await it.handle.queryPermission({ mode: 'read' })) !== 'granted' && (await it.handle.requestPermission({ mode: 'read' })) !== 'granted') throw 0;
+      it.file = await it.handle.getFile();
+      it.state = 'waiting';
+    } catch { it.state = 'needs-file'; }
+  }
+  if (!dir) {
+    const big = vq.items.filter(it => it.state === 'waiting').map(it => st.bitrate / 8 * ((it.info && it.info.duration) || 0)).filter(b => b > 1e9);
+    if (big.length && !confirm('This browser can only save each video once it is finished, so a whole file (up to about ' +
+      formatBytes(Math.max(...big)) + ') is kept in memory at a time. Continue?')) return;
+  }
+  Object.assign(vq, { running: true, stopAfter: false, cancelled: false, restored: false, settings: st, dir });
+  vqSaveMeta();
+  queueWakeLock(true);
+  queueRender();
+  let finished = 0;
+  try {
+    for (;;) {
+      const it = vq.items.find(x => x.state === 'waiting' && x.file);
+      if (!it || vq.stopAfter || vq.cancelled) break;
+      await queueOne(it, st, dir);
+      if (it.state === 'done') finished++;
+    }
+  } finally {
+    vq.running = false; vq.job = null;
+    queueWakeLock(false);
+    queueRender(); videoTexts();
+    const left = vq.items.filter(it => it.state === 'waiting' || it.state === 'needs-file').length;
+    showToast('🎬 ' + (vq.cancelled ? 'Cancelled' : vq.stopAfter ? 'Stopped' : 'Queue finished') + ' · ' + finished + ' converted' + (left ? ' · ' + left + ' left' : ''));
+  }
+}
+
+async function queueOne(it, st, dir) {
+  let info = it.demux;
+  try { if (!info) info = it.demux = await mp4Demux(it.file); }
+  catch (err) { Object.assign(it, { state: 'failed', error: err.message || String(err) }); vqSave(it); queueRender(); return; }
+  const v = info.video, size = videoTargetSize(v.width, v.height, st.mode, st.res);
+  if (!size) { Object.assign(it, { state: 'skipped', note: 'already ' + st.res + 'p or larger' }); vqSave(it); queueRender(); return; }
+  const name = it.outName = queueOutName(it.name, st, size);
+  if (dir) {
+    try {
+      const existing = await (await dir.getFileHandle(name)).getFile();
+      if (existing.size > 0) { Object.assign(it, { state: 'skipped', note: '“' + name + '” is already in the folder', outBytes: existing.size }); vqSave(it); queueRender(); return; }
+    } catch { /* not there yet */ }
+  }
+  Object.assign(it, { state: 'converting', done: 0, total: v.samples.length, fps: 0, error: null, note: null });
+  vqSave(it); queueRender();
+  let sink = null, fh = null, cancelled = false, lastSave = 0, lastDraw = 0;
+  vq.job = { cancel() { cancelled = true; } };
+  const t0 = performance.now();
+  try {
+    if (dir) { fh = await dir.getFileHandle(name, { create: true }); sink = await fileSink(fh); }
+    else sink = blobSink();
+    const result = await videoUpscale({ file: it.file, info }, st, { start: 0, end: Infinity }, sink, (done, total) => {
+      const now = performance.now();
+      it.done = done; it.total = total; it.fps = done / ((now - t0) / 1000);
+      if (now - lastDraw > 500) { lastDraw = now; queueRender(); }
+      if (now - lastSave > 5000) { lastSave = now; vqSave(it); }
+    }, () => cancelled || vq.cancelled);
+    if (!dir && result) downloadBlob(result, name);
+    Object.assign(it, { state: 'done', outBytes: dir ? (await fh.getFile()).size : result.size, elapsedMs: performance.now() - t0, finishedAt: Date.now() });
+  } catch (err) {
+    if (sink) await sink.abort();
+    // getFileHandle(create) leaves an empty file; don't let it count as done later.
+    if (fh) { try { if ((await fh.getFile()).size === 0) await dir.removeEntry(name); } catch { /* gone already */ } }
+    if (cancelled || vq.cancelled || err instanceof CancelledError) Object.assign(it, { state: 'waiting', done: 0 });
+    else { console.error('Video ' + it.name + ' failed', err); Object.assign(it, { state: 'failed', error: err.message || String(err) }); }
+  } finally {
+    vq.job = null;
+    vqSave(it); queueRender();
+  }
+}
+
+async function queuePick() {
+  if (window.showOpenFilePicker) {
+    try {
+      const handles = await window.showOpenFilePicker({ multiple: true, id: 'lumity-video-in', types: [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4', '.m4v'] } }] });
+      const entries = [];
+      for (const handle of handles) entries.push({ file: await handle.getFile(), handle });
+      return entries;
+    } catch (err) { if (err.name === 'AbortError') return []; console.warn('File picker unavailable', err); }
+  }
+  document.getElementById('video-file-input').click();          // results arrive via its change event
+  return null;
+}
+
+document.getElementById('video-btn').addEventListener('click', async () => {
+  if (typeof VideoDecoder === 'undefined' || typeof VideoEncoder === 'undefined' || typeof OffscreenCanvas === 'undefined') {
+    showToast('Video upscaling needs a browser with WebCodecs (Chrome, Edge or Safari 17+).');
+    return;
+  }
+  if (vq.items.length) { openVideoDialog(); return; }
+  const entries = await queuePick();
+  if (entries && entries.length) { await openVideoDialog(); queueAdd(entries); }
+});
+document.getElementById('video-file-input').addEventListener('change', async e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (!files.length) return;
+  if (!videoDialog.classList.contains('open')) await openVideoDialog();
+  queueAdd(files.map(file => ({ file })));
+});
+vEls.add.addEventListener('click', async () => { const entries = await queuePick(); if (entries && entries.length) queueAdd(entries); });
+vEls.clear.addEventListener('click', () => {
+  for (const it of vq.items.filter(x => ['done', 'skipped', 'failed'].includes(x.state))) vqTx('items', 'readwrite', st => st.delete(it.id));
+  vq.items = vq.items.filter(x => !['done', 'skipped', 'failed'].includes(x.state));
+  queueRender();
+});
+vEls.queue.addEventListener('click', e => {
+  const row = e.target.closest('.vq-row'), it = row && vq.items.find(x => x.id === row.dataset.id);
+  if (!it) return;
+  const act = e.target.closest('button') && e.target.closest('button').dataset.act;
+  if (act === 'remove') {
+    vq.items = vq.items.filter(x => x !== it);
+    vqTx('items', 'readwrite', st => st.delete(it.id));
+    if (vq.sel === it.id) { vq.sel = null; Object.assign(vid, { file: null, info: null, frame: null, after: null }); vEls.info.textContent = ''; }
+    queueRender();
+  } else if (act === 'retry') {
+    Object.assign(it, { state: it.file || it.handle ? 'waiting' : 'needs-file', done: 0, error: null, note: null });
+    vqSave(it); queueRender();
+  } else selectVideo(it);
+});
+vEls.go.addEventListener('click', () => queueRun());
+vEls.stop.addEventListener('click', () => { vq.stopAfter = true; queueRender(); });
+vEls.cancel.addEventListener('click', () => { vq.cancelled = true; if (vq.job) vq.job.cancel(); queueRender(); });
+vEls.engines.addEventListener('change', videoUpdate);
+vEls.presets.addEventListener('change', videoUpdate);
+vEls.on.addEventListener('change', videoUpdate);
+vEls.extras.addEventListener('change', videoUpdate);
+for (const k of ['flatness', 'lines', 'aa']) vEls[k].addEventListener('input', () => { vEls[k + 'Out'].textContent = vEls[k].value; videoSchedulePreview(300); });
+vEls.denoise.addEventListener('input', () => { vEls.denoiseOut.textContent = vEls.denoise.value; videoSchedulePreview(300); });
+videoDialog.querySelectorAll('input[name=vmode]').forEach(r => r.addEventListener('change', () => { videoTexts(); videoDraw(); }));
+vEls.rates.addEventListener('change', videoTexts);
+videoDialog.querySelectorAll('input[name=vres]').forEach(r => r.addEventListener('change', () => { videoRefreshRes(); videoUpdate(); }));
+videoRefreshRes();
+vEls.time.addEventListener('input', () => { vEls.timeOut.textContent = videoClock(+vEls.time.value); videoSchedulePreview(350); });
+vEls.split.addEventListener('input', () => { vEls.splitOut.textContent = vEls.split.value + '%'; videoDraw(); });
+vEls.zoom.addEventListener('change', () => vEls.wrap.classList.toggle('zoom', vEls.zoom.checked));
+vEls.clipBtn.addEventListener('click', () => videoRun());
+vEls.close.addEventListener('click', closeVideo);
+videoDialog.addEventListener('click', e => { if (e.target === videoDialog) closeVideo(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && videoDialog.classList.contains('open')) closeVideo(); });
+queueLoad();
+window.addEventListener('beforeunload', e => { if (vq.running) { e.preventDefault(); e.returnValue = ''; } });
 
 // ── FAVOURITES ────────────────────────────────────────────────────────────────
 // A favourite is a flag on the picture: stored with it in IndexedDB and in
