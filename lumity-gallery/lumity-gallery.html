@@ -3794,7 +3794,7 @@ async function enhanceOne(original, settings, onProgress) {
       auto: !!settings.auto, engine: settings.engine || 'builtin',
       ...(settings.engine === 'generalv3' ? { denoise: settings.denoise } : {}),
       ...(settings.engine === 'cugan' ? { cuganMode: settings.cuganMode } : {}),
-      device: isAiEngine(settings) && settings.preset === 'none' ? 'cpu'
+      device: isAiEngine(settings) && settings.preset === 'none' ? (lastAiBackend === 'WebGPU' ? 'webgpu' : 'cpu')
         : settings.device === 'webgpu' || settings.device === 'webgl' ? (lastCleanupBackend ? lastCleanupBackend.toLowerCase() : gpuBuiltinAvailable() ? 'gpu' : 'cpu')
         : settings.device === 'gpu' ? 'gpu' : 'cpu',
       originalWidth: w, originalHeight: h, width: size.W, height: size.H,
@@ -4048,6 +4048,7 @@ function timeEstimate(st) {
     const t = timeEstimate({ ...st, scale: 2 }).split('–').map(v => v === '<1' ? 0.5 : Number(v));
     return '<1–' + Math.max(1, Math.round(t[1] * 0.4));
   }
+  if (st.device === 'webgpu' && (st.engine === 'animevideov3' || st.engine === 'generalv3')) return st.preset === 'none' ? '<1–2' : '<1–4';
   if (st.engine === 'animevideov3') return st.preset === 'none' ? '2–10' : '4–20';
   if (st.engine === 'generalv3') return st.preset === 'none' ? '4–20' : '6–30';
   if (st.engine === 'cugan') return st.preset === 'none' ? '8–40' : '10–50';
@@ -4084,13 +4085,17 @@ function updateEnhanceSummary() {
   if (ai && f.preset.value === 'auto') f.preset.value = 'none';
   if (!ai && f.preset.value === 'none') f.preset.value = 'lumity';
   document.getElementById('cleanup-legend').textContent = ai ? 'Cleanup after AI' : 'Cleanup';
-  // Processing only matters when a built-in step runs.
+  // Processing matters when a built-in step runs — and for the AI step of
+  // AI · Fast / Balanced, which 🚀 WebGPU runs on the WebGPU engine.
   const noBuiltin = ai && f.preset.value === 'none';
-  document.getElementById('device-fields').disabled = noBuiltin;
-  document.getElementById('device-hint').textContent = noBuiltin ? 'Not used: “None” keeps the AI result as it is.'
+  const gpuAi = ai && (f.engine.value === 'animevideov3' || f.engine.value === 'generalv3');
+  document.getElementById('device-fields').disabled = noBuiltin && !gpuAi;
+  document.getElementById('device-hint').textContent = noBuiltin && !gpuAi ? 'Not used: “None” keeps the AI result as it is.'
+    : noBuiltin ? (f.device.value === 'webgpu' ? 'Only the AI runs (“None”): on WebGPU — several times faster than WebGL.'
+      : 'Only the AI runs (“None”), on WebGL. Choose 🚀 WebGPU to run AI · Fast / Balanced on WebGPU, several times faster.')
     : !gpuBuiltinAvailable() ? 'CPU only: this browser offers no suitable GPU (WebGL2 with float rendering).'
     : f.device.value === 'gpu' ? 'Original: the upscaling steps run on your graphics card — much faster, especially at 3–4× and with extras. Results match the CPU (apart from tiny dithering differences).'
-    : f.device.value === 'webgpu' ? 'Everything runs on your graphics card with WebGPU, the preparation too — the fastest. Uses WebGL where WebGPU is missing. Results match the original to within rounding; flat fills can differ slightly.'
+    : f.device.value === 'webgpu' ? 'Everything runs on your graphics card with WebGPU, the preparation too — the fastest; AI · Fast and Balanced also run on WebGPU. Uses WebGL where WebGPU is missing. Results match the original to within rounding; flat fills can differ slightly.'
     : f.device.value === 'webgl' ? 'Everything runs on your graphics card with WebGL (flat fills on the processor). Results match the original to within rounding.'
     : 'Original: runs on the processor, in the background.';
   const st = readEnhanceForm();
@@ -4507,7 +4512,7 @@ async function runPreview() {
       if (preview.aiCache && preview.aiCache.key === aiKey && preview.aiCache.pixels === preview.pixels) {
         out = preview.aiCache.out.slice();
       } else {
-        out = await aiRun(settings.engine, region, rw, rh, RW, RH, f => {
+        out = await pictureAi(settings, region, rw, rh, RW, RH, f => {
           pct.textContent = Math.round(f * 100) + '%';
           previewEls.status.textContent = 'Rendering AI preview… ' + Math.round(f * 100) + '%';
         }, aiStale, { denoise: settings.denoise, cuganMode: settings.cuganMode, seFrom: { rgba, w, h } });
@@ -6460,6 +6465,35 @@ async function aiRefreshUi() {
 document.getElementById('ai-load-files').addEventListener('click', () => document.getElementById('ai-file-input').click());
 document.getElementById('ai-file-input').addEventListener('change', e => { aiLoadFiles([...e.target.files]); e.target.value = ''; });
 
+// The AI step for pictures: with Processing 🚀 WebGPU, AI · Fast / Balanced
+// run on the WebGPU engine (as in the video tool; WebGL when that isn't
+// possible, told once), otherwise aiRun on WebGL. → RGBA W×H, alpha 255.
+let lastAiBackend = null;
+async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, opts) {
+  lastAiBackend = 'WebGL';
+  if (settings.device === 'webgpu' && VIDEO_GPU_MODELS.has(settings.engine) && w * h <= GPU_CLEANUP_MAX_PIXELS) {
+    const note = msg => { if (!gpuCleanupNotes.has(msg)) { gpuCleanupNotes.add(msg); showToast(msg); } };
+    try {
+      const gpu = await videoGpuFor(settings.engine, settings.denoise);
+      if (gpu) {
+        const bmp = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba), w, h), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+        const size = { iw: W, ih: H, W, H, x: 0, y: 0 };
+        try { gpu.eng.run(gpu.model, bmp, w, h, size); } finally { bmp.close(); }
+        const out = await gpu.eng.read(size);
+        if (onProgress) onProgress(1);
+        lastAiBackend = 'WebGPU';
+        return out;
+      }
+      note('WebGPU isn’t available here, so the AI runs on WebGL.');
+    } catch (err) {
+      if (isCancelled && isCancelled()) throw err;
+      console.warn('WebGPU AI failed', err);
+      note('The WebGPU AI failed (' + (err.message || err) + '), so it runs on WebGL.');
+    }
+  }
+  return aiRun(settings.engine, rgba, w, h, W, H, onProgress, isCancelled, opts);
+}
+
 // Picture → AI ×4 → requested size (GPU), then optional built-in cleanup.
 async function aiUpscale(px, W, H, settings, onProgress) {
   const { rgba, w, h } = px;
@@ -6469,7 +6503,7 @@ async function aiUpscale(px, W, H, settings, onProgress) {
   let out;
   try {
     onProgress(0.03, 'Loading AI model…');
-    out = await aiRun(settings.engine, rgba, w, h, W, H,
+    out = await pictureAi(settings, rgba, w, h, W, H,
       f => onProgress(0.05 + f * (post ? 0.55 : 0.85), 'AI upscaling…'), () => cancelled,
       { denoise: settings.denoise, cuganMode: settings.cuganMode });
   } catch (err) {
