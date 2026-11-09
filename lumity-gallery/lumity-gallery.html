@@ -888,6 +888,8 @@
             <label title="The original WebGL engine"><input type="radio" name="aiDevice" value="webgl" checked><span>WebGL</span></label>
           </div>
         </div>
+        <label class="dialog-check" id="ai-fast-row" hidden><input type="checkbox" id="ai-fast">
+          <span>⚡ Fast AI maths<small>About 1.8× faster on WebGPU: sums in 16-bit steps, so the result differs very slightly (not visibly).</small></span></label>
         <p class="dialog-sub" id="ai-pick-hint" hidden></p>
         <details class="ai-manage" id="ai-manage">
           <summary>Manage AI models <span id="ai-manage-count"></span></summary>
@@ -1037,6 +1039,8 @@
           <label title="The original WebGL engine"><input type="radio" name="vaion" value="webgl"><span>WebGL</span></label>
         </div>
       </div>
+      <label class="dialog-check" id="video-aifast-row" hidden><input type="checkbox" id="video-aifast">
+        <span>⚡ Fast AI maths<small>About 1.8× faster on WebGPU: sums in 16-bit steps, so the result differs very slightly (not visibly).</small></span></label>
       <p class="dialog-sub" id="video-models-hint"></p>
       <div id="video-dl"></div>
     </fieldset>
@@ -1559,6 +1563,7 @@ function sanitizeUpscale(raw) {
     cuganMode: raw.engine === 'cugan' && CUGAN_MODES[raw.cuganMode] ? raw.cuganMode : null,
     device: ['gpu', 'webgpu', 'webgl'].includes(raw.device) ? raw.device : null,
     aiDevice: ['webgpu', 'webgl'].includes(raw.aiDevice) ? raw.aiDevice : null,
+    aiFast: raw.aiDevice === 'webgpu' && raw.aiFast === true ? true : null,
     extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges || num(raw.extras.aa))
       ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges,
           ...(num(raw.extras.aa) ? { aa: Math.max(10, Math.min(100, raw.extras.aa)) } : {}) }
@@ -1985,7 +1990,7 @@ function describeUpscale(u) {
     const names = extrasNames(u.extras);
     if (names) parts.push(names);
   }
-  if (u.aiDevice === 'webgpu') parts.push('AI on WebGPU');
+  if (u.aiDevice === 'webgpu') parts.push('AI on WebGPU' + (u.aiFast ? ' (fast maths)' : ''));
   const devName = { gpu: 'GPU', webgpu: 'WebGPU', webgl: 'WebGL' }[u.device];
   if (devName) parts.push(u.aiDevice ? 'cleanup on ' + devName : devName);
   if (u.format) parts.push(u.format.toUpperCase());
@@ -3909,7 +3914,7 @@ async function enhanceOne(original, settings, onProgress, isCancelled) {
       auto: !!settings.auto, engine: settings.engine || 'builtin',
       ...(settings.engine === 'generalv3' ? { denoise: settings.denoise } : {}),
       ...(settings.engine === 'cugan' ? { cuganMode: settings.cuganMode } : {}),
-      ...(isAiEngine(settings) ? { aiDevice: lastAiBackend === 'WebGPU' ? 'webgpu' : 'webgl' } : {}),
+      ...(isAiEngine(settings) ? { aiDevice: lastAiBackend === 'WebGPU' ? 'webgpu' : 'webgl', ...(lastAiBackend === 'WebGPU' && lastAiFast ? { aiFast: true } : {}) } : {}),
       device: isAiEngine(settings) && settings.preset === 'none' ? 'cpu'
         : settings.device === 'webgpu' || settings.device === 'webgl' ? (lastCleanupBackend ? lastCleanupBackend.toLowerCase() : gpuBuiltinAvailable() ? 'gpu' : 'cpu')
         : settings.device === 'gpu' ? 'gpu' : 'cpu',
@@ -3976,7 +3981,7 @@ const ETA_KEY = 'lumity-gallery-eta-v1';
 function etaSignature(st) {
   const x = st.extras || {};
   return [st.engine || 'builtin', st.device, st.preset, x.lines ? 'L' : '', x.fills ? 'F' : '', x.edges ? 'E' : '', x.aa ? 'A' : '',
-    st.mode === 'width' ? 'w' : st.scale].join('|') + (st.aiDevice === 'webgpu' && isAiEngine(st) ? '|aiwebgpu' : '');
+    st.mode === 'width' ? 'w' : st.scale].join('|') + (st.aiDevice === 'webgpu' && isAiEngine(st) ? '|aiwebgpu' + (st.aiFast ? 'f' : '') : '');
 }
 function loadEtaRates() { try { return JSON.parse(localStorage.getItem(ETA_KEY)) || {}; } catch { return {}; } }
 
@@ -4131,6 +4136,7 @@ function readEnhanceForm() {
     aiEngine: f.engine.value !== 'builtin' ? f.engine.value : lastAiEngine,
     device: f.device.value,
     aiDevice: f.aiDevice.value,                 // where AI · Fast / Balanced run; Processing is the cleanup
+    aiFast: document.getElementById('ai-fast').checked,   // WebGPU AI: the faster f16-sum kernel
     preset: f.preset.value,
     format: f.format.value,
     denoise: Number(document.getElementById('ai-denoise').value),
@@ -4197,6 +4203,7 @@ function updateEnhanceSummary() {
   document.getElementById('ai-device-row').hidden = !(f.engine.value === 'animevideov3' || f.engine.value === 'generalv3');
   enhanceForm.querySelector('input[name=aiDevice][value=webgpu]').disabled = !navigator.gpu || !!gpuOff;
   if (enhanceForm.querySelector('input[name=aiDevice]:checked').disabled) f.aiDevice.value = 'webgl';
+  document.getElementById('ai-fast-row').hidden = document.getElementById('ai-device-row').hidden || f.aiDevice.value !== 'webgpu';
   document.getElementById('cugan-row').hidden = f.engine.value !== 'cugan';
   document.getElementById('ai-denoise-out').textContent = document.getElementById('ai-denoise').value;
   // "None" only makes sense after AI; Auto only for the built-in engine.
@@ -4281,6 +4288,7 @@ function openEnhanceDialog(targets, mode) {
     // Before the AI got its own choice, 🚀 WebGPU under Processing meant both.
     const aiDev = saved.aiDevice || (saved.device === 'webgpu' ? 'webgpu' : 'webgl');
     if (aiDev === 'webgpu' && navigator.gpu) f.aiDevice.value = 'webgpu';
+    document.getElementById('ai-fast').checked = !!saved.aiFast;
     updateEnhanceSummary();                      // GPU availability is known now
   });
   if (saved.format === 'png' || saved.format === 'jpeg') f.format.value = saved.format;
@@ -4561,7 +4569,7 @@ function previewGeometry(settings, size) {
   const rx1 = Math.min(w, cx0 + cs + pad), ry1 = Math.min(h, cy0 + cs + pad);
   const rw = rx1 - rx0, rh = ry1 - ry0;
   const aiKey = ai ? [settings.engine, settings.engine === 'generalv3' ? settings.denoise : '', settings.engine === 'cugan' ? settings.cuganMode : '',
-    VIDEO_GPU_MODELS.has(settings.engine) ? settings.aiDevice : '', rx0, ry0, rw, rh, Math.round(rw * sc), Math.round(rh * sc)].join('|') : null;
+    VIDEO_GPU_MODELS.has(settings.engine) ? settings.aiDevice + (settings.aiFast ? '+fast' : '') : '', rx0, ry0, rw, rh, Math.round(rw * sc), Math.round(rh * sc)].join('|') : null;
   return { cs, cx0, cy0, rx0, ry0, rw, rh, aiKey };
 }
 function currentAiKey() {
@@ -6605,14 +6613,15 @@ document.getElementById('ai-file-input').addEventListener('change', e => { aiLoa
 // The AI step for pictures: with Processing 🚀 WebGPU, AI · Fast / Balanced
 // run on the WebGPU engine (as in the video tool; WebGL when that isn't
 // possible, told once), otherwise aiRun on WebGL. → RGBA W×H, alpha 255.
-let lastAiBackend = null;
+let lastAiBackend = null, lastAiFast = false;           // (lastAiFast: the fast WebGPU kernel ran)
 async function pictureAi(settings, rgba, w, h, W, H, onProgress, isCancelled, opts) {
-  lastAiBackend = 'WebGL';
+  lastAiBackend = 'WebGL'; lastAiFast = false;
   if (settings.aiDevice === 'webgpu' && VIDEO_GPU_MODELS.has(settings.engine) && w * h <= GPU_CLEANUP_MAX_PIXELS) {
     try {
       const model = await aiGetModel(settings.engine, { denoise: settings.denoise }), size = { iw: W, ih: H, W, H, x: 0, y: 0 };
       const r = await gpuAttempt(async () => { const e = await gpuCompact(); return e && !e.lost ? e : null; },
-        eng => { eng.run(model, rgba, w, h, size); return eng.read(size); }, w + '×' + h + ' → ' + W + '×' + H, isCancelled);
+        eng => { eng.run(model, rgba, w, h, size, false, !!settings.aiFast); lastAiFast = !!settings.aiFast && eng.fastKernel; return eng.read(size); },
+        w + '×' + h + ' → ' + W + '×' + H, isCancelled);
       if (r) {
         if (onProgress) onProgress(1);
         lastAiBackend = 'WebGPU';
@@ -7178,14 +7187,6 @@ async function createGpuCompact(opts = {}) {
   });
   const S = f16 ? 'f16' : 'f32', VS = f16 ? 8 : 16;                // storage type, bytes per vec4
   const head = (f16 ? 'enable f16;\n' : '') + 'alias S = ' + S + ';\n';
-  // Conv threads: PX neighbouring pixels × 16 output channels each; a
-  // workgroup covers (WX·PX)×WY pixels and OG groups of 16 channels, and
-  // shares each step's input tile and weights (IC×4 input channels) through
-  // workgroup memory, so every value is read from the buffers once.
-  // Defaults measured fastest on an Apple M5 Pro (≈110 ms for a 853×480 frame with AI · Fast).
-  const PX = opts.px || 1, WX = opts.wx || 8, WY = opts.wy || 8, IC = opts.ic || 1, OG = opts.og || 4;
-  const NT = WX * WY * OG, TW = WX * PX + 2, TH = WY + 2, NIN = TW * TH * IC;
-
   // Input: picture rows [y0, y0 + bh) sampled from the source texture at w×h.
   const inputCode = head + `
 struct P { w: u32, bh: u32, y0: u32, h: u32 }
@@ -7202,11 +7203,21 @@ fn main(@builtin(global_invocation_id) g: vec3u) {
 }`;
 
   // 3×3 conv (zero padding at the band edges), bias, optional PReLU.
-  // Generated unrolled so the 4×PX accumulators stay in registers.
-  const acc = (o, x) => 'a' + o + '_' + x;
-  let body = '';
-  for (let o = 0; o < 4; o++) for (let x = 0; x < PX; x++) body += `  var ${acc(o, x)} = bias[p.bBase + ob + ${o}u];\n`;
-  body += `  for (var i = 0u; i < p.inC4; i += ${IC}u) {
+  // Threads: PX neighbouring pixels × 16 output channels each; a workgroup
+  // covers (WX·PX)×WY pixels and OG groups of 16 channels, and shares each
+  // step's input tile and weights (IC×4 input channels) through workgroup
+  // memory, so every value is read from the buffers once. Generated unrolled
+  // so the 4×PX accumulators stay in registers.
+  // half (⚡ Fast AI maths, f16 GPUs): each step's 9 taps × 4 channels are
+  // summed in f16 before going into the f32 total — slightly different
+  // results (≈ 60 dB), ~1.8× faster with its own tile shape.
+  function convKernel({ px: PX = 1, wx: WX = 8, wy: WY = 8, ic: IC = 1, og: OG = 4, half = false }) {
+    const HALF = half && f16;
+    const NT = WX * WY * OG, TW = WX * PX + 2, TH = WY + 2, NIN = TW * TH * IC;
+    const acc = (o, x) => 'a' + o + '_' + x, part = (o, x) => 'q' + o + '_' + x;
+    let body = '';
+    for (let o = 0; o < 4; o++) for (let x = 0; x < PX; x++) body += `  var ${acc(o, x)} = bias[p.bBase + ob + ${o}u];\n`;
+    body += `  for (var i = 0u; i < p.inC4; i += ${IC}u) {
     for (var k = li; k < ${NIN}u; k += ${NT}u) {
       let c = k % ${IC}u; let t = k / ${IC}u;
       let gx = tx0 + i32(t % ${TW}u); let gy = ty0 + i32(t / ${TW}u);
@@ -7222,30 +7233,32 @@ fn main(@builtin(global_invocation_id) g: vec3u) {
     }
     workgroupBarrier();
     if (live) {\n`;
-  for (let c = 0; c < IC; c++) for (let ky = 0; ky < 3; ky++) {
-    body += `      {\n`;
-    for (let k = 0; k < PX + 2; k++) body += `        let r${k} = tin[((lid.y + ${ky}u) * ${TW}u + lid.x * ${PX}u + ${k}u) * ${IC}u + ${c}u];\n`;
-    for (let kx = 0; kx < 3; kx++) {
-      body += `        { let wi = (${(ky * 3 + kx) * IC + c}u) * p.outC4 + ob;\n`;
-      for (let o = 0; o < 4; o++) {
-        body += `          { let m = tw[wi + ${o}u];`;
-        for (let x = 0; x < PX; x++) body += ` ${acc(o, x)} += vec4f(m * r${kx + x});`;
-        body += ` }\n`;
+    if (HALF) for (let o = 0; o < 4; o++) for (let x = 0; x < PX; x++) body += `      var ${part(o, x)} = vec4<S>();\n`;
+    for (let c = 0; c < IC; c++) for (let ky = 0; ky < 3; ky++) {
+      body += `      {\n`;
+      for (let k = 0; k < PX + 2; k++) body += `        let r${k} = tin[((lid.y + ${ky}u) * ${TW}u + lid.x * ${PX}u + ${k}u) * ${IC}u + ${c}u];\n`;
+      for (let kx = 0; kx < 3; kx++) {
+        body += `        { let wi = (${(ky * 3 + kx) * IC + c}u) * p.outC4 + ob;\n`;
+        for (let o = 0; o < 4; o++) {
+          body += `          { let m = tw[wi + ${o}u];`;
+          for (let x = 0; x < PX; x++) body += HALF ? ` ${part(o, x)} += m * r${kx + x};` : ` ${acc(o, x)} += vec4f(m * r${kx + x});`;
+          body += ` }\n`;
+        }
+        body += `        }\n`;
       }
-      body += `        }\n`;
+      body += `      }\n`;
     }
-    body += `      }\n`;
-  }
-  body += `    }\n    workgroupBarrier();\n  }\n  if (!live || y >= i32(p.bh)) { return; }\n`;
-  for (let o = 0; o < 4; o++) {
-    body += `  { let sl = bias[p.sBase + ob + ${o}u];\n`;
-    for (let x = 0; x < PX; x++) {
-      body += `    if (x0 + ${x} < i32(p.w)) { var v = ${acc(o, x)}; if (p.act == 2u) { v = max(v, vec4f(0.0)) + sl * min(v, vec4f(0.0)); }` +
-        ` dst[(u32(y) * p.w + u32(x0 + ${x})) * p.outC4 + ob + ${o}u] = vec4<S>(v); }\n`;
+    if (HALF) for (let o = 0; o < 4; o++) for (let x = 0; x < PX; x++) body += `      ${acc(o, x)} += vec4f(${part(o, x)});\n`;
+    body += `    }\n    workgroupBarrier();\n  }\n  if (!live || y >= i32(p.bh)) { return; }\n`;
+    for (let o = 0; o < 4; o++) {
+      body += `  { let sl = bias[p.sBase + ob + ${o}u];\n`;
+      for (let x = 0; x < PX; x++) {
+        body += `    if (x0 + ${x} < i32(p.w)) { var v = ${acc(o, x)}; if (p.act == 2u) { v = max(v, vec4f(0.0)) + sl * min(v, vec4f(0.0)); }` +
+          ` dst[(u32(y) * p.w + u32(x0 + ${x})) * p.outC4 + ob + ${o}u] = vec4<S>(v); }\n`;
+      }
+      body += `  }\n`;
     }
-    body += `  }\n`;
-  }
-  const convCode = head + `
+    const code = head + `
 struct P { w: u32, bh: u32, inC4: u32, outC4: u32, wBase: u32, bBase: u32, sBase: u32, act: u32 }
 @group(0) @binding(0) var<storage, read> src: array<vec4<S>>;
 @group(0) @binding(1) var<storage, read_write> dst: array<vec4<S>>;
@@ -7262,6 +7275,13 @@ fn main(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: ve
   let live = og * 4u < p.outC4;
   let ob = select(0u, og * 4u, live);
 ${body}}`;
+    // workgroups for a conv on a w×bh band with outC4 output vec4s
+    return { code, groups: (w, bh, outC4) => [Math.ceil(w / (WX * PX)), Math.ceil(bh / WY), Math.ceil(outC4 / 4 / OG)] };
+  }
+  // Exact: the defaults, measured fastest on an Apple M5 Pro (≈110 ms for a
+  // 853×480 frame with AI · Fast). Fast: f16 sums with 4 pixels per thread
+  // (≈ 0.56× the time for both models there). Without f16 the fast kernel is the exact one.
+  const kernels = { exact: convKernel(opts), fast: f16 ? convKernel({ half: true, px: 4, wx: 4, ...opts.fastOpts }) : null };
 
   // Output: pixel-shuffle ×4 of the last conv + nearest-upsampled input
   // (FS_SHUFFLE), area-averaged to the target size (FS_RESIZE), black outside
@@ -7300,14 +7320,22 @@ fn t4(u: i32, v: i32) -> vec3f {
 }`;
 
   const mod = code => device.createShaderModule({ code });
-  const [inputMod, convMod, outputMod] = [inputCode, convCode, outputCode].map(mod);
-  for (const [name, m] of [['input', inputMod], ['conv', convMod], ['output', outputMod]]) {
+  const [inputMod, outputMod] = [inputCode, outputCode].map(mod);
+  for (const k of Object.keys(kernels)) if (kernels[k]) kernels[k].mod = mod(kernels[k].code);
+  for (const [name, m] of [['input', inputMod], ['output', outputMod], ...Object.entries(kernels).filter(e => e[1]).map(([k, v]) => ['conv ' + k, v.mod])]) {
     const info = await m.getCompilationInfo();
     const errs = info.messages.filter(x => x.type === 'error');
     if (errs.length) throw new Error('WebGPU ' + name + ' shader: ' + errs.map(x => x.lineNum + ': ' + x.message).join('; '));
   }
   const inputPipe = device.createComputePipeline({ layout: 'auto', compute: { module: inputMod, entryPoint: 'main' } });
-  const convPipe = device.createComputePipeline({ layout: 'auto', compute: { module: convMod, entryPoint: 'main' } });
+  // One bind group layout for both conv kernels, so a plan's bind groups serve either.
+  const convLayout = device.createBindGroupLayout({ entries: [
+    ...[0, 2, 3].map(binding => ({ binding, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } })),
+    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+    { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+  ] });
+  const convPipeLayout = device.createPipelineLayout({ bindGroupLayouts: [convLayout] });
+  for (const k of Object.values(kernels)) if (k) k.pipe = device.createComputePipeline({ layout: convPipeLayout, compute: { module: k.mod, entryPoint: 'main' } });
   const outputPipe = device.createRenderPipeline({ layout: 'auto', vertex: { module: outputMod, entryPoint: 'vs' },
     fragment: { module: outputMod, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] }, primitive: { topology: 'triangle-list' } });
   const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
@@ -7395,12 +7423,12 @@ fn t4(u: i32, v: i32) -> vec3f {
       const inputU = ubuf([w, bh, b0, h]);
       let src = inp, dst = A;
       const convs = pk.convs.map(L => {
-        const bg = device.createBindGroup({ layout: convPipe.getBindGroupLayout(0), entries: [
+        const bg = device.createBindGroup({ layout: convLayout, entries: [
           { binding: 0, resource: { buffer: src } }, { binding: 1, resource: { buffer: dst } },
           { binding: 2, resource: { buffer: pk.wBuf } }, { binding: 3, resource: { buffer: pk.bBuf } },
           { binding: 4, resource: { buffer: ubuf([w, bh, L.inC4, L.outC4, L.wBase, L.bBase, L.sBase, L.act]) } },
         ] });
-        const r = { bg, groups: [Math.ceil(w / (WX * PX)), Math.ceil(bh / WY), Math.ceil(L.outC4 / 4 / OG)] };
+        const r = { bg, groups: Object.fromEntries(Object.entries(kernels).filter(e => e[1]).map(([k, v]) => [k, v.groups(w, bh, L.outC4)])) };
         src = dst; dst = dst === A ? B : A;
         return r;
       });
@@ -7428,8 +7456,9 @@ fn t4(u: i32, v: i32) -> vec3f {
   // size.W×size.H frame: picture at (size.x, size.y), size size.iw×size.ih,
   // black around it. The result is in result() for read() or the cleanup, and
   // with toCanvas also in `canvas` (for a VideoFrame). Work is queued, not awaited.
-  function run(model, source, w, h, size, toCanvas = false) {
+  function run(model, source, w, h, size, toCanvas = false, fast = false) {
     if (lost) throw new Error(lost);
+    const kern = fast && kernels.fast ? 'fast' : 'exact';
     const pk = pack(model), pl = planFor(pk, w, h, size);
     const bytes = ArrayBuffer.isView(source);
     const sw = bytes ? w : source.displayWidth || source.width, sh = bytes ? h : source.displayHeight || source.height;
@@ -7456,8 +7485,8 @@ fn t4(u: i32, v: i32) -> vec3f {
       const cp = enc.beginComputePass();
       cp.setPipeline(inputPipe); cp.setBindGroup(0, b.input);
       cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(b.bh / 8));
-      cp.setPipeline(convPipe);
-      for (const c of b.convs) { cp.setBindGroup(0, c.bg); cp.dispatchWorkgroups(...c.groups); }
+      cp.setPipeline(kernels[kern].pipe);
+      for (const c of b.convs) { cp.setBindGroup(0, c.bg); cp.dispatchWorkgroups(...c.groups[kern]); }
       cp.end();
       const rp = enc.beginRenderPass({ colorAttachments: [{ view: pl.outTex.createView(), loadOp: k ? 'load' : 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
       rp.setPipeline(outputPipe); rp.setBindGroup(0, b.output);
@@ -7496,7 +7525,7 @@ fn t4(u: i32, v: i32) -> vec3f {
     device.queue.submit([enc.finish()]);
   }
 
-  return { f16, canvas, run, read, present, release, device, result: () => plan && plan.outTex,
+  return { f16, fastKernel: !!kernels.fast, canvas, run, read, present, release, device, result: () => plan && plan.outTex,
     done: () => device.queue.onSubmittedWorkDone(), get lost() { return lost; },
     info: (f16 ? 'f16' : 'f32') + ' · ' + (adapter.info ? [adapter.info.vendor, adapter.info.architecture].filter(Boolean).join(' ') : '') };
 }
@@ -7993,7 +8022,9 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
         const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
           { binding: 0, resource: { buffer: ub, offset: k * U_STRIDE, size: U_SIZE } },
           ...ps.texs.map((t, j) => ({ binding: j + 1, resource: view(t) })) ] });
-        const rp = enc.beginRenderPass({ colorAttachments: [{ view: view(ps.dst), loadOp: 'load', storeOp: 'store' }] });
+        // 'clear', not 'load': each pass draws its whole region and nothing reads
+        // outside it, so tile-based GPUs (Apple, Adreno) skip reading the target first.
+        const rp = enc.beginRenderPass({ colorAttachments: [{ view: view(ps.dst), loadOp: 'clear', clearValue: [0, 0, 0, 0], storeOp: 'store' }] });
         rp.setPipeline(pipe); rp.setBindGroup(0, bg);
         rp.setViewport(0, 0, ps.rw, ps.rh, 0, 1); rp.setScissorRect(0, 0, ps.rw, ps.rh);
         rp.draw(3); rp.end();
@@ -8385,6 +8416,7 @@ async function videoChain(st, w, h, size, direct) {
     return out;
   };
   const isDirect = direct && (cg ? true : !!gpu && !cleanup);
+  const fast = !!(gpu && st.aiFast && gpu.eng.fastKernel);      // ⚡ Fast AI maths
   const chain = {
     // The frame canvas lives on the GPU only for the AI on WebGPU; the built-in
     // engine always gets the CPU-drawn frame, so every mode starts from the
@@ -8396,15 +8428,15 @@ async function videoChain(st, w, h, size, direct) {
     // AI on WebGPU, cleanup through builtinJob: the two stages, so a video can
     // run the next frame's AI while this one is cleaned (videoUpscale).
     split: gpu && cleanup && !cg ? {
-      ai(canvas) { gpu.eng.run(gpu.model, canvas, w, h, pic); return gpu.eng.read(pic); },
+      ai(canvas) { gpu.eng.run(gpu.model, canvas, w, h, pic, false, fast); return gpu.eng.read(pic); },
       clean: px => clean(px, size.iw, size.ih),
     } : null,
-    backend: !ai ? '' : gpu ? 'WebGPU' : 'WebGL',
+    backend: !ai ? '' : gpu ? 'WebGPU' + (fast ? ' (fast maths)' : '') : 'WebGL',
     cleanBackend: !cleanup ? '' : cg ? 'WebGPU' : on === 'original' ? (device === 'gpu' ? 'GPU' : 'CPU') : on === 'webgpu' ? 'WebGPU' : 'WebGL',
     async run(canvas, isCancelled) {
       if (cg) {
         let src;
-        if (gpu) { gpu.eng.run(gpu.model, canvas, w, h, pic); src = gpu.eng.result(); }
+        if (gpu) { gpu.eng.run(gpu.model, canvas, w, h, pic, false, fast); src = gpu.eng.result(); }
         else src = cg.upload(canvas, w, h);
         const r = await cg.cleanupTex(src, gpu ? size.iw : w, gpu ? size.ih : h, cleanup, P, M.LANCZOS2, isCancelled);
         if (chain.direct) { cg.ai.present(r.tex, size); return null; }
@@ -8412,8 +8444,8 @@ async function videoChain(st, w, h, size, direct) {
       }
       let px;
       if (gpu) {
-        if (chain.direct) { gpu.eng.run(gpu.model, canvas, w, h, size, true); return null; }
-        gpu.eng.run(gpu.model, canvas, w, h, pic);
+        if (chain.direct) { gpu.eng.run(gpu.model, canvas, w, h, size, true, fast); return null; }
+        gpu.eng.run(gpu.model, canvas, w, h, pic, false, fast);
         px = await gpu.eng.read(pic);
       } else {
         const rgba = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
@@ -8558,7 +8590,7 @@ const videoDialog = document.getElementById('video-dialog');
 const vEls = Object.fromEntries(['info', 'engines', 'denoise-row', 'denoise', 'denoise-out', 'models-hint', 'dl', 'out', 'time', 'time-out',
   'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close', 'rates', 'fit-label', 'box-label',
   'presets', 'preset-none', 'tuning', 'flatness', 'flatness-out', 'lines', 'lines-out', 'extras', 'x-lines', 'x-fills', 'x-edges', 'x-aa',
-  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text', 'aion', 'aion-row',
+  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text', 'aion', 'aion-row', 'aifast', 'aifast-row',
   'queue', 'add', 'clear', 'qsum', 'stop', 'cancel']
   .map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('video-' + k)]));
 const vid = { file: null, info: null, frame: null, after: null, afterKey: '', ms: {}, busy: false, dirty: false, timer: null, job: null, clipUrl: null };
@@ -8576,14 +8608,14 @@ function videoSettings() {
   if (engine === 'builtin' && preset === 'none') preset = 'lumity';     // the built-in engine always cleans up
   return { engine, denoise: +vEls.denoise.value, preset, flatness: +vEls.flatness.value, lines: +vEls.lines.value,
     extras: { lines: vEls.xLines.checked, fills: vEls.xFills.checked, edges: vEls.xEdges.checked, aa: vEls.xAa.checked ? +vEls.aa.value : 0 },
-    cleanupOn: pick('von') || 'original', aiOn: pick('vaion') || 'webgpu',
+    cleanupOn: pick('von') || 'original', aiOn: pick('vaion') || 'webgpu', aiFast: vEls.aifast.checked,
     res, mode: pick('vmode') || 'fit', bitrate: (+pick('vbitrate') || VIDEO_RES[res].rates[1]) * 1e6 };
 }
 
 // Everything that changes the picture (not the time or file settings).
 function videoChainKey(st, size) {
   return JSON.stringify([st.engine, st.engine === 'generalv3' ? st.denoise : 0, st.preset,
-    st.preset === 'lumity' ? [st.flatness, st.lines] : 0, engineExtras(st), st.preset === 'none' ? '' : st.cleanupOn, VIDEO_GPU_MODELS.has(st.engine) ? st.aiOn : '', size.iw, size.ih]);
+    st.preset === 'lumity' ? [st.flatness, st.lines] : 0, engineExtras(st), st.preset === 'none' ? '' : st.cleanupOn, VIDEO_GPU_MODELS.has(st.engine) ? st.aiOn + (st.aiOn === 'webgpu' && st.aiFast ? '+fast' : '') : '', size.iw, size.ih]);
 }
 // "AI · Fast on WebGPU → Lumity · flat fills on WebGPU"
 function videoDescribe(st, backend, cleanBackend) {
@@ -8665,6 +8697,7 @@ function videoTexts() {
   vEls.aionRow.hidden = !VIDEO_GPU_MODELS.has(st.engine);            // AI · Best / Anime+ always use WebGL
   vEls.aion.querySelector('input[value=webgpu]').disabled = !navigator.gpu || !!gpuOff;
   if (vEls.aion.querySelector('input:checked').disabled) vEls.aion.querySelector('input[value=webgl]').checked = true;
+  vEls.aifastRow.hidden = vEls.aionRow.hidden || vEls.aion.querySelector('input:checked').value !== 'webgpu';
   vEls.denoiseOut.textContent = vEls.denoise.value;
   // Cleanup: "Off" only after AI; Lumity has its sliders; extras need a preset.
   const isBuiltin = st.engine === 'builtin';
@@ -8853,6 +8886,7 @@ function videoApplySettings(st) {
   const set = (name, value) => { const el = videoDialog.querySelector('input[name=' + name + '][value="' + value + '"]'); if (el && !el.disabled) el.checked = true; };
   set('vengine', st.engine); set('vpreset', st.preset); set('von', st.cleanupOn); set('vres', st.res); set('vmode', st.mode);
   set('vaion', st.aiOn || 'webgpu');
+  vEls.aifast.checked = !!st.aiFast;
   vEls.denoise.value = st.denoise; vEls.flatness.value = st.flatness; vEls.lines.value = st.lines;
   const x = st.extras || {};
   vEls.xLines.checked = !!x.lines; vEls.xFills.checked = !!x.fills; vEls.xEdges.checked = !!x.edges; vEls.xAa.checked = !!x.aa;
@@ -9164,6 +9198,7 @@ vEls.stop.addEventListener('click', () => { vq.stopAfter = true; queueRender(); 
 vEls.cancel.addEventListener('click', () => { vq.cancelled = true; if (vq.job) vq.job.cancel(); queueRender(); });
 vEls.engines.addEventListener('change', videoUpdate);
 vEls.aion.addEventListener('change', videoUpdate);
+vEls.aifast.addEventListener('change', videoUpdate);
 vEls.presets.addEventListener('change', videoUpdate);
 vEls.on.addEventListener('change', videoUpdate);
 vEls.extras.addEventListener('change', videoUpdate);
