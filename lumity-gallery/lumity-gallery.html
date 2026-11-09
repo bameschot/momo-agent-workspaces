@@ -874,8 +874,10 @@
     <fieldset id="device-fields">
       <legend>Processing</legend>
       <div class="chips">
-        <label><input type="radio" name="device" value="cpu" checked><span>CPU</span></label>
-        <label><input type="radio" name="device" value="gpu" disabled><span>⚡ GPU</span></label>
+        <label title="Original: everything on the processor"><input type="radio" name="device" value="cpu" checked><span>CPU</span></label>
+        <label title="Original: preparation on the processor, upscaling on the graphics card"><input type="radio" name="device" value="gpu" disabled><span>⚡ GPU</span></label>
+        <label title="Everything on the graphics card with WebGPU (WebGL where WebGPU is missing)"><input type="radio" name="device" value="webgpu" disabled><span>🚀 WebGPU</span></label>
+        <label title="Everything on the graphics card with WebGL (flat fills on the processor)"><input type="radio" name="device" value="webgl" disabled><span>WebGL</span></label>
       </div>
       <p class="dialog-sub" id="device-hint"></p>
     </fieldset>
@@ -1022,6 +1024,13 @@
           <span>Edge anti-aliasing<small>Smooths staircase steps along slanted and curved lines.</small></span></label>
         <label class="slider-row" id="video-aa-row" hidden>Smoothing
           <input type="range" id="video-aa" min="10" max="100" step="10" value="60"><output id="video-aa-out">60</output></label>
+      </div>
+      <div class="opt-row" id="video-on-row"><span>Runs on</span>
+        <div class="chips" id="video-on">
+          <label title="The original implementation: preparation on the processor, the rest on the graphics card"><input type="radio" name="von" value="original" checked><span>Original</span></label>
+          <label title="Everything on the graphics card with WebGPU; with AI · Fast or Balanced the frame never leaves it"><input type="radio" name="von" value="webgpu"><span>🚀 WebGPU</span></label>
+          <label title="Everything on the graphics card with WebGL (flat fills on the processor)"><input type="radio" name="von" value="webgl"><span>WebGL</span></label>
+        </div>
       </div>
       <p class="dialog-sub" id="video-cleanup-hint"></p>
     </fieldset>
@@ -1503,7 +1512,7 @@ function sanitizeUpscale(raw) {
     engine: ENGINE_NAMES[raw.engine] ? raw.engine : null,
     denoise: raw.engine === 'generalv3' && num(raw.denoise) != null ? Math.max(0, Math.min(100, raw.denoise)) : null,
     cuganMode: raw.engine === 'cugan' && CUGAN_MODES[raw.cuganMode] ? raw.cuganMode : null,
-    device: raw.device === 'gpu' ? 'gpu' : null,
+    device: ['gpu', 'webgpu', 'webgl'].includes(raw.device) ? raw.device : null,
     extras: raw.extras && typeof raw.extras === 'object' && (raw.extras.lines || raw.extras.fills || raw.extras.edges || num(raw.extras.aa))
       ? { lines: !!raw.extras.lines, fills: !!raw.extras.fills, edges: !!raw.extras.edges,
           ...(num(raw.extras.aa) ? { aa: Math.max(10, Math.min(100, raw.extras.aa)) } : {}) }
@@ -1930,7 +1939,7 @@ function describeUpscale(u) {
     const names = extrasNames(u.extras);
     if (names) parts.push(names);
   }
-  if (u.device === 'gpu') parts.push('GPU');
+  if (u.device) parts.push({ gpu: 'GPU', webgpu: 'WebGPU', webgl: 'WebGL' }[u.device] || '');
   if (u.format) parts.push(u.format.toUpperCase());
   if (u.originalWidth && u.width) parts.push(u.originalWidth === u.width && u.originalHeight === u.height
     ? u.width + '×' + u.height : u.originalWidth + '×' + u.originalHeight + ' → ' + u.width + '×' + u.height);
@@ -3590,6 +3599,7 @@ function runUpscaleJob(rgba, w, h, opts, onProgress, cmd = 'upscale') {
 const GPU_CLEANUP_MAX_PIXELS = 8e6;     // input pixels; bigger pictures use the original engine
 let gpuCleanupNotes = new Set(), lastCleanupBackend = null;
 async function gpuCleanup(rgba, w, h, opts, device, onProgress, isCancelled) {
+  lastCleanupBackend = null;
   const M = getMainUpscaler(), P = M.tunePreset(M.PRESETS[opts.preset] || M.PRESETS.balanced, opts.tuning);
   const note = msg => { if (!gpuCleanupNotes.has(msg)) { gpuCleanupNotes.add(msg); showToast(msg); } };
   const stopped = () => isCancelled && isCancelled();
@@ -3751,7 +3761,9 @@ async function enhanceOne(original, settings, onProgress) {
       auto: !!settings.auto, engine: settings.engine || 'builtin',
       ...(settings.engine === 'generalv3' ? { denoise: settings.denoise } : {}),
       ...(settings.engine === 'cugan' ? { cuganMode: settings.cuganMode } : {}),
-      device: settings.device === 'gpu' && !(isAiEngine(settings) && settings.preset === 'none') ? 'gpu' : 'cpu',
+      device: isAiEngine(settings) && settings.preset === 'none' ? 'cpu'
+        : settings.device === 'webgpu' || settings.device === 'webgl' ? (lastCleanupBackend ? lastCleanupBackend.toLowerCase() : gpuBuiltinAvailable() ? 'gpu' : 'cpu')
+        : settings.device === 'gpu' ? 'gpu' : 'cpu',
       originalWidth: w, originalHeight: h, width: size.W, height: size.H,
       created: Date.now(),
     },
@@ -4016,6 +4028,7 @@ function timeEstimate(st) {
   if (x.aa) { lo += 0.5; hi += 2; }
   if (st.mode === 'scale' && st.scale > 2) { const k = (st.scale / 2) ** 2; lo *= k; hi *= k; }   // ∝ output pixels
   if (st.device === 'gpu') { lo = Math.max(0.5, lo * 0.3); hi = Math.max(1, hi * 0.35); }   // output stages on the GPU
+  else if (st.device === 'webgpu' || st.device === 'webgl') { lo = Math.max(0.5, lo * 0.12); hi = Math.max(1, hi * 0.2); }   // everything on the GPU
   return (lo < 1 ? '<1' : Math.round(lo)) + '–' + Math.round(hi);
 }
 
@@ -4043,8 +4056,10 @@ function updateEnhanceSummary() {
   document.getElementById('device-fields').disabled = noBuiltin;
   document.getElementById('device-hint').textContent = noBuiltin ? 'Not used: “None” keeps the AI result as it is.'
     : !gpuBuiltinAvailable() ? 'CPU only: this browser offers no suitable GPU (WebGL2 with float rendering).'
-    : f.device.value === 'gpu' ? 'The upscaling steps run on your graphics card — much faster, especially at 3–4× and with extras. Results match the CPU (apart from tiny dithering differences).'
-    : 'Runs on the processor, in the background.';
+    : f.device.value === 'gpu' ? 'Original: the upscaling steps run on your graphics card — much faster, especially at 3–4× and with extras. Results match the CPU (apart from tiny dithering differences).'
+    : f.device.value === 'webgpu' ? 'Everything runs on your graphics card with WebGPU, the preparation too — the fastest. Uses WebGL where WebGPU is missing. Results match the original to within rounding; flat fills can differ slightly.'
+    : f.device.value === 'webgl' ? 'Everything runs on your graphics card with WebGL (flat fills on the processor). Results match the original to within rounding.'
+    : 'Original: runs on the processor, in the background.';
   const st = readEnhanceForm();
   document.getElementById('width-row').hidden = st.mode !== 'width';
   document.getElementById('scale-hint').hidden = !(st.mode === 'scale' && st.scale === 1);
@@ -4105,7 +4120,8 @@ function openEnhanceDialog(targets, mode) {
     if (document.getElementById('use-ai').checked) pickAiEngine();
     // "None (AI as-is)" was reset while the engine still read Built-in.
     if (saved.preset === 'none' && f.engine.value !== 'builtin') f.preset.value = 'none';
-    if (saved.device === 'gpu' && gpuBuiltinAvailable()) f.device.value = 'gpu';
+    if ((saved.device === 'gpu' || saved.device === 'webgl') && gpuBuiltinAvailable()) f.device.value = saved.device;
+    if (saved.device === 'webgpu' && navigator.gpu) f.device.value = 'webgpu';
     updateEnhanceSummary();                      // GPU availability is known now
   });
   if (saved.format === 'png' || saved.format === 'jpeg') f.format.value = saved.format;
@@ -6388,7 +6404,9 @@ async function aiRefreshUi() {
   }
   document.getElementById('ai-load-files').disabled = !!aiState.gpuError;
   enhanceForm.querySelector('input[name=device][value=gpu]').disabled = !gpuBuiltinAvailable();
-  if (!gpuBuiltinAvailable() && enhanceForm.elements.device.value === 'gpu') enhanceForm.elements.device.value = 'cpu';
+  enhanceForm.querySelector('input[name=device][value=webgl]').disabled = !gpuBuiltinAvailable();
+  enhanceForm.querySelector('input[name=device][value=webgpu]').disabled = !navigator.gpu;
+  if (enhanceForm.querySelector('input[name=device]:checked').disabled) enhanceForm.elements.device.value = 'cpu';
   const note = document.getElementById('ai-note');
   note.textContent = '';
   if (aiState.gpuError) note.textContent = 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). The built-in engine still works.';
@@ -8033,13 +8051,33 @@ async function videoChain(st, w, h, size, direct) {
     width: size.iw, height: size.ih, preset: st.preset, tuning: engineTuning(st), extras: engineExtras(st),
     jpegSource: false, flattenWhite: false, ...(ai ? { lineScale: size.iw / w } : {}),
   } : null;
-  const device = gpuBuiltinAvailable() ? 'gpu' : 'cpu';
+  // Where the cleanup runs: Original (prepare on the CPU, the rest on WebGL
+  // where available), or fully on the GPU through builtinJob('webgpu' /
+  // 'webgl'). WebGPU with the AI on WebGPU (or the built-in engine) keeps the
+  // frame on the GPU: AI result or frame → cleanup → encoder canvas.
+  const on = st.cleanupOn || 'original';
+  const device = on === 'original' ? (gpuBuiltinAvailable() ? 'gpu' : 'cpu') : on;
+  const cg = cleanup && on === 'webgpu' && (gpu || !ai) ? await gpuCleanupEngine() : null;
+  const M = getMainUpscaler(), P = cleanup && M.tunePreset(M.PRESETS[st.preset] || M.PRESETS.balanced, cleanup.tuning);
   const pic = { iw: size.iw, ih: size.ih, W: size.iw, H: size.ih, x: 0, y: 0 };     // the picture only
   const quiet = () => {};
   const chain = {
-    gpu, direct: direct && !!gpu && !cleanup,
-    backend: !ai ? (device === 'gpu' ? 'GPU' : 'CPU') : gpu ? 'WebGPU' : 'WebGL',
+    // The frame canvas lives on the GPU only for the AI on WebGPU; the built-in
+    // engine always gets the CPU-drawn frame, so every mode starts from the
+    // same pixels (the browser converts video colours slightly differently
+    // when drawing on the GPU).
+    gpu, gpuInput: !!gpu, direct: direct && (cg ? true : !!gpu && !cleanup),
+    backend: !ai ? '' : gpu ? 'WebGPU' : 'WebGL',
+    cleanBackend: !cleanup ? '' : cg ? 'WebGPU' : on === 'original' ? (device === 'gpu' ? 'GPU' : 'CPU') : 'WebGL',
     async run(canvas, isCancelled) {
+      if (cg) {
+        let src;
+        if (gpu) { gpu.eng.run(gpu.model, canvas, w, h, pic); src = gpu.eng.result(); }
+        else src = cg.upload(canvas, w, h);
+        const r = await cg.cleanupTex(src, gpu ? size.iw : w, gpu ? size.ih : h, cleanup, P, M.LANCZOS2, isCancelled);
+        if (chain.direct) { cg.ai.present(r.tex, size); return null; }
+        return cg.read(r.tex, size.iw, size.ih);
+      }
       let px;
       if (gpu) {
         if (chain.direct) { gpu.eng.run(gpu.model, canvas, w, h, size); return null; }
@@ -8092,8 +8130,8 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
   // AI on WebGPU and no cleanup the result goes straight from the engine's
   // canvas to the encoder; otherwise it is put into a 2D canvas.
   const chain = await videoChain(settings, w, h, size, true);
-  const inCanvas = new OffscreenCanvas(w, h), inCtx = inCanvas.getContext('2d', { willReadFrequently: !chain.gpu });
-  const outCanvas = chain.direct ? chain.gpu.eng.canvas : new OffscreenCanvas(size.W, size.H);
+  const inCanvas = new OffscreenCanvas(w, h), inCtx = inCanvas.getContext('2d', { willReadFrequently: !chain.gpuInput });
+  const outCanvas = chain.direct ? (await gpuCompact()).canvas : new OffscreenCanvas(size.W, size.H);
   const out = chain.direct ? null : outCanvas.getContext('2d');
   if (out) { out.fillStyle = '#000'; out.fillRect(0, 0, size.W, size.H); }
   let origin = null, nextKey = 0, lastDur = 0, done = 0, ai = 0;
@@ -8159,7 +8197,7 @@ const videoDialog = document.getElementById('video-dialog');
 const vEls = Object.fromEntries(['info', 'engines', 'denoise-row', 'denoise', 'denoise-out', 'models-hint', 'dl', 'out', 'time', 'time-out',
   'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close', 'rates', 'fit-label', 'box-label',
   'presets', 'preset-none', 'tuning', 'flatness', 'flatness-out', 'lines', 'lines-out', 'extras', 'x-lines', 'x-fills', 'x-edges', 'x-aa',
-  'aa', 'aa-out', 'aa-row', 'cleanup-hint']
+  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row']
   .map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('video-' + k)]));
 const vid = { file: null, info: null, frame: null, after: null, afterKey: '', ms: {}, busy: false, dirty: false, timer: null, job: null, clipUrl: null };
 
@@ -8176,20 +8214,22 @@ function videoSettings() {
   if (engine === 'builtin' && preset === 'none') preset = 'lumity';     // the built-in engine always cleans up
   return { engine, denoise: +vEls.denoise.value, preset, flatness: +vEls.flatness.value, lines: +vEls.lines.value,
     extras: { lines: vEls.xLines.checked, fills: vEls.xFills.checked, edges: vEls.xEdges.checked, aa: vEls.xAa.checked ? +vEls.aa.value : 0 },
+    cleanupOn: pick('von') || 'original',
     res, mode: pick('vmode') || 'fit', bitrate: (+pick('vbitrate') || VIDEO_RES[res].rates[1]) * 1e6 };
 }
 
 // Everything that changes the picture (not the time or file settings).
 function videoChainKey(st, size) {
   return JSON.stringify([st.engine, st.engine === 'generalv3' ? st.denoise : 0, st.preset,
-    st.preset === 'lumity' ? [st.flatness, st.lines] : 0, engineExtras(st), size.iw, size.ih]);
+    st.preset === 'lumity' ? [st.flatness, st.lines] : 0, engineExtras(st), st.preset === 'none' ? '' : st.cleanupOn, size.iw, size.ih]);
 }
-// "AI · Fast on WebGPU → Lumity · flat fills"
-function videoDescribe(st, backend) {
+// "AI · Fast on WebGPU → Lumity · flat fills on WebGPU"
+function videoDescribe(st, backend, cleanBackend) {
   const name = st.engine === 'builtin' ? 'Built-in engine' : AI_MODELS.find(m => m.id === st.engine).title;
   const x = engineExtras(st);
-  return name + (backend ? ' on ' + backend : '') + (st.preset === 'none' ? '' : (st.engine === 'builtin' ? ' · ' : ' → ') +
-    PRESET_NAMES[st.preset] + (x ? ' · ' + extrasNames(x) : ''));
+  if (st.engine === 'builtin') return name + ' · ' + PRESET_NAMES[st.preset] + (x ? ' · ' + extrasNames(x) : '') + (cleanBackend ? ' on ' + cleanBackend : '');
+  return name + (backend ? ' on ' + backend : '') + (st.preset === 'none' ? '' : ' → ' +
+    PRESET_NAMES[st.preset] + (x ? ' · ' + extrasNames(x) : '') + (cleanBackend ? ' on ' + cleanBackend : ''));
 }
 function videoSize() {
   const v = vid.info.video, st = videoSettings();
@@ -8267,6 +8307,10 @@ function videoTexts() {
   vEls.extras.classList.toggle('off', st.preset === 'none');
   vEls.extras.querySelectorAll('input').forEach(i => { i.disabled = st.preset === 'none'; });
   vEls.aaRow.hidden = !vEls.xAa.checked;
+  vEls.onRow.hidden = st.preset === 'none';
+  vEls.on.querySelector('input[value=webgpu]').disabled = !navigator.gpu;
+  vEls.on.querySelector('input[value=webgl]').disabled = !gpuBuiltinAvailable();
+  if (vEls.on.querySelector('input:checked').disabled) vEls.on.querySelector('input[value=original]').checked = true;
   vEls.cleanupHint.textContent = st.preset === 'none'
     ? 'Off: the AI result as-is. A cleanup preset runs the gallery’s picture engine on every frame after the AI.'
     : 'Runs on every frame, which adds time (see the estimate below). Lumity, flat fills and line redraw decide per frame and can shimmer — check with ▶ Preview 5 s.';
@@ -8330,12 +8374,12 @@ async function videoRenderPreview() {
       const up = await chain.run(canvas, gone);
       // The first run also sends the model to the GPU, so the fastest is kept.
       vid.ms[ck] = Math.min(vid.ms[ck] || Infinity, performance.now() - t0);
-      vid.backend = chain.backend;
+      vid.backend = chain.backend; vid.cleanBackend = chain.cleanBackend;
       const c = new OffscreenCanvas(size.iw, size.ih);
       c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(up.buffer, up.byteOffset, size.iw * size.ih * 4), size.iw, size.ih), 0, 0);
       vid.after = c; vid.afterKey = key;
     }
-    vEls.status.textContent = where + ' · ' + videoDescribe(st, vid.backend);
+    vEls.status.textContent = where + ' · ' + videoDescribe(st, vid.backend, vid.cleanBackend);
     videoDraw(); videoTexts();
   } catch (err) {
     if (!gone()) { console.error('Video preview failed', err); vEls.status.textContent = 'Preview failed: ' + (err.message || err); }
@@ -8457,6 +8501,7 @@ document.getElementById('video-file-input').addEventListener('change', e => {
 });
 vEls.engines.addEventListener('change', videoUpdate);
 vEls.presets.addEventListener('change', videoUpdate);
+vEls.on.addEventListener('change', videoUpdate);
 vEls.extras.addEventListener('change', videoUpdate);
 for (const k of ['flatness', 'lines', 'aa']) vEls[k].addEventListener('input', () => { vEls[k + 'Out'].textContent = vEls[k].value; videoSchedulePreview(300); });
 vEls.denoise.addEventListener('input', () => { vEls.denoiseOut.textContent = vEls.denoise.value; videoSchedulePreview(300); });
