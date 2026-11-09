@@ -996,18 +996,20 @@
     </fieldset>
     <fieldset>
       <legend>Output</legend>
+      <div class="opt-row"><span>Resolution</span>
+        <div class="chips">
+          <label title="Full HD, 1920×1080"><input type="radio" name="vres" value="1080" checked><span>1080p</span></label>
+          <label title="HD, 1280×720: same AI work, smaller files"><input type="radio" name="vres" value="720"><span>720p</span></label>
+        </div>
+      </div>
       <div class="opt-row"><span>Size</span>
         <div class="chips">
-          <label title="Fit inside 1920×1080 and keep the shape (4:3 becomes 1440×1080)"><input type="radio" name="vmode" value="fit" checked><span>Fit</span></label>
-          <label title="Always 1920×1080, black bars where the shape differs"><input type="radio" name="vmode" value="box"><span>Letterbox</span></label>
+          <label id="video-fit-label"><input type="radio" name="vmode" value="fit" checked><span>Fit</span></label>
+          <label id="video-box-label"><input type="radio" name="vmode" value="box"><span>Letterbox</span></label>
         </div>
       </div>
       <div class="opt-row"><span>Quality</span>
-        <div class="chips">
-          <label><input type="radio" name="vbitrate" value="6"><span>6 Mbps</span></label>
-          <label><input type="radio" name="vbitrate" value="10" checked><span>10 Mbps</span></label>
-          <label><input type="radio" name="vbitrate" value="16"><span>16 Mbps</span></label>
-        </div>
+        <div class="chips" id="video-rates"></div>
       </div>
       <p class="dialog-sub" id="video-out"></p>
     </fieldset>
@@ -6438,22 +6440,28 @@ async function fileSink(handle) {
 // ── VIDEO: PIPELINE ───────────────────────────────────────────────────────────
 // decode (WebCodecs) → AI upscale on the GPU (aiRun, as for pictures) → encode
 // H.264 (WebCodecs) → MP4. The audio track is copied unchanged.
-const VIDEO_MAX_W = 1920, VIDEO_MAX_H = 1080;
+// Output resolutions: frame size, bitrate choices (Mbps, middle = default) and
+// H.264 levels (≤ 30 fps / above).
+const VIDEO_RES = {
+  1080: { W: 1920, H: 1080, rates: [6, 10, 16], levels: ['28', '2a'] },   // level 4.0 / 4.2
+  720: { W: 1280, H: 720, rates: [3, 5, 8], levels: ['1f', '20'] },       // level 3.1 / 3.2
+};
 
 // Upscaled picture size and the frame it is placed in: Fit = that size rounded
-// up to even numbers; Letterbox = always 1920×1080. null when the video is
-// already that big. w×h is the exact display size (853.33×480 for a 16:9 DVD
-// frame), so such videos fill 1920×1080 exactly.
-function videoTargetSize(w, h, mode) {
-  if (w >= VIDEO_MAX_W || h >= VIDEO_MAX_H) return null;
-  const s = Math.min(VIDEO_MAX_W / w, VIDEO_MAX_H / h);
-  const iw = Math.min(VIDEO_MAX_W, Math.round(w * s)), ih = Math.min(VIDEO_MAX_H, Math.round(h * s));
-  const W = mode === 'box' ? VIDEO_MAX_W : iw + (iw & 1), H = mode === 'box' ? VIDEO_MAX_H : ih + (ih & 1);
+// up to even numbers; Letterbox = always the full frame (e.g. 1920×1080). null
+// when the video is already that big. w×h is the exact display size
+// (853.33×480 for a 16:9 DVD frame), so such videos fill the frame exactly.
+function videoTargetSize(w, h, mode, res = 1080) {
+  const { W: MW, H: MH } = VIDEO_RES[res];
+  if (w >= MW || h >= MH) return null;
+  const s = Math.min(MW / w, MH / h);
+  const iw = Math.min(MW, Math.round(w * s)), ih = Math.min(MH, Math.round(h * s));
+  const W = mode === 'box' ? MW : iw + (iw & 1), H = mode === 'box' ? MH : ih + (ih & 1);
   return { iw, ih, W, H, x: (W - iw) >> 1, y: (H - ih) >> 1 };
 }
 
-async function videoEncoderConfig(W, H, fps, bitrate) {
-  const level = fps > 30.5 ? '2a' : '28';                         // H.264 level 4.2 / 4.0
+async function videoEncoderConfig(W, H, fps, bitrate, res = 1080) {
+  const level = VIDEO_RES[res].levels[fps > 30.5 ? 1 : 0];
   const base = { width: W, height: H, bitrate, framerate: fps, bitrateMode: 'variable', latencyMode: 'quality', avc: { format: 'avc' } };
   for (const codec of ['avc1.6400' + level, 'avc1.4d00' + level, 'avc1.42e0' + level]) {
     for (const hardwareAcceleration of ['prefer-hardware', 'no-preference']) {
@@ -6482,15 +6490,15 @@ async function videoFrameAt(src, t) {
   throw new Error('No frame found at that time.');
 }
 
-// settings: { engine, denoise, mode, bitrate (bit/s) }; range: { start, end } µs.
-// onProgress(done, total). Resolves with sink.close()'s result.
+// settings: { engine, denoise, res (1080 | 720), mode, bitrate (bit/s) };
+// range: { start, end } µs. onProgress(done, total). Resolves with sink.close()'s result.
 async function videoUpscale(src, settings, range, sink, onProgress, isCancelled) {
   const { file, info } = src, v = info.video;
   const w = Math.round(v.width), h = Math.round(v.height);
-  const size = videoTargetSize(v.width, v.height, settings.mode);
-  if (!size) throw new Error('This video is already full HD or larger.');
+  const size = videoTargetSize(v.width, v.height, settings.mode, settings.res);
+  if (!size) throw new Error('This video is already ' + settings.res + 'p or larger.');
   const total = v.samples.filter(s => s.pts >= range.start && s.pts < range.end).length || 1;
-  const config = await videoEncoderConfig(size.W, size.H, v.fps, settings.bitrate);
+  const config = await videoEncoderConfig(size.W, size.H, v.fps, settings.bitrate, settings.res);
   const scale = v.scale >= 600 ? v.scale : 90000;
   const A = info.audio;
   const mux = mp4Muxer(sink, { width: size.W, height: size.H, scale, audio: A && { stsd: A.stsd, scale: A.scale } });
@@ -6564,7 +6572,7 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
 // added to the gallery or its storage.
 const videoDialog = document.getElementById('video-dialog');
 const vEls = Object.fromEntries(['info', 'engines', 'denoise-row', 'denoise', 'denoise-out', 'models-hint', 'dl', 'out', 'time', 'time-out',
-  'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close']
+  'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close', 'rates', 'fit-label', 'box-label']
   .map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('video-' + k)]));
 const vid = { file: null, info: null, frame: null, after: null, afterKey: '', ms: {}, busy: false, dirty: false, timer: null, job: null, clipUrl: null };
 
@@ -6576,11 +6584,31 @@ function videoClock(sec) {
 
 function videoSettings() {
   const pick = name => (videoDialog.querySelector('input[name=' + name + ']:checked') || {}).value;
-  return { engine: pick('vengine') || null, denoise: +vEls.denoise.value, mode: pick('vmode') || 'fit', bitrate: (+pick('vbitrate') || 10) * 1e6 };
+  const res = +pick('vres') || 1080;
+  return { engine: pick('vengine') || null, denoise: +vEls.denoise.value, res, mode: pick('vmode') || 'fit',
+    bitrate: (+pick('vbitrate') || VIDEO_RES[res].rates[1]) * 1e6 };
 }
 function videoSize() {
-  const v = vid.info.video;
-  return videoTargetSize(v.width, v.height, videoSettings().mode);
+  const v = vid.info.video, st = videoSettings();
+  return videoTargetSize(v.width, v.height, st.mode, st.res);
+}
+
+// Bitrate chips and size tooltips for the chosen resolution; the same
+// position (low / middle / high) stays selected.
+function videoRefreshRes() {
+  const R = VIDEO_RES[videoSettings().res];
+  const boxes = [...vEls.rates.querySelectorAll('input')], at = Math.max(0, boxes.findIndex(b => b.checked));
+  vEls.rates.innerHTML = '';
+  R.rates.forEach((mbps, i) => {
+    const label = document.createElement('label');
+    label.innerHTML = '<input type="radio" name="vbitrate"><span></span>';
+    label.querySelector('input').value = mbps;
+    label.querySelector('input').checked = i === (boxes.length ? at : 1);
+    label.querySelector('span').textContent = mbps + ' Mbps';
+    vEls.rates.appendChild(label);
+  });
+  vEls.fitLabel.title = 'Fit inside ' + R.W + '×' + R.H + ' and keep the shape (4:3 becomes ' + R.H * 4 / 3 + '×' + R.H + ')';
+  vEls.boxLabel.title = 'Always ' + R.W + '×' + R.H + ', black bars where the shape differs';
 }
 
 // Model chips: downloaded models can be picked; the others get a Download button.
@@ -6624,7 +6652,7 @@ function videoTexts() {
   vEls.denoiseRow.hidden = st.engine !== 'generalv3';
   vEls.denoiseOut.textContent = vEls.denoise.value;
   const est = st.bitrate / 8 * vid.info.duration + vid.audioBytes;
-  vEls.out.textContent = !size ? 'This video is already full HD or larger — nothing to upscale.'
+  vEls.out.textContent = !size ? 'This video is already ' + st.res + 'p or larger — nothing to upscale.'
     : 'Output ' + size.W + '×' + size.H + (size.W !== size.iw || size.H !== size.ih ? ' (picture ' + size.iw + '×' + size.ih + ')' : '') +
       ' · H.264 · about ' + formatBytes(est);
   const ms = st.engine && vid.ms[st.engine];
@@ -6649,7 +6677,7 @@ function videoDraw() {
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   const split = vid.after ? +vEls.split.value / 100 : 1, sx = Math.round(W * split);
-  if (vid.after) ctx.drawImage(vid.after, x, y);
+  if (vid.after) ctx.drawImage(vid.after, x, y, iw, ih);
   if (sx > 0) { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, sx, H); ctx.clip(); ctx.drawImage(src, x, y, iw, ih); ctx.restore(); }
   if (vid.after && sx > 0 && sx < W) { ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fillRect(sx - 1, 0, 2, H); }
 }
@@ -6673,7 +6701,7 @@ async function videoRenderPreview() {
     const st = videoSettings(), size = videoSize();
     const where = 'Frame at ' + videoClock(vid.frame.timestamp / 1e6);
     if (!st.engine || !size) { vEls.status.textContent = where; return; }
-    const key = [st.engine, st.engine === 'generalv3' ? st.denoise : '', t].join('|');
+    const key = [st.engine, st.engine === 'generalv3' ? st.denoise : '', t, size.iw, size.ih].join('|');
     if (vid.afterKey !== key) {
       vEls.spinner.hidden = false;
       vEls.status.textContent = where + ' · upscaling…';
@@ -6748,7 +6776,7 @@ async function videoRun(kind) {
   const clip = kind === 'clip';
   const start = clip ? Math.round(+vEls.time.value * 1e6) : 0;
   const range = { start, end: clip ? start + 5e6 : Infinity };
-  const name = stripExt(vid.file.name) + '.upscaled-' + size.H + 'p.mp4';
+  const name = stripExt(vid.file.name) + '.upscaled-' + st.res + 'p.mp4';
   let handle = null;
   if (!clip) {
     if (window.showSaveFilePicker) {
@@ -6809,7 +6837,10 @@ document.getElementById('video-file-input').addEventListener('change', e => {
 });
 vEls.engines.addEventListener('change', videoUpdate);
 vEls.denoise.addEventListener('input', () => { vEls.denoiseOut.textContent = vEls.denoise.value; videoSchedulePreview(300); });
-videoDialog.querySelectorAll('input[name=vmode], input[name=vbitrate]').forEach(r => r.addEventListener('change', () => { videoTexts(); videoDraw(); }));
+videoDialog.querySelectorAll('input[name=vmode]').forEach(r => r.addEventListener('change', () => { videoTexts(); videoDraw(); }));
+vEls.rates.addEventListener('change', videoTexts);
+videoDialog.querySelectorAll('input[name=vres]').forEach(r => r.addEventListener('change', () => { videoRefreshRes(); videoUpdate(); }));
+videoRefreshRes();
 vEls.time.addEventListener('input', () => { vEls.timeOut.textContent = videoClock(+vEls.time.value); videoSchedulePreview(350); });
 vEls.split.addEventListener('input', () => { vEls.splitOut.textContent = vEls.split.value + '%'; videoDraw(); });
 vEls.zoom.addEventListener('change', () => vEls.wrap.classList.toggle('zoom', vEls.zoom.checked));
