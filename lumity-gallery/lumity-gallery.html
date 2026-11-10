@@ -570,14 +570,54 @@
     }
 
     /* ── VIDEO DIALOG ── */
-    #video-card { gap: 0; width: min(720px, 100%); }
-    #video-card > #video-info { margin-bottom: 0.9rem; }
+    /* Steps ①–④ (settings) on the left, ⑤ Check (preview) on the right and in
+       view while scrolling; one column on narrow screens. */
+    #video-card { gap: 0; width: min(1180px, 100%); }
+    .vd-head { margin-bottom: 0.5rem; }
+    .vd-head h2 { margin-bottom: 0.15rem; }
+    .vd-cols { display: flex; flex-direction: column; }
+    .vd-settings > fieldset, .vd-settings > details, .vd-check > fieldset { padding: 0.9rem 0; border-top: 1px solid var(--border); }
+    @media (min-width: 1000px) {
+      .vd-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 1.6rem; align-items: start; }
+      .vd-check { position: sticky; top: 0; }
+      .vd-check > fieldset { border-top: none; padding-top: 0.4rem; }
+    }
+    #video-info:empty, #video-qsum:empty, #video-summary:empty, #video-plan:empty { display: none; }
+    /* ② What to do: three cards */
+    .goal-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; }
+    .goal-cards label { position: relative; cursor: pointer; }
+    .goal-cards input { position: absolute; opacity: 0; pointer-events: none; }
+    .goal-cards span { display: flex; flex-direction: column; gap: 0.25rem; height: 100%; box-sizing: border-box; padding: 0.6rem 0.7rem;
+      border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 0.86rem; transition: background 0.15s, border-color 0.15s; }
+    .goal-cards small { color: var(--text-muted); font-size: 0.74rem; line-height: 1.35; }
+    .goal-cards input:checked + span { background: var(--glow); border-color: var(--accent2); }
+    .goal-cards input:checked + span small { color: #eee; }
+    .goal-cards input:focus-visible + span { outline: 2px solid var(--accent2); outline-offset: 2px; }
+    @media (max-width: 560px) { .goal-cards { grid-template-columns: 1fr; } }
+    .vd-opts { display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.75rem; }
+    .vd-opts[hidden], #video-size-note[hidden], #video-speed[hidden] { display: none; }
+    .vd-warn { color: #ffcc80; }
+    .vd-rate { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+    #video-more { border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); }
+    #video-more summary { cursor: pointer; padding: 0.4rem 0.65rem; color: var(--text); font-size: 0.82rem; }
+    #video-more-sum, #video-speed-sum { color: var(--text-muted); font-size: 0.76rem; font-weight: normal; letter-spacing: 0; text-transform: none; margin-left: 0.3rem; }
+    .vd-more { display: flex; flex-direction: column; gap: 0.45rem; padding: 0.1rem 0.65rem 0.65rem; }
+    #video-speed summary { cursor: pointer; color: var(--accent2); font-size: 0.78rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+    #video-speed .vd-more { padding: 0.6rem 0 0; border: none; margin: 0; }
+    .vd-clip { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
+    .vd-clip small { color: var(--text-muted); font-size: 0.74rem; flex: 1 1 12rem; }
+    .vd-clip button { background: var(--surface2); border: 1px solid var(--border); color: var(--accent2); padding: 0.45rem 1rem; border-radius: 8px; cursor: pointer; font-size: 0.88rem; }
+    .vd-clip button:hover { border-color: var(--accent2); }
+    .vd-clip button:disabled { opacity: 0.45; cursor: default; }
+    #video-plan { color: var(--text); }
+    .vd-step { display: inline-grid; place-items: center; width: 1.3rem; height: 1.3rem; border-radius: 50%; background: var(--glow); color: #fff;
+      font-size: 0.72rem; letter-spacing: 0; margin-right: 0.5rem; vertical-align: 1px; }
     #video-dl { display: flex; flex-wrap: wrap; gap: 0.4rem; }
     #video-dl:empty { display: none; }
     #video-dl button { background: var(--surface2); border: 1px solid var(--border); color: var(--accent2); border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; font-size: 0.78rem; }
     #video-dl button:disabled { opacity: 0.6; cursor: default; }
     #video-denoise-row[hidden], #video-tuning[hidden], #video-aa-row[hidden], #video-preset-none[hidden] { display: none; }
-    #video-tuning, #video-extras { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem; }
+    #video-tuning, #video-extras { display: flex; flex-direction: column; gap: 0.4rem; }
     #video-extras.off .extra { opacity: 0.45; cursor: default; }
     .vp-wrap { position: relative; border-radius: 6px; border: 1px solid var(--border); background: #000; overflow: hidden; }
     .vp-wrap canvas { display: block; width: 100%; height: auto; }
@@ -587,9 +627,9 @@
     #video-clip { width: 100%; border-radius: 6px; border: 1px solid var(--border); background: #000; }
     #video-clip[hidden] { display: none; }
     #video-status { color: var(--text-muted); font-size: 0.75rem; min-height: 1em; }
-    #video-card > #video-queue-fs { border-top: none; padding-top: 0.4rem; }
+    .vd-settings > #video-queue-fs { border-top: none; padding-top: 0.4rem; }
     #video-queue { display: flex; flex-direction: column; gap: 0.35rem; max-height: 280px; overflow-y: auto; }
-    #video-queue:empty::before { content: 'No videos yet — add one or more MP4 files.'; color: var(--text-muted); font-size: 0.8rem; }
+    #video-queue:empty::before { content: 'No videos yet: add one or more MP4 files, then click one to preview it.'; color: var(--text-muted); font-size: 0.8rem; }
     .vq-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 0.2rem 0.6rem;
       padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); cursor: pointer; font-size: 0.82rem; color: var(--text); }
     .vq-row.sel { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2) inset; }
@@ -899,7 +939,7 @@
             <label title="The original WebGL engine"><input type="radio" name="aiDevice" value="webgl" checked><span>WebGL</span></label>
           </div>
         </div>
-        <label class="dialog-check" id="ai-fast-row" hidden><input type="checkbox" id="ai-fast">
+        <label class="dialog-check extra" id="ai-fast-row" hidden><input type="checkbox" id="ai-fast">
           <span>⚡ Fast AI maths<small>About 1.8× faster on WebGPU: sums in 16-bit steps, so the result differs very slightly (not visibly).</small></span></label>
         <p class="dialog-sub" id="ai-pick-hint" hidden></p>
         <details class="ai-manage" id="ai-manage">
@@ -1043,54 +1083,52 @@
 <!-- Video upscale -->
 <div id="video-dialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="video-title">
   <div class="dialog-card" id="video-card">
-    <h2 id="video-title">🎬 Upscale videos</h2>
-    <fieldset id="video-queue-fs">
-      <legend>Queue</legend>
-      <div id="video-queue"></div>
-      <div class="vq-tools">
-        <button type="button" id="video-add">＋ Add videos…</button>
-        <button type="button" id="video-clear">Clear finished</button>
-      </div>
-      <p class="dialog-sub" id="video-qsum"></p>
-    </fieldset>
-    <p class="dialog-sub" id="video-info"></p>
-    <fieldset>
-      <legend>Engine</legend>
-      <div class="chips even" id="video-engines"></div>
-      <div class="slider-row" id="video-denoise-row" hidden><span>Denoise</span><input type="range" id="video-denoise" min="0" max="100" value="50"><output id="video-denoise-out">50</output></div>
-      <div class="opt-row" id="video-aion-row" hidden><span>AI runs on</span>
-        <div class="chips" id="video-aion">
-          <label title="The WebGPU engine: several times faster; with a 🚀 WebGPU cleanup the frame never leaves the graphics card"><input type="radio" name="vaion" value="webgpu" checked><span>🚀 WebGPU</span></label>
-          <label title="The original WebGL engine"><input type="radio" name="vaion" value="webgl"><span>WebGL</span></label>
-        </div>
-      </div>
-      <label class="dialog-check" id="video-aifast-row" hidden><input type="checkbox" id="video-aifast">
-        <span>⚡ Fast AI maths<small>About 1.8× faster on WebGPU: sums in 16-bit steps, so the result differs very slightly (not visibly).</small></span></label>
-      <div class="opt-row" id="video-scale-row" hidden><span>Scaling</span>
-        <div class="chips" id="video-scale">
-          <label title="The browser's high-quality scaling on the graphics card: smooth, and the fastest"><input type="radio" name="vscale" value="smooth" checked><span>Smooth</span></label>
-          <label title="Lanczos filter on WebGPU: crisper edges; when shrinking it averages the pixels it leaves out"><input type="radio" name="vscale" value="sharp"><span>Sharp</span></label>
-        </div>
-      </div>
-      <p class="dialog-sub" id="video-models-hint"></p>
-      <div id="video-dl"></div>
-    </fieldset>
-    <fieldset id="video-cleanup">
-      <legend>Cleanup</legend>
-      <div class="chips" id="video-presets">
+    <div class="vd-head">
+      <h2 id="video-title">🎬 Convert videos</h2>
+      <p class="dialog-sub">Settings apply to every video in the queue. Click a video to preview it.</p>
+    </div>
+    <div class="vd-cols">
+      <div class="vd-settings" id="video-settings">
+        <fieldset id="video-queue-fs">
+          <legend><span class="vd-step">1</span>Videos</legend>
+          <div id="video-queue"></div>
+          <div class="vq-tools">
+            <button type="button" id="video-add">＋ Add videos…</button>
+            <button type="button" id="video-clear">Clear finished</button>
+          </div>
+          <p class="dialog-sub" id="video-info"></p>
+          <p class="dialog-sub" id="video-qsum"></p>
+        </fieldset>
+        <fieldset id="video-goal-fs">
+          <legend><span class="vd-step">2</span>What to do</legend>
+          <div class="goal-cards" id="video-goal">
+            <label><input type="radio" name="vgoal" value="ai"><span><b>✨ AI upscale</b><small>Sharpest result for anime and cartoons; the slowest.</small></span></label>
+            <label><input type="radio" name="vgoal" value="builtin"><span><b>🧰 Upscale + clean up</b><small>No AI: the gallery’s own upscaler with a cleanup preset.</small></span></label>
+            <label><input type="radio" name="vgoal" value="resize"><span><b>📐 Resize only</b><small>Just scale and re-encode, e.g. 720p → 480p or a lower bitrate. Fast.</small></span></label>
+          </div>
+          <div class="vd-opts" id="video-ai-opts">
+            <div class="opt-row"><span>AI model</span><div class="chips" id="video-engines"></div></div>
+            <div class="slider-row" id="video-denoise-row" hidden><span>Denoise</span><input type="range" id="video-denoise" min="0" max="100" value="50"><output id="video-denoise-out">50</output></div>
+            <div id="video-dl"></div>
+            <p class="dialog-sub" id="video-models-hint"></p>
+          </div>
+          <div class="vd-opts" id="video-cleanup">
+            <div class="opt-row"><span id="video-cleanup-label">Cleanup</span><div class="chips" id="video-presets">
         <label id="video-preset-none"><input type="radio" name="vpreset" value="none" checked><span>Off</span></label>
         <label><input type="radio" name="vpreset" value="soft"><span>Soft</span></label>
         <label><input type="radio" name="vpreset" value="balanced"><span>Balanced</span></label>
         <label><input type="radio" name="vpreset" value="strong"><span>Strong</span></label>
         <label><input type="radio" name="vpreset" value="lumity"><span>✨ Lumity</span></label>
-      </div>
-      <div id="video-tuning" hidden>
+      </div></div>
+            <details id="video-more"><summary>More cleanup options <span id="video-more-sum"></span></summary>
+              <div class="vd-more">
+              <div id="video-tuning" hidden>
         <label class="slider-row">Flatness
           <input type="range" id="video-flatness" min="0" max="100" step="5" value="50"><output id="video-flatness-out">50</output></label>
         <label class="slider-row">Line boldness
           <input type="range" id="video-lines" min="0" max="100" step="5" value="50"><output id="video-lines-out">50</output></label>
       </div>
-      <div id="video-extras">
+              <div id="video-extras">
         <label class="dialog-check extra"><input type="checkbox" id="video-x-lines">
           <span>Smooth line redraw<small>Rebuilds outlines as smooth, even strokes.</small></span></label>
         <label class="dialog-check extra"><input type="checkbox" id="video-x-fills">
@@ -1102,18 +1140,20 @@
         <label class="slider-row" id="video-aa-row" hidden>Smoothing
           <input type="range" id="video-aa" min="10" max="100" step="10" value="60"><output id="video-aa-out">60</output></label>
       </div>
-      <div class="opt-row" id="video-on-row"><span>Runs on</span>
-        <div class="chips" id="video-on">
-          <label title="The original implementation: preparation on the processor, the rest on the graphics card"><input type="radio" name="von" value="original" checked><span>Original</span></label>
-          <label title="Everything on the graphics card with WebGPU; with AI · Fast or Balanced the frame never leaves it"><input type="radio" name="von" value="webgpu"><span>🚀 WebGPU</span></label>
-          <label title="Everything on the graphics card with WebGL (flat fills on the processor)"><input type="radio" name="von" value="webgl"><span>WebGL</span></label>
+              </div>
+            </details>
+            <p class="dialog-sub" id="video-cleanup-hint"></p>
+          </div>
+          <div class="opt-row" id="video-scale-row" hidden><span>Scaling</span>
+        <div class="chips" id="video-scale">
+          <label title="The browser's high-quality scaling on the graphics card: smooth, and the fastest"><input type="radio" name="vscale" value="smooth" checked><span>Smooth</span></label>
+          <label title="Lanczos filter on WebGPU: crisper edges; when shrinking it averages the pixels it leaves out"><input type="radio" name="vscale" value="sharp"><span>Sharp</span></label>
         </div>
       </div>
-      <p class="dialog-sub" id="video-cleanup-hint"></p>
-    </fieldset>
-    <fieldset>
-      <legend>Output</legend>
-      <div class="opt-row"><span>Resolution</span>
+        </fieldset>
+        <fieldset id="video-output-fs">
+          <legend><span class="vd-step">3</span>Output file</legend>
+          <div class="opt-row"><span>Resolution</span>
         <div class="chips">
           <label title="Full HD, 1920×1080"><input type="radio" name="vres" value="1080" checked><span>1080p</span></label>
           <label title="HD, 1280×720: same AI work, smaller files"><input type="radio" name="vres" value="720"><span>720p</span></label>
@@ -1122,32 +1162,59 @@
           <label title="The video's own size: no enlarging, only the cleanup (or the AI at 1×); with 📐 Resize only: re-encoded at the chosen bitrate"><input type="radio" name="vres" value="orig"><span id="video-orig-text">Original</span></label>
         </div>
       </div>
-      <div class="opt-row" id="video-size-row"><span>Size</span>
+          <p class="dialog-sub vd-warn" id="video-size-note" hidden></p>
+          <div class="opt-row" id="video-size-row"><span>Size</span>
         <div class="chips">
           <label id="video-fit-label"><input type="radio" name="vmode" value="fit" checked><span>Fit</span></label>
           <label id="video-box-label"><input type="radio" name="vmode" value="box"><span>Letterbox</span></label>
         </div>
       </div>
-      <div class="opt-row"><span>Quality</span>
-        <div class="chips" id="video-rates"></div>
-        <label id="video-mbps-row" hidden><input type="number" id="video-mbps" min="0.3" max="40" step="0.1" value="2.5"> Mbps</label>
+          <div class="opt-row"><span>Bitrate</span>
+            <div class="vd-rate"><div class="chips" id="video-rates"></div>
+              <label id="video-mbps-row" hidden><input type="number" id="video-mbps" min="0.3" max="40" step="0.1" value="2.5"> Mbps</label></div>
+          </div>
+          <p class="dialog-sub" id="video-out"></p>
+        </fieldset>
+        <details id="video-speed"><summary><span class="vd-step">4</span>Speed <span id="video-speed-sum"></span></summary>
+          <fieldset class="vd-more">
+            <div class="opt-row" id="video-aion-row" hidden><span>AI runs on</span>
+        <div class="chips" id="video-aion">
+          <label title="The WebGPU engine: several times faster; with a 🚀 WebGPU cleanup the frame never leaves the graphics card"><input type="radio" name="vaion" value="webgpu" checked><span>🚀 WebGPU</span></label>
+          <label title="The original WebGL engine"><input type="radio" name="vaion" value="webgl"><span>WebGL</span></label>
+        </div>
       </div>
-      <p class="dialog-sub" id="video-out"></p>
-    </fieldset>
-    <div class="preview">
-      <div class="slider-row"><span>Frame at</span><input type="range" id="video-time" min="0" max="1" step="any" value="0"><output id="video-time-out">0:00</output></div>
+            <label class="dialog-check extra" id="video-aifast-row" hidden><input type="checkbox" id="video-aifast">
+        <span>⚡ Fast AI maths<small>About 1.8× faster on WebGPU: sums in 16-bit steps, so the result differs very slightly (not visibly).</small></span></label>
+            <div class="opt-row" id="video-on-row"><span>Cleanup runs on</span>
+        <div class="chips" id="video-on">
+          <label title="The original implementation: preparation on the processor, the rest on the graphics card"><input type="radio" name="von" value="original" checked><span>Original</span></label>
+          <label title="Everything on the graphics card with WebGPU; with AI · Fast or Balanced the frame never leaves it"><input type="radio" name="von" value="webgpu"><span>🚀 WebGPU</span></label>
+          <label title="Everything on the graphics card with WebGL (flat fills on the processor)"><input type="radio" name="von" value="webgl"><span>WebGL</span></label>
+        </div>
+      </div>
+            <p class="dialog-sub">The defaults are the fastest that work here; change them only to compare or to work around a GPU problem.</p>
+          </fieldset>
+        </details>
+      </div>
+      <div class="vd-check">
+        <fieldset class="preview" id="video-check-fs">
+          <legend><span class="vd-step">5</span>Check</legend>
+          <div class="slider-row"><span>Frame at</span><input type="range" id="video-time" min="0" max="1" step="any" value="0"><output id="video-time-out">0:00</output></div>
       <div class="vp-wrap" id="video-wrap"><canvas id="video-canvas" width="16" height="9"></canvas>
         <div class="tile-spinner" id="video-spinner" hidden><div class="progress-spinner"></div><span>Upscaling frame…</span></div></div>
       <div class="slider-row"><span>Before | after</span><input type="range" id="video-split" min="0" max="100" value="50"><output id="video-split-out">50%</output></div>
       <label class="dialog-check"><input type="checkbox" id="video-zoom"> <span>Show 1:1 pixels</span></label>
       <p id="video-status"></p>
-      <video id="video-clip" controls playsinline hidden></video>
+          <p class="dialog-sub" id="video-summary"></p>
+          <div class="vd-clip"><button type="button" id="video-clip-btn">▶ Preview 5 s</button><small>Renders 5 s from the frame above with these settings, to check for flicker.</small></div>
+          <video id="video-clip" controls playsinline hidden></video>
+        </fieldset>
+      </div>
     </div>
     <div class="dialog-foot">
-      <p class="dialog-sub" id="video-summary"></p>
+      <p class="dialog-sub" id="video-plan"></p>
       <div class="dialog-actions">
         <button type="button" id="video-close">Close</button>
-        <button type="button" id="video-clip-btn">▶ Preview 5 s</button>
         <button type="button" id="video-stop" hidden>⏸ Stop after this video</button>
         <button type="button" id="video-cancel" hidden>✕ Cancel</button>
         <button type="button" class="primary" id="video-go">🎬 Convert all</button>
@@ -8929,6 +8996,7 @@ const vEls = Object.fromEntries(['info', 'engines', 'denoise-row', 'denoise', 'd
   'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close', 'rates', 'fit-label', 'box-label',
   'presets', 'preset-none', 'tuning', 'flatness', 'flatness-out', 'lines', 'lines-out', 'extras', 'x-lines', 'x-fills', 'x-edges', 'x-aa',
   'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text', 'aion', 'aion-row', 'aifast', 'aifast-row', 'scale', 'scale-row', 'cleanup', 'mbps', 'mbps-row',
+  'goal', 'ai-opts', 'more', 'more-sum', 'speed', 'speed-sum', 'plan', 'size-note', 'cleanup-label',
   'queue', 'add', 'clear', 'qsum', 'stop', 'cancel']
   .map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('video-' + k)]));
 const vid = { file: null, info: null, frame: null, after: null, afterKey: '', ms: {}, busy: false, dirty: false, timer: null, job: null, clipUrl: null };
@@ -8941,7 +9009,9 @@ function videoClock(sec) {
 
 function videoSettings() {
   const pick = name => (videoDialog.querySelector('input[name=' + name + ']:checked') || {}).value;
-  const res = pick('vres') === 'orig' ? 'orig' : +pick('vres') || 1080, engine = pick('vengine') || null;
+  // ② What to do: AI (the chosen model), 🧰 Built-in or 📐 Resize only
+  const goal = pick('vgoal') || 'ai', engine = goal === 'ai' ? pick('vengine') || null : goal;
+  const res = pick('vres') === 'orig' ? 'orig' : +pick('vres') || 1080;
   let preset = pick('vpreset') || 'none';
   if (engine === 'builtin' && preset === 'none') preset = 'lumity';     // the built-in engine always cleans up
   if (engine === 'resize') preset = 'none';                             // 📐 Resize only: no cleanup
@@ -8993,7 +9063,7 @@ function videoRefreshRes() {
 
 // Model chips: downloaded models can be picked; the others get a Download button.
 function videoRefreshModels() {
-  const current = videoSettings().engine;
+  const current = (vEls.engines.querySelector('input:checked') || {}).value;
   vEls.engines.innerHTML = ''; vEls.dl.innerHTML = '';
   for (const m of AI_MODELS) {
     const label = document.createElement('label');
@@ -9017,62 +9087,70 @@ function videoRefreshModels() {
     });
     vEls.dl.appendChild(b);
   }
-  const builtin = document.createElement('label');
-  builtin.title = 'No AI: the gallery’s own upscaler with the cleanup below. Needs no download.';
-  builtin.innerHTML = '<input type="radio" name="vengine" value="builtin"><span>🧰 Built-in</span>';
-  vEls.engines.appendChild(builtin);
-  const resize = document.createElement('label');
-  resize.title = 'No AI, no cleanup: just scales to the chosen size (larger or smaller) and re-encodes at the chosen bitrate. The audio is copied.';
-  resize.innerHTML = '<input type="radio" name="vengine" value="resize"><span>📐 Resize only</span>';
-  vEls.engines.appendChild(resize);
-  const pick = [current, 'animevideov3', ...AI_MODELS.map(m => m.id), 'builtin'].find(id => id && (id === 'builtin' || id === 'resize' || aiReady(id)));
-  vEls.engines.querySelector('input[value="' + pick + '"]').checked = true;
-  vEls.modelsHint.textContent = (aiState.gpuError
-    ? 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). '
-    : AI_MODELS.some(m => aiReady(m.id)) ? 'AI · Fast is made for anime video and is the quickest AI. AI · Fast and Balanced can run on WebGPU (“AI runs on”); Best and Anime+ use the slower WebGL engine. '
-    : 'Download an AI model for the best result — it runs on your GPU and is kept in this browser. ') +
-    'Built-in and 📐 Resize only need no AI model; Resize only just scales and re-encodes (e.g. 720p → 480p, or a lower bitrate).';
+  const pick = [current, 'animevideov3', ...AI_MODELS.map(m => m.id)].find(id => id && aiReady(id));
+  if (pick) vEls.engines.querySelector('input[value="' + pick + '"]').checked = true;
+  // First time: AI when a model is there, otherwise the built-in upscaler.
+  if (!vEls.goal.querySelector('input:checked')) vEls.goal.querySelector('input[value="' + (pick ? 'ai' : 'builtin') + '"]').checked = true;
+  vEls.modelsHint.textContent = aiState.gpuError
+    ? 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). 🧰 and 📐 work without it.'
+    : pick ? 'AI · Fast is made for anime video and is the quickest; Fast and Balanced can run on WebGPU (4 · Speed). Best and Anime+ are slower.'
+    : 'Download an AI model to use AI: it runs on your graphics card and is kept in this browser.';
 }
 
 // Texts and buttons for the current settings.
 function videoTexts() {
-  if (!vid.info) return;
-  const st = videoSettings(), v = vid.info.video, size = videoSize();
-  const resize = st.engine === 'resize';
-  vEls.denoiseRow.hidden = st.engine !== 'generalv3';
-  vEls.aionRow.hidden = !VIDEO_GPU_MODELS.has(st.engine);            // AI · Best / Anime+ always use WebGL
+  const st = videoSettings(), goal = st.engine === 'resize' || st.engine === 'builtin' ? st.engine : 'ai';
+  const ai = goal === 'ai', resize = goal === 'resize';
+  // ② only the chosen job's options
+  vEls.aiOpts.hidden = !ai;
   vEls.cleanup.hidden = resize;
   vEls.scaleRow.hidden = !resize;
+  vEls.denoiseRow.hidden = st.engine !== 'generalv3';
+  vEls.denoiseOut.textContent = vEls.denoise.value;
   vEls.scale.querySelector('input[value=sharp]').disabled = !navigator.gpu || !!gpuOff;
   if (vEls.scale.querySelector('input:checked').disabled) vEls.scale.querySelector('input[value=smooth]').checked = true;
-  vEls.mbpsRow.hidden = (vEls.rates.querySelector('input:checked') || {}).value !== 'custom';
-  vEls.aion.querySelector('input[value=webgpu]').disabled = !navigator.gpu || !!gpuOff;
-  if (vEls.aion.querySelector('input:checked').disabled) vEls.aion.querySelector('input[value=webgl]').checked = true;
-  vEls.aifastRow.hidden = vEls.aionRow.hidden || vEls.aion.querySelector('input:checked').value !== 'webgpu';
-  vEls.denoiseOut.textContent = vEls.denoise.value;
   // Cleanup: "Off" only after AI; Lumity has its sliders; extras need a preset.
-  const isBuiltin = st.engine === 'builtin';
-  vEls.presetNone.hidden = isBuiltin;
+  vEls.cleanupLabel.textContent = ai ? 'Cleanup after AI' : 'Cleanup';
+  vEls.presetNone.hidden = goal === 'builtin';
   vEls.presets.querySelector('input[value="' + st.preset + '"]').checked = true;
   vEls.tuning.hidden = st.preset !== 'lumity';
   vEls.extras.classList.toggle('off', st.preset === 'none');
   vEls.extras.querySelectorAll('input').forEach(i => { i.disabled = st.preset === 'none'; });
   vEls.aaRow.hidden = !vEls.xAa.checked;
-  vEls.onRow.hidden = st.preset === 'none';
+  const xOn = [vEls.xLines, vEls.xFills, vEls.xEdges, vEls.xAa].filter(x => x.checked).length;
+  vEls.moreSum.textContent = st.preset === 'none' ? '· pick a cleanup to use them'
+    : '· ' + (st.preset === 'lumity' ? 'Lumity sliders, ' : '') + (xOn ? xOn + (xOn > 1 ? ' extras' : ' extra') + ' on' : 'no extras');
+  vEls.cleanupHint.textContent = st.preset === 'none'
+    ? 'Off: the AI result as it is. A cleanup runs the gallery’s picture engine on every frame after the AI.'
+    : 'Runs on every frame and adds time. Lumity, flat fills and line redraw decide per frame and can shimmer: check with ▶ Preview 5 s.';
+  // ③ bitrate field
+  vEls.mbpsRow.hidden = (vEls.rates.querySelector('input:checked') || {}).value !== 'custom';
+  // ④ Speed: where the AI and the cleanup run (nothing to choose for Resize only)
+  vEls.aionRow.hidden = !VIDEO_GPU_MODELS.has(st.engine);            // AI · Best / Anime+ always use WebGL
+  vEls.aion.querySelector('input[value=webgpu]').disabled = !navigator.gpu || !!gpuOff;
+  if (vEls.aion.querySelector('input:checked').disabled) vEls.aion.querySelector('input[value=webgl]').checked = true;
+  const aiGpu = vEls.aion.querySelector('input:checked').value === 'webgpu';
+  vEls.aifastRow.hidden = vEls.aionRow.hidden || !aiGpu;
+  vEls.onRow.hidden = resize || st.preset === 'none';
   vEls.on.querySelector('input[value=webgpu]').disabled = !navigator.gpu || !!gpuOff;
   vEls.on.querySelector('input[value=webgl]').disabled = !gpuBuiltinAvailable();
   if (vEls.on.querySelector('input:checked').disabled) vEls.on.querySelector('input[value=original]').checked = true;
-  vEls.cleanupHint.textContent = st.preset === 'none'
-    ? 'Off: the AI result as-is. A cleanup preset runs the gallery’s picture engine on every frame after the AI.'
-    : 'Runs on every frame, which adds time (see the estimate below). Lumity, flat fills and line redraw decide per frame and can shimmer — check with ▶ Preview 5 s.';
+  vEls.speed.hidden = vEls.aionRow.hidden && vEls.onRow.hidden;
+  const onName = { original: 'Original', webgpu: 'WebGPU', webgl: 'WebGL' }[vEls.on.querySelector('input:checked').value];
+  vEls.speedSum.textContent = '· ' + [!vEls.aionRow.hidden && 'AI on ' + (aiGpu ? 'WebGPU' + (vEls.aifast.checked ? ' ⚡' : '') : 'WebGL'),
+    !vEls.onRow.hidden && 'cleanup on ' + onName].filter(Boolean).join(' · ');
+  if (!vid.info) { vEls.out.textContent = ''; vEls.sizeNote.hidden = true; vEls.summary.textContent = ''; vEls.clipBtn.disabled = true; queueRender(); return; }
+  // ③ the file this gives, ⑤ the time it takes (for the previewed video)
+  const v = vid.info.video, size = videoSize();
+  vEls.sizeNote.hidden = !!size;
+  vEls.sizeNote.textContent = 'This video is already ' + st.res + 'p or larger. Pick a bigger size, or 📐 Resize only to shrink it.';
   const est = st.bitrate / 8 * vid.info.duration + vid.audioBytes;
-  vEls.out.textContent = !size ? 'This video is already ' + st.res + 'p or larger — nothing to upscale.'
-    : 'Output ' + size.W + '×' + size.H + (size.W !== size.iw || size.H !== size.ih ? ' (picture ' + size.iw + '×' + size.ih + ')' : '') +
-      ' · H.264 · about ' + formatBytes(est);
+  vEls.out.textContent = !size ? '' : 'Output ' + size.W + '×' + size.H + (size.W !== size.iw || size.H !== size.ih ? ' (picture ' + size.iw + '×' + size.ih + ')' : '') +
+    ' · H.264 · about ' + formatBytes(est) + ' for this video';
   const ms = st.engine && size && vid.ms[videoChainKey(st, size)];
-  vEls.summary.textContent = !size ? '' : !st.engine ? 'Download an AI model above to preview and convert.'
+  vEls.summary.textContent = !size ? '' : !st.engine ? 'Download an AI model (2 · What to do) to preview and convert.'
     : resize ? 'Resize only is fast: mostly limited by decoding and encoding the video.'
-    : ms ? 'About ' + Math.round(ms) + ' ms per frame here, so the whole video takes ' + formatEta(v.samples.length * (ms + 10) / 1000) + '.'
+    : ms ? 'About ' + Math.round(ms) + ' ms per frame here, so this video takes ' + formatEta(v.samples.length * (ms + 10) / 1000) + '.'
     : 'The time per frame is measured with the frame preview.';
   vEls.clipBtn.disabled = !size || !st.engine || !!vid.job || vq.running;
   queueRender();
@@ -9171,7 +9249,7 @@ async function selectVideo(item) {
   vid.audioBytes = info.audio ? info.audio.samples.reduce((n, s) => n + s.size, 0) : 0;
   videoClearClip();
   const v = info.video;
-  vEls.info.textContent = [item.name, Math.round(v.width) + '×' + Math.round(v.height), v.fps.toFixed(2).replace(/\.?0+$/, '') + ' fps',
+  vEls.info.textContent = 'Previewing: ' + [item.name, Math.round(v.width) + '×' + Math.round(v.height), v.fps.toFixed(2).replace(/\.?0+$/, '') + ' fps',
     videoClock(info.duration), videoCodecName(v) + ' ≈ ' + (v.samples.reduce((n, x) => n + x.size, 0) * 8 / (info.duration || 1) / 1e6).toFixed(1) + ' Mbps', info.audio ? 'audio copied as-is' : 'no audio', formatBytes(item.file.size)].join(' · ');
   vEls.origText.textContent = 'Original (' + Math.round(v.height) + 'p)';
   vEls.time.max = Math.max(0, info.duration - 1 / v.fps);
@@ -9236,7 +9314,9 @@ async function videoRun() {
 // Puts saved queue settings back into the dialog controls.
 function videoApplySettings(st) {
   const set = (name, value) => { const el = videoDialog.querySelector('input[name=' + name + '][value="' + value + '"]'); if (el && !el.disabled) el.checked = true; };
-  set('vengine', st.engine); set('vpreset', st.preset); set('von', st.cleanupOn); set('vres', st.res); set('vmode', st.mode);
+  if (st.engine === 'builtin' || st.engine === 'resize') set('vgoal', st.engine);
+  else { set('vgoal', 'ai'); set('vengine', st.engine); }
+  set('vpreset', st.preset); set('von', st.cleanupOn); set('vres', st.res); set('vmode', st.mode);
   set('vaion', st.aiOn || 'webgpu'); set('vscale', st.scale || 'smooth');
   vEls.aifast.checked = !!st.aiFast;
   vEls.denoise.value = st.denoise; vEls.flatness.value = st.flatness; vEls.lines.value = st.lines;
@@ -9397,7 +9477,15 @@ function queueRender() {
     lbl.textContent = vq.running && conv ? 'Video ' + (done + 1) + '/' + total + ' · ' + Math.floor((conv.done || 0) / (conv.total || 1) * 100) + '%' : 'Video';
   }
   // Settings are fixed while the queue runs.
-  for (const fs of videoDialog.querySelectorAll('#video-card > fieldset:not(#video-queue-fs)')) fs.disabled = vq.running;
+  for (const fs of videoDialog.querySelectorAll('#video-settings fieldset:not(#video-queue-fs)')) fs.disabled = vq.running;
+  // Footer: what Convert will do, in one line
+  const st = videoSettings();
+  const what = st.engine === 'resize' ? '📐 Resize only (' + (st.scale === 'sharp' ? 'Sharp' : 'Smooth') + ')'
+    : st.engine === 'builtin' ? '🧰 ' + PRESET_NAMES[st.preset]
+    : !st.engine ? '✨ AI (download a model)' : '✨ ' + AI_MODELS.find(m => m.id === st.engine).title + (st.preset !== 'none' ? ' → ' + PRESET_NAMES[st.preset] : '');
+  vEls.plan.textContent = !vq.items.length ? '' : [vq.running && conv ? 'Converting ' + (done + 1) + ' of ' + (done + waiting + 1) : waiting ? waiting + (waiting > 1 ? ' videos' : ' video') + ' to convert' : 'Nothing waiting',
+    what, st.res === 'orig' ? 'own size' : st.res + 'p' + (st.mode === 'box' ? ' letterbox' : ''), st.bitrate / 1e6 + ' Mbps',
+    eta && 'about ' + formatEta(eta).replace('about ', '') + ' left', vq.dir && 'saving to “' + vq.dir.name + '”'].filter(Boolean).join(' · ');
 }
 
 async function queueWakeLock(on) {
@@ -9552,6 +9640,7 @@ vEls.go.addEventListener('click', () => queueRun());
 vEls.stop.addEventListener('click', () => { vq.stopAfter = true; queueRender(); });
 vEls.cancel.addEventListener('click', () => { vq.cancelled = true; if (vq.job) vq.job.cancel(); queueRender(); });
 vEls.engines.addEventListener('change', videoUpdate);
+vEls.goal.addEventListener('change', videoUpdate);
 vEls.aion.addEventListener('change', videoUpdate);
 vEls.aifast.addEventListener('change', videoUpdate);
 vEls.scale.addEventListener('change', videoUpdate);
