@@ -502,6 +502,7 @@
     #extras-fields:disabled .extra { opacity: 0.45; cursor: default; }
     #device-fields:disabled .chips { opacity: 0.45; }
     .chips input:disabled + span { opacity: 0.4; cursor: not-allowed; }
+    #video-mbps { width: 4.5em; margin-left: 0.4rem; }
     .chips label[hidden] { display: none; }
     /* AI model list: name + details | status over button, one row per model */
     .ai-manage { border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); }
@@ -1065,6 +1066,12 @@
       </div>
       <label class="dialog-check" id="video-aifast-row" hidden><input type="checkbox" id="video-aifast">
         <span>⚡ Fast AI maths<small>About 1.8× faster on WebGPU: sums in 16-bit steps, so the result differs very slightly (not visibly).</small></span></label>
+      <div class="opt-row" id="video-scale-row" hidden><span>Scaling</span>
+        <div class="chips" id="video-scale">
+          <label title="The browser's high-quality scaling on the graphics card: smooth, and the fastest"><input type="radio" name="vscale" value="smooth" checked><span>Smooth</span></label>
+          <label title="Lanczos filter on WebGPU: crisper edges; when shrinking it averages the pixels it leaves out"><input type="radio" name="vscale" value="sharp"><span>Sharp</span></label>
+        </div>
+      </div>
       <p class="dialog-sub" id="video-models-hint"></p>
       <div id="video-dl"></div>
     </fieldset>
@@ -1110,7 +1117,9 @@
         <div class="chips">
           <label title="Full HD, 1920×1080"><input type="radio" name="vres" value="1080" checked><span>1080p</span></label>
           <label title="HD, 1280×720: same AI work, smaller files"><input type="radio" name="vres" value="720"><span>720p</span></label>
-          <label title="The video's own size: no enlarging, only the cleanup (or the AI at 1×)"><input type="radio" name="vres" value="orig"><span id="video-orig-text">Original</span></label>
+          <label title="854×480 (DVD size). AI and Built-in only enlarge smaller videos; 📐 Resize only also shrinks"><input type="radio" name="vres" value="480"><span>480p</span></label>
+          <label title="640×360, for small phone copies. AI and Built-in only enlarge smaller videos; 📐 Resize only also shrinks"><input type="radio" name="vres" value="360"><span>360p</span></label>
+          <label title="The video's own size: no enlarging, only the cleanup (or the AI at 1×); with 📐 Resize only: re-encoded at the chosen bitrate"><input type="radio" name="vres" value="orig"><span id="video-orig-text">Original</span></label>
         </div>
       </div>
       <div class="opt-row" id="video-size-row"><span>Size</span>
@@ -1121,6 +1130,7 @@
       </div>
       <div class="opt-row"><span>Quality</span>
         <div class="chips" id="video-rates"></div>
+        <label id="video-mbps-row" hidden><input type="number" id="video-mbps" min="0.3" max="40" step="0.1" value="2.5"> Mbps</label>
       </div>
       <p class="dialog-sub" id="video-out"></p>
     </fieldset>
@@ -8506,8 +8516,11 @@ fn mean(l: u32, k: u32, n: f32) -> f32 {
 const VIDEO_RES = {
   1080: { W: 1920, H: 1080, rates: [6, 10, 16] },
   720: { W: 1280, H: 720, rates: [3, 5, 8] },
+  480: { W: 854, H: 480, rates: [1.5, 2.5, 4] },
+  360: { W: 640, H: 360, rates: [0.8, 1.2, 2] },
   orig: { rates: [1.5, 2.5, 4] },
 };
+const VIDEO_MBPS = [0.3, 40];                // the Custom bitrate's range
 
 // The lowest H.264 level for a frame size and rate: [code, max macroblocks
 // per frame, max macroblocks per second] (3.0 … 5.1).
@@ -8520,18 +8533,22 @@ function videoLevel(W, H, fps) {
 
 // Upscaled picture size and the frame it is placed in: Fit = that size rounded
 // up to even numbers; Letterbox = always the full frame (e.g. 1920×1080). null
-// when the video is already that big. w×h is the exact display size
-// (853.33×480 for a 16:9 DVD frame), so such videos fill the frame exactly.
-function videoTargetSize(w, h, mode, res = 1080) {
+// when the video is already that big — unless anySize (📐 Resize only, which
+// also shrinks). w×h is the exact display size (853.33×480 for a 16:9 DVD
+// frame), so such videos fill the frame exactly.
+const videoSizeFor = (v, st) => videoTargetSize(v.width, v.height, st.mode, st.res, st.engine === 'resize');
+function videoTargetSize(w, h, mode, res = 1080, anySize = false) {
   if (res === 'orig') {                    // own size, in even numbers (853.33 → 854)
     const iw = Math.round(w / 2) * 2 || 2, ih = Math.round(h / 2) * 2 || 2;
     return { iw, ih, W: iw, H: ih, x: 0, y: 0 };
   }
   const { W: MW, H: MH } = VIDEO_RES[res];
-  if (w >= MW || h >= MH) return null;
+  if (!anySize && (w >= MW || h >= MH)) return null;
   const s = Math.min(MW / w, MH / h);
-  const iw = Math.min(MW, Math.round(w * s)), ih = Math.min(MH, Math.round(h * s));
-  const W = mode === 'box' ? MW : iw + (iw & 1), H = mode === 'box' ? MH : ih + (ih & 1);
+  // (Fit: the picture itself is rounded to even numbers, so it fills the frame: 853.33 → 854, not 853 + a black column.)
+  let iw = Math.min(MW, Math.round(w * s)), ih = Math.min(MH, Math.round(h * s));
+  if (mode !== 'box') { iw += iw & 1; ih += ih & 1; }
+  const W = mode === 'box' ? MW : iw, H = mode === 'box' ? MH : ih;
   return { iw, ih, W, H, x: (W - iw) >> 1, y: (H - ih) >> 1 };
 }
 
@@ -8606,6 +8623,102 @@ async function videoGpuFor(engine, denoise) {
   return { eng, model: await aiGetModel(engine, { denoise }) };
 }
 
+// 📐 Resize only, Sharp: Lanczos-3 in two separable passes (across, then
+// down, through a half-float picture) on a WebGPU device. When shrinking the
+// filter is widened by the scale, so it averages what it leaves out.
+// run(source, w, h, W, H): a w×h canvas/bitmap → a W×H rgba8unorm texture.
+const gpuResizers = new WeakMap();
+const gpuResizer = device => gpuResizers.get(device) || (gpuResizers.set(device, createGpuResize(device)), gpuResizers.get(device));
+function createGpuResize(device) {
+  const module = device.createShaderModule({ code: `
+struct P { src: vec2i, dst: vec2i, across: i32, scale: f32, support: f32, pad: f32 }
+@group(0) @binding(0) var<uniform> p: P;
+@group(0) @binding(1) var tex: texture_2d<f32>;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let q = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(q * 2.0 - 1.0, 0.0, 1.0);
+}
+fn lanczos(x: f32) -> f32 {
+  if (abs(x) < 1e-5) { return 1.0; }
+  if (abs(x) >= 3.0) { return 0.0; }
+  let a = 3.14159265 * x;
+  return 3.0 * sin(a) * sin(a / 3.0) / (a * a);
+}
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let o = vec2i(pos.xy); let across = p.across == 1;
+  let n = select(p.src.y, p.src.x, across); let m = select(p.dst.y, p.dst.x, across);
+  let c = (f32(select(o.y, o.x, across)) + 0.5) * f32(n) / f32(m) - 0.5;
+  var s = vec4f(0.0); var ws = 0.0;
+  for (var i = i32(floor(c - p.support)) + 1; i <= i32(floor(c + p.support)); i++) {
+    let wt = lanczos((f32(i) - c) / p.scale); let k = clamp(i, 0, n - 1);
+    s += wt * textureLoad(tex, select(vec2i(o.x, k), vec2i(k, o.y), across), 0); ws += wt;
+  }
+  return s / ws;
+}` });
+  const pipe = format => device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vs' },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] }, primitive: { topology: 'triangle-list' } });
+  const pipes = { mid: pipe('rgba16float'), out: pipe('rgba8unorm') };
+  const TU = GPUTextureUsage;
+  let set = null;
+  return {
+    run(source, w, h, W, H) {
+      const key = [w, h, W, H].join(',');
+      if (!set || set.key !== key) {
+        if (set) set.all.forEach(t => t.destroy());
+        const src = device.createTexture({ size: [w, h], format: 'rgba8unorm', usage: TU.TEXTURE_BINDING | TU.COPY_DST | TU.RENDER_ATTACHMENT });
+        const mid = device.createTexture({ size: [W, h], format: 'rgba16float', usage: TU.TEXTURE_BINDING | TU.RENDER_ATTACHMENT });
+        const out = device.createTexture({ size: [W, H], format: 'rgba8unorm', usage: TU.TEXTURE_BINDING | TU.RENDER_ATTACHMENT | TU.COPY_SRC });
+        const pass = (pl, from, to, across, n, m) => {
+          const scale = Math.min(8, Math.max(1, n / m)), u = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+          const b = new ArrayBuffer(32), i = new Int32Array(b), f = new Float32Array(b);
+          i.set([w, h, W, H, across ? 1 : 0]); f[5] = scale; f[6] = 3 * scale;
+          device.queue.writeBuffer(u, 0, b);
+          return { pl, to, u, bg: device.createBindGroup({ layout: pl.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: u } }, { binding: 1, resource: from.createView() }] }) };
+        };
+        const passes = [pass(pipes.mid, src, mid, true, w, W), pass(pipes.out, mid, out, false, h, H)];
+        set = { key, src, out, passes, all: [src, mid, out, ...passes.map(ps => ps.u)] };
+      }
+      device.queue.copyExternalImageToTexture({ source }, { texture: set.src }, [w, h]);
+      const enc = device.createCommandEncoder();
+      for (const ps of set.passes) {
+        const rp = enc.beginRenderPass({ colorAttachments: [{ view: ps.to.createView(), loadOp: 'clear', clearValue: [0, 0, 0, 1], storeOp: 'store' }] });
+        rp.setPipeline(ps.pl); rp.setBindGroup(0, ps.bg); rp.draw(3); rp.end();
+      }
+      device.queue.submit([enc.finish()]);
+      return set.out;
+    },
+  };
+}
+
+// 📐 Resize only: no AI and no cleanup. Smooth = the browser's high-quality
+// scaling, straight from each decoded frame into the encoder's frame
+// (drawFrame); Sharp = Lanczos on WebGPU (as the AI: the frame is drawn into a
+// 2D canvas first, then into the engine's canvas). Falls back to Smooth.
+async function videoResizeChain(st, w, h, size, direct) {
+  let eng = st.scale === 'sharp' && navigator.gpu ? await gpuCompact() : null;
+  if (eng && eng.lost) eng = null;
+  if (st.scale === 'sharp' && !eng) gpuNote('Sharp scaling needs WebGPU, which isn’t available here, so Smooth is used.');
+  const smooth = (src, ctx, x, y) => { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(src, x, y, size.iw, size.ih); };
+  if (!eng) return {
+    resize: true, gpuInput: false, direct: false, backend: 'Smooth', cleanBackend: '',
+    drawFrame: (frame, ctx) => smooth(frame, ctx, size.x, size.y),
+    run(canvas) {                                                  // (frame preview)
+      const c = new OffscreenCanvas(size.iw, size.ih), x = c.getContext('2d', { willReadFrequently: true });
+      smooth(canvas, x, 0, 0);
+      return x.getImageData(0, 0, size.iw, size.ih).data;
+    },
+  };
+  const rz = gpuResizer(eng.device);
+  return {
+    resize: true, gpuInput: true, direct, canvas: direct ? eng.canvas : null, backend: 'Sharp', cleanBackend: '',
+    async run(canvas) {
+      const tex = rz.run(canvas, w, h, size.iw, size.ih);
+      if (direct) { eng.present(tex, size); return null; }
+      return gpuReadTexture(eng.device, tex, size.iw, size.ih);
+    },
+  };
+}
+
 // The per-frame chain for some settings: an AI model (WebGPU or WebGL) and/or
 // the built-in engine with a cleanup preset and extras — the same processing
 // as for pictures (builtinJob; after AI at the same size, as aiUpscale does).
@@ -8613,6 +8726,7 @@ async function videoGpuFor(engine, denoise) {
 // as iw×ih RGBA, or null when `direct`: then the whole frame (with any bars)
 // is already in gpu.eng.canvas, ready for the encoder.
 async function videoChain(st, w, h, size, direct) {
+  if (st.engine === 'resize') return videoResizeChain(st, w, h, size, direct);
   const ai = st.engine !== 'builtin';
   const gpu = ai && st.aiOn !== 'webgl' ? await videoGpuFor(st.engine, st.denoise) : null;
   const cleanup = !ai || st.preset !== 'none' ? {
@@ -8684,7 +8798,7 @@ async function videoChain(st, w, h, size, direct) {
 async function videoUpscale(src, settings, range, sink, onProgress, isCancelled) {
   const { file, info } = src, v = info.video;
   const w = Math.round(v.width), h = Math.round(v.height);
-  const size = videoTargetSize(v.width, v.height, settings.mode, settings.res);
+  const size = videoSizeFor(v, settings);
   if (!size) throw new Error('This video is already ' + settings.res + 'p or larger.');
   const total = v.samples.filter(s => s.pts >= range.start && s.pts < range.end).length || 1;
   const config = await videoEncoderConfig(size.W, size.H, v.fps, settings.bitrate);
@@ -8763,13 +8877,17 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
   try {
     for await (const frame of mp4DecodeFrames(file, v, range.start, range.end, isCancelled)) {
       let ts, dur;
-      try { ts = frame.timestamp; dur = frame.duration || 0; inCtx.drawImage(frame, 0, 0, w, h); }
-      finally { frame.close(); }
+      try {
+        ts = frame.timestamp; dur = frame.duration || 0;
+        if (chain.drawFrame) chain.drawFrame(frame, out);           // 📐 Resize only, Smooth: one scaling step
+        else inCtx.drawImage(frame, 0, 0, w, h);
+      } finally { frame.close(); }
       if (dur) lastDur = dur;
       if (origin === null) origin = ts;
       const t = ts - origin;
       let job;
-      if (chain.split) {
+      if (chain.drawFrame) job = Promise.resolve(toFrame(null, t, dur));   // (no engine, no turn)
+      else if (chain.split) {
         // AI on WebGPU for this frame while the worker still cleans the previous one.
         const px = await turn(engineTurn, () => chain.split.ai(inCanvas));
         job = turn(workerTurn, async () => toFrame(await chain.split.clean(px), t, dur));
@@ -8810,7 +8928,7 @@ const videoDialog = document.getElementById('video-dialog');
 const vEls = Object.fromEntries(['info', 'engines', 'denoise-row', 'denoise', 'denoise-out', 'models-hint', 'dl', 'out', 'time', 'time-out',
   'wrap', 'canvas', 'spinner', 'split', 'split-out', 'zoom', 'status', 'clip', 'summary', 'clip-btn', 'go', 'close', 'rates', 'fit-label', 'box-label',
   'presets', 'preset-none', 'tuning', 'flatness', 'flatness-out', 'lines', 'lines-out', 'extras', 'x-lines', 'x-fills', 'x-edges', 'x-aa',
-  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text', 'aion', 'aion-row', 'aifast', 'aifast-row',
+  'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text', 'aion', 'aion-row', 'aifast', 'aifast-row', 'scale', 'scale-row', 'cleanup', 'mbps', 'mbps-row',
   'queue', 'add', 'clear', 'qsum', 'stop', 'cancel']
   .map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('video-' + k)]));
 const vid = { file: null, info: null, frame: null, after: null, afterKey: '', ms: {}, busy: false, dirty: false, timer: null, job: null, clipUrl: null };
@@ -8826,29 +8944,29 @@ function videoSettings() {
   const res = pick('vres') === 'orig' ? 'orig' : +pick('vres') || 1080, engine = pick('vengine') || null;
   let preset = pick('vpreset') || 'none';
   if (engine === 'builtin' && preset === 'none') preset = 'lumity';     // the built-in engine always cleans up
-  return { engine, denoise: +vEls.denoise.value, preset, flatness: +vEls.flatness.value, lines: +vEls.lines.value,
+  if (engine === 'resize') preset = 'none';                             // 📐 Resize only: no cleanup
+  const custom = Math.min(VIDEO_MBPS[1], Math.max(VIDEO_MBPS[0], +vEls.mbps.value || VIDEO_RES[res].rates[1]));
+  return { engine, denoise: +vEls.denoise.value, preset, flatness: +vEls.flatness.value, lines: +vEls.lines.value, scale: pick('vscale') || 'smooth',
     extras: { lines: vEls.xLines.checked, fills: vEls.xFills.checked, edges: vEls.xEdges.checked, aa: vEls.xAa.checked ? +vEls.aa.value : 0 },
     cleanupOn: pick('von') || 'original', aiOn: pick('vaion') || 'webgpu', aiFast: vEls.aifast.checked,
-    res, mode: pick('vmode') || 'fit', bitrate: (+pick('vbitrate') || VIDEO_RES[res].rates[1]) * 1e6 };
+    res, mode: pick('vmode') || 'fit', bitrate: (pick('vbitrate') === 'custom' ? custom : +pick('vbitrate') || VIDEO_RES[res].rates[1]) * 1e6 };
 }
 
 // Everything that changes the picture (not the time or file settings).
 function videoChainKey(st, size) {
-  return JSON.stringify([st.engine, st.engine === 'generalv3' ? st.denoise : 0, st.preset,
+  return JSON.stringify([st.engine, st.engine === 'resize' ? st.scale : '', st.engine === 'generalv3' ? st.denoise : 0, st.preset,
     st.preset === 'lumity' ? [st.flatness, st.lines] : 0, engineExtras(st), st.preset === 'none' ? '' : st.cleanupOn, VIDEO_GPU_MODELS.has(st.engine) ? st.aiOn + (st.aiOn === 'webgpu' && st.aiFast ? '+fast' : '') : '', size.iw, size.ih]);
 }
 // "AI · Fast on WebGPU → Lumity · flat fills on WebGPU"
 function videoDescribe(st, backend, cleanBackend) {
+  if (st.engine === 'resize') { const z = vid.info && videoSize(); return '📐 Resize only · ' + (backend || 'Smooth') + (z ? ' · ' + z.iw + '×' + z.ih : ''); }
   const name = st.engine === 'builtin' ? 'Built-in engine' : AI_MODELS.find(m => m.id === st.engine).title;
   const x = engineExtras(st);
   if (st.engine === 'builtin') return name + ' · ' + PRESET_NAMES[st.preset] + (x ? ' · ' + extrasNames(x) : '') + (cleanBackend ? ' on ' + cleanBackend : '');
   return name + (backend ? ' on ' + backend : '') + (st.preset === 'none' ? '' : ' → ' +
     PRESET_NAMES[st.preset] + (x ? ' · ' + extrasNames(x) : '') + (cleanBackend ? ' on ' + cleanBackend : ''));
 }
-function videoSize() {
-  const v = vid.info.video, st = videoSettings();
-  return videoTargetSize(v.width, v.height, st.mode, st.res);
-}
+function videoSize() { return videoSizeFor(vid.info.video, videoSettings()); }
 
 // Bitrate chips and size tooltips for the chosen resolution; the same
 // position (low / middle / high) stays selected.
@@ -8856,14 +8974,17 @@ function videoRefreshRes() {
   const R = VIDEO_RES[videoSettings().res];
   const boxes = [...vEls.rates.querySelectorAll('input')], at = Math.max(0, boxes.findIndex(b => b.checked));
   vEls.rates.innerHTML = '';
-  R.rates.forEach((mbps, i) => {
+  // (Custom keeps its typed value when the resolution changes.)
+  [...R.rates, 'custom'].forEach((mbps, i) => {
     const label = document.createElement('label');
     label.innerHTML = '<input type="radio" name="vbitrate"><span></span>';
     label.querySelector('input').value = mbps;
     label.querySelector('input').checked = i === (boxes.length ? at : 1);
-    label.querySelector('span').textContent = mbps + ' Mbps';
+    label.querySelector('span').textContent = mbps === 'custom' ? 'Custom' : mbps + ' Mbps';
+    if (mbps === 'custom') label.title = 'Any bitrate from ' + VIDEO_MBPS[0] + ' to ' + VIDEO_MBPS[1] + ' Mbps';
     vEls.rates.appendChild(label);
   });
+  vEls.mbpsRow.hidden = vEls.rates.querySelector('input:checked').value !== 'custom';
   vEls.sizeRow.hidden = !R.W;                       // Fit / Letterbox don't apply at the own size
   if (!R.W) return;
   vEls.fitLabel.title = 'Fit inside ' + R.W + '×' + R.H + ' and keep the shape (4:3 becomes ' + R.H * 4 / 3 + '×' + R.H + ')';
@@ -8900,21 +9021,31 @@ function videoRefreshModels() {
   builtin.title = 'No AI: the gallery’s own upscaler with the cleanup below. Needs no download.';
   builtin.innerHTML = '<input type="radio" name="vengine" value="builtin"><span>🧰 Built-in</span>';
   vEls.engines.appendChild(builtin);
-  const pick = [current, 'animevideov3', ...AI_MODELS.map(m => m.id), 'builtin'].find(id => id && (id === 'builtin' || aiReady(id)));
+  const resize = document.createElement('label');
+  resize.title = 'No AI, no cleanup: just scales to the chosen size (larger or smaller) and re-encodes at the chosen bitrate. The audio is copied.';
+  resize.innerHTML = '<input type="radio" name="vengine" value="resize"><span>📐 Resize only</span>';
+  vEls.engines.appendChild(resize);
+  const pick = [current, 'animevideov3', ...AI_MODELS.map(m => m.id), 'builtin'].find(id => id && (id === 'builtin' || id === 'resize' || aiReady(id)));
   vEls.engines.querySelector('input[value="' + pick + '"]').checked = true;
   vEls.modelsHint.textContent = (aiState.gpuError
     ? 'AI upscaling needs a GPU with WebGL2 float rendering, which this browser doesn’t offer (' + aiState.gpuError + '). '
     : AI_MODELS.some(m => aiReady(m.id)) ? 'AI · Fast is made for anime video and is the quickest AI. AI · Fast and Balanced can run on WebGPU (“AI runs on”); Best and Anime+ use the slower WebGL engine. '
     : 'Download an AI model for the best result — it runs on your GPU and is kept in this browser. ') +
-    'Built-in needs no AI model.';
+    'Built-in and 📐 Resize only need no AI model; Resize only just scales and re-encodes (e.g. 720p → 480p, or a lower bitrate).';
 }
 
 // Texts and buttons for the current settings.
 function videoTexts() {
   if (!vid.info) return;
   const st = videoSettings(), v = vid.info.video, size = videoSize();
+  const resize = st.engine === 'resize';
   vEls.denoiseRow.hidden = st.engine !== 'generalv3';
   vEls.aionRow.hidden = !VIDEO_GPU_MODELS.has(st.engine);            // AI · Best / Anime+ always use WebGL
+  vEls.cleanup.hidden = resize;
+  vEls.scaleRow.hidden = !resize;
+  vEls.scale.querySelector('input[value=sharp]').disabled = !navigator.gpu || !!gpuOff;
+  if (vEls.scale.querySelector('input:checked').disabled) vEls.scale.querySelector('input[value=smooth]').checked = true;
+  vEls.mbpsRow.hidden = (vEls.rates.querySelector('input:checked') || {}).value !== 'custom';
   vEls.aion.querySelector('input[value=webgpu]').disabled = !navigator.gpu || !!gpuOff;
   if (vEls.aion.querySelector('input:checked').disabled) vEls.aion.querySelector('input[value=webgl]').checked = true;
   vEls.aifastRow.hidden = vEls.aionRow.hidden || vEls.aion.querySelector('input:checked').value !== 'webgpu';
@@ -8940,6 +9071,7 @@ function videoTexts() {
       ' · H.264 · about ' + formatBytes(est);
   const ms = st.engine && size && vid.ms[videoChainKey(st, size)];
   vEls.summary.textContent = !size ? '' : !st.engine ? 'Download an AI model above to preview and convert.'
+    : resize ? 'Resize only is fast: mostly limited by decoding and encoding the video.'
     : ms ? 'About ' + Math.round(ms) + ' ms per frame here, so the whole video takes ' + formatEta(v.samples.length * (ms + 10) / 1000) + '.'
     : 'The time per frame is measured with the frame preview.';
   vEls.clipBtn.disabled = !size || !st.engine || !!vid.job || vq.running;
@@ -9040,7 +9172,7 @@ async function selectVideo(item) {
   videoClearClip();
   const v = info.video;
   vEls.info.textContent = [item.name, Math.round(v.width) + '×' + Math.round(v.height), v.fps.toFixed(2).replace(/\.?0+$/, '') + ' fps',
-    videoClock(info.duration), videoCodecName(v), info.audio ? 'audio copied as-is' : 'no audio', formatBytes(item.file.size)].join(' · ');
+    videoClock(info.duration), videoCodecName(v) + ' ≈ ' + (v.samples.reduce((n, x) => n + x.size, 0) * 8 / (info.duration || 1) / 1e6).toFixed(1) + ' Mbps', info.audio ? 'audio copied as-is' : 'no audio', formatBytes(item.file.size)].join(' · ');
   vEls.origText.textContent = 'Original (' + Math.round(v.height) + 'p)';
   vEls.time.max = Math.max(0, info.duration - 1 / v.fps);
   vEls.time.value = info.duration * 0.1;                         // past the usual black intro frames
@@ -9105,14 +9237,16 @@ async function videoRun() {
 function videoApplySettings(st) {
   const set = (name, value) => { const el = videoDialog.querySelector('input[name=' + name + '][value="' + value + '"]'); if (el && !el.disabled) el.checked = true; };
   set('vengine', st.engine); set('vpreset', st.preset); set('von', st.cleanupOn); set('vres', st.res); set('vmode', st.mode);
-  set('vaion', st.aiOn || 'webgpu');
+  set('vaion', st.aiOn || 'webgpu'); set('vscale', st.scale || 'smooth');
   vEls.aifast.checked = !!st.aiFast;
   vEls.denoise.value = st.denoise; vEls.flatness.value = st.flatness; vEls.lines.value = st.lines;
   const x = st.extras || {};
   vEls.xLines.checked = !!x.lines; vEls.xFills.checked = !!x.fills; vEls.xEdges.checked = !!x.edges; vEls.xAa.checked = !!x.aa;
   if (x.aa) vEls.aa.value = x.aa;
   videoRefreshRes();
-  set('vbitrate', st.bitrate / 1e6);
+  const mbps = st.bitrate / 1e6;
+  if (vEls.rates.querySelector('input[value="' + mbps + '"]')) set('vbitrate', mbps);
+  else { set('vbitrate', 'custom'); vEls.mbps.value = mbps; vEls.mbpsRow.hidden = false; }   // a typed bitrate
 }
 
 // ── VIDEO: QUEUE ──────────────────────────────────────────────────────────────
@@ -9193,6 +9327,7 @@ async function queueAdd(entries) {
 }
 
 function queueOutName(name, st, size) {
+  if (st.engine === 'resize') return stripExt(name) + (st.res === 'orig' ? '.reencoded-' + size.ih + 'p-' + st.bitrate / 1e6 + 'mbps.mp4' : '.resized-' + st.res + 'p.mp4');
   return stripExt(name) + (st.res === 'orig' ? '.cleaned-' + size.ih + 'p.mp4' : '.upscaled-' + st.res + 'p.mp4');
 }
 
@@ -9200,7 +9335,7 @@ function queueOutName(name, st, size) {
 function queueEta() {
   const cur = vq.items.find(it => it.state === 'converting');
   let fps = cur && cur.fps;
-  if (!fps && vid.info) {
+  if (!fps && vid.info && videoSettings().engine !== 'resize') {     // (Resize only: the frame preview says nothing about the encoder's speed)
     const st = videoSettings(), size = videoSize(), ms = size && vid.ms[videoChainKey(st, size)];
     if (ms) fps = 1000 / (ms + 10);
   }
@@ -9329,7 +9464,7 @@ async function queueOne(it, st, dir) {
   let info = it.demux;
   try { if (!info) info = it.demux = await mp4Demux(it.file); }
   catch (err) { vqSet(it, { state: 'failed', error: err.message || String(err) }); return; }
-  const v = info.video, size = videoTargetSize(v.width, v.height, st.mode, st.res);
+  const v = info.video, size = videoSizeFor(v, st);
   if (!size) { vqSet(it, { state: 'skipped', note: 'already ' + st.res + 'p or larger' }); return; }
   const name = it.outName = queueOutName(it.name, st, size);
   if (dir) {
@@ -9419,13 +9554,21 @@ vEls.cancel.addEventListener('click', () => { vq.cancelled = true; if (vq.job) v
 vEls.engines.addEventListener('change', videoUpdate);
 vEls.aion.addEventListener('change', videoUpdate);
 vEls.aifast.addEventListener('change', videoUpdate);
+vEls.scale.addEventListener('change', videoUpdate);
+vEls.mbps.addEventListener('input', videoTexts);
 vEls.presets.addEventListener('change', videoUpdate);
 vEls.on.addEventListener('change', videoUpdate);
 vEls.extras.addEventListener('change', videoUpdate);
 for (const k of ['flatness', 'lines', 'aa']) vEls[k].addEventListener('input', () => { vEls[k + 'Out'].textContent = vEls[k].value; videoSchedulePreview(300); });
 vEls.denoise.addEventListener('input', () => { vEls.denoiseOut.textContent = vEls.denoise.value; videoSchedulePreview(300); });
 videoDialog.querySelectorAll('input[name=vmode]').forEach(r => r.addEventListener('change', () => { videoTexts(); videoDraw(); }));
-vEls.rates.addEventListener('change', videoTexts);
+vEls.rates.addEventListener('change', () => {
+  if (vEls.rates.querySelector('input:checked').value === 'custom' && vEls.mbpsRow.hidden) {
+    vEls.mbps.value = VIDEO_RES[videoSettings().res].rates[1];          // start from the middle suggestion
+    vEls.mbpsRow.hidden = false; vEls.mbps.focus();
+  }
+  videoTexts();
+});
 videoDialog.querySelectorAll('input[name=vres]').forEach(r => r.addEventListener('change', () => { videoRefreshRes(); videoUpdate(); }));
 videoRefreshRes();
 vEls.time.addEventListener('input', () => { vEls.timeOut.textContent = videoClock(+vEls.time.value); videoSchedulePreview(350); });
