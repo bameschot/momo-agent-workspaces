@@ -1272,8 +1272,8 @@
         <span>⚡ Fast AI maths<small>About 1.8× faster on WebGPU: sums in 16-bit steps, so the result differs very slightly (not visibly).</small></span></label>
             <div class="opt-row" id="video-on-row"><span>Cleanup runs on</span>
         <div class="chips" id="video-on">
-          <label title="The original implementation: preparation on the processor, the rest on the graphics card"><input type="radio" name="von" value="original" checked><span>Original</span></label>
-          <label title="Everything on the graphics card with WebGPU; with AI · Fast or Balanced the frame never leaves it"><input type="radio" name="von" value="webgpu"><span>🚀 WebGPU</span></label>
+          <label title="The original implementation: preparation on the processor, the rest on the graphics card"><input type="radio" name="von" value="original"><span>Original</span></label>
+          <label title="Everything on the graphics card with WebGPU; with AI · Fast or Balanced the frame never leaves it"><input type="radio" name="von" value="webgpu" checked><span>🚀 WebGPU</span></label>
           <label title="Everything on the graphics card with WebGL (flat fills on the processor)"><input type="radio" name="von" value="webgl"><span>WebGL</span></label>
         </div>
       </div>
@@ -3916,6 +3916,13 @@ const GPU_CLEANUP_MAX_PIXELS = 8e6;     // input pixels; bigger pictures use the
 // memory budget there (desktop: 2 GB): the AI splits a picture into smaller
 // bands, and a cleanup that wouldn't fit runs its anti-aliasing on the CPU or
 // moves on to the original engine, instead of failing to allocate.
+// AI → target size: when the ×4 result is shrunk, Lanczos-2 with a ringing
+// clamp (sharp, the default) instead of the area average (localStorage
+// 'lumity-ai-resize' = 'area' brings that back).
+let aiSharpResize = (() => { try { return localStorage.getItem('lumity-ai-resize') !== 'area'; } catch { return true; } })();
+// Set when the big desktop AI tiles didn't fit (out of memory, GPU reset): the
+// small tiles are used for the rest of the visit.
+let aiSmallTiles = false;
 const GPU_MOBILE = !!(navigator.userAgentData && navigator.userAgentData.mobile) || /Android|iPhone|iPad|Mobi/i.test(navigator.userAgent);
 // (localStorage 'lumity-gpu-budget-mb' overrides it, e.g. for a phone with more to spare.)
 const GPU_BUDGET = (Number((() => { try { return localStorage.getItem('lumity-gpu-budget-mb'); } catch { return null; } })()) ||
@@ -4516,6 +4523,7 @@ function openEnhanceDialog(targets, mode) {
     if (saved.preset === 'none' && f.engine.value !== 'builtin') f.preset.value = 'none';
     if ((saved.device === 'gpu' || saved.device === 'webgl') && gpuBuiltinAvailable()) f.device.value = saved.device;
     if (saved.device === 'webgpu' && navigator.gpu) f.device.value = 'webgpu';
+    if (saved.device == null && navigator.gpu && !gpuOff) f.device.value = 'webgpu';   // never chosen: the fastest
     // Before the AI got its own choice, 🚀 WebGPU under Processing meant both.
     const aiDev = saved.aiDevice || (saved.device === 'webgpu' ? 'webgpu' : 'webgl');
     if (aiDev === 'webgpu' && navigator.gpu) f.aiDevice.value = 'webgpu';
@@ -5113,11 +5121,33 @@ void main(){ ivec2 p = ivec2(gl_FragCoord.xy);
   outColor = uA * texelFetch(uA0, ivec3(p, uABase + uOut), 0) + uB * texelFetch(uB0, ivec3(p, uBBase + uOut), 0); }`;
   // ×4 result → requested size. Each target pixel averages its footprint
   // (uN×uN bilinear samples), so downscaling is anti-aliased; at ×4 it is exact.
+  // uSharp (only when shrinking): Lanczos-2 widened by the shrink factor,
+  // clamped to the range of the ×4 pixels under the target pixel (no ringing).
   const FS_RESIZE = HEAD + `
-uniform sampler2DArray uIn; uniform ivec2 uOrigin; uniform vec2 uRegion4; uniform float uStep; uniform int uN; uniform vec2 uTex; uniform vec2 uLimit;
+uniform sampler2DArray uIn; uniform ivec2 uOrigin; uniform vec2 uRegion4; uniform float uStep; uniform int uN; uniform vec2 uTex; uniform vec2 uLimit; uniform int uSharp;
+float lz(float x){ x = abs(x); if (x < 1e-5) return 1.0; if (x >= 2.0) return 0.0; float a = 3.14159265 * x; return 2.0 * sin(a) * sin(a * 0.5) / (a * a); }
 void main(){
   vec2 T = vec2(ivec2(gl_FragCoord.xy) + uOrigin) + 0.5;
   vec2 c = T * uStep - uRegion4;
+  if (uSharp == 1) {
+    float sc = max(uStep, 1.0), cl = max(1.0, 0.5 * sc); int R = int(ceil(2.0 * sc));
+    ivec2 b = ivec2(floor(c - 0.5)), top = ivec2(uLimit) - 1;
+    vec3 acc = vec3(0.0), lo = vec3(1e9), hi = vec3(-1e9); float ws = 0.0;
+    for (int j = 1 - R; j <= R; j++) {
+      float dy = float(b.y + j) + 0.5 - c.y, wy = lz(dy / sc);
+      if (wy == 0.0) continue;
+      int y = clamp(b.y + j, 0, top.y);
+      for (int i = 1 - R; i <= R; i++) {
+        float dx = float(b.x + i) + 0.5 - c.x, wx = lz(dx / sc);
+        if (wx == 0.0) continue;
+        vec3 v = texelFetch(uIn, ivec3(clamp(b.x + i, 0, top.x), y, 0), 0).rgb;
+        acc += wx * wy * v; ws += wx * wy;
+        if (abs(dx) <= cl && abs(dy) <= cl) { lo = min(lo, v); hi = max(hi, v); }
+      }
+    }
+    outColor = vec4(clamp(clamp(acc / ws, lo, hi), 0.0, 1.0), 1.0);
+    return;
+  }
   vec3 s = vec3(0.0);
   for (int j = 0; j < uN; j++) for (int i = 0; i < uN; i++) {
     vec2 q = clamp(c + ((vec2(i, j) + 0.5) / float(uN) - 0.5) * uStep, vec2(0.5), uLimit - 0.5);
@@ -5885,6 +5915,7 @@ void main(){
       gl.uniform2i(pr.loc.uOrigin, tx0, ty0); gl.uniform2f(pr.loc.uRegion4, rx0 * m, ry0 * m);
       gl.uniform1f(pr.loc.uStep, step); gl.uniform1i(pr.loc.uN, Math.max(1, Math.ceil(step - 1e-6)));
       gl.uniform2f(pr.loc.uTex, out4.w, out4.h); gl.uniform2f(pr.loc.uLimit, rw * m, rh * m);
+      gl.uniform1i(pr.loc.uSharp, aiSharpResize && step > 1.0001 ? 1 : 0);
       if (!resizeRead.rb || resizeRead.w < tw || resizeRead.h < th) {
         if (resizeRead.rb) gl.deleteTexture(resizeRead.rb);
         resizeRead.rb = gl.createTexture(); resizeRead.w = Math.max(tw, 64); resizeRead.h = Math.max(th, 64);
@@ -5924,8 +5955,25 @@ void main(){
       }
       if (model.arch === 'cugan') return runCugan(model, rgba, w, h, W, H, onProgress, isCancelled, opts);
       releaseExcept('esrgan');
-      const s = W / w;
-      const core = model.arch === 'compact' ? 256 : 96, pad = model.pad;
+      const s = W / w, pad = model.pad;
+      // Tiles: every tile also computes `pad` px around it, so bigger tiles
+      // waste less (RRDB, pad 32: 2.8× the kept pixels at 96, 1.8× at 192).
+      // Desktop GPUs get the big ones; phones (shared memory) the small ones.
+      // opts.core: a fixed size (tests).
+      const bigCore = model.arch === 'compact' ? 512 : 192;
+      let big = !opts.core && BIG_TILES && !aiSmallTiles && (bigCore + 2 * pad) * 4 <= maxSize;
+      if (big) {
+        // Allocate the big set now; if the GPU says no, use the small tiles.
+        const bw = Math.min(w, bigCore + 2 * pad), bh = Math.min(h, bigCore + 2 * pad);
+        if (!pool || pool.key !== model.arch + ':' + bw + 'x' + bh) {
+          while (gl.getError() !== gl.NO_ERROR);                    // (earlier errors)
+          texturesFor(model, bw, bh);
+          if (gl.getError() !== gl.NO_ERROR) { big = false; aiSmallTiles = true; }
+        }
+      }
+      // A big-tile run that fails (not: is cancelled) → small tiles from then on.
+      const guard = async fn => { try { return await fn(); } catch (e) { if (big && !/cancel/i.test(String(e && e.message))) aiSmallTiles = true; throw e; } };
+      const core = opts.core || (big ? bigCore : model.arch === 'compact' ? 256 : 96);
       const out = new Uint8ClampedArray(W * H * 4);
       const tilesX = Math.ceil(w / core), tilesY = Math.ceil(h / core), total = tilesX * tilesY;
       let done = 0;
@@ -5940,10 +5988,10 @@ void main(){
           const region = new Uint8ClampedArray(rw * rh * 4);
           for (let y = 0; y < rh; y++) region.set(rgba.subarray(((ry0 + y) * w + rx0) * 4, ((ry0 + y) * w + rx1) * 4), y * rw * 4);
           const out4 = forward(model, region, TW, TH, rw, rh);
-          await drain(f => { if (onProgress) onProgress((done + f * 0.98) / total); }, isCancelled);
+          await guard(() => drain(f => { if (onProgress) onProgress((done + f * 0.98) / total); }, isCancelled));
           const X0 = Math.round(x0 * s), X1 = x1 === w ? W : Math.round(x1 * s);
           const Y0 = Math.round(y0 * s), Y1 = y1 === h ? H : Math.round(y1 * s);
-          const px = await resizeRead(out4, rx0, ry0, rw, rh, s, X0, Y0, X1 - X0, Y1 - Y0);
+          const px = await guard(() => resizeRead(out4, rx0, ry0, rw, rh, s, X0, Y0, X1 - X0, Y1 - Y0));
           for (let y = 0; y < Y1 - Y0; y++) out.set(px.subarray(y * (X1 - X0) * 4, (y + 1) * (X1 - X0) * 4), ((Y0 + y) * W + X0) * 4);
           done++;
           if (onProgress) onProgress(done / total);
@@ -6178,6 +6226,7 @@ void main(){
     // (≈75–90 MB per run at 128, ≈150–175 MB at 192).
     const CG_SMALL = (navigator.deviceMemory && navigator.deviceMemory <= 4) ||
       (navigator.userAgentData ? navigator.userAgentData.mobile : /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent));
+    const BIG_TILES = !CG_SMALL;                                  // Real-ESRGAN tiles (see run)
     const CG_CORE = CG_SMALL ? 128 : 192, CG_MARGIN = 4;
     // Size of the copy the channel weights are measured on (memory ∝ its square).
     const CG_MEASURE = CG_SMALL ? 160 : 256;
@@ -7730,10 +7779,11 @@ ${body}}`;
   const kernels = { exact: convKernel(opts), fast: f16 && !opts.noFast ? convKernel({ px: 4, wx: 4, ...opts.fastOpts, half: true }) : null };
 
   // Output: pixel-shuffle ×4 of the last conv + nearest-upsampled input
-  // (FS_SHUFFLE), area-averaged to the target size (FS_RESIZE), black outside
-  // the picture (letterbox). Writes target rows [ty0, ty1) for one band.
+  // (FS_SHUFFLE), area-averaged to the target size (FS_RESIZE; p.sharp: its
+  // Lanczos-2 mode), black outside the picture (letterbox). Writes target
+  // rows [ty0, ty1) for one band.
   const outputCode = head + `
-struct P { w: u32, bh: u32, by0: u32, n: u32, step: f32, px: i32, py: i32, pw: i32, ph: i32, pad0: u32, pad1: u32, pad2: u32 }
+struct P { w: u32, bh: u32, by0: u32, n: u32, step: f32, px: i32, py: i32, pw: i32, ph: i32, sharp: u32, pad1: u32, pad2: u32 }
 @group(0) @binding(0) var<storage, read> last: array<vec4<S>>;
 @group(0) @binding(1) var<storage, read> inp: array<vec4<S>>;
 @group(0) @binding(2) var<uniform> p: P;
@@ -7748,11 +7798,36 @@ fn t4(u: i32, v: i32) -> vec3f {
   for (var k = 0u; k < 3u; k++) { let ch = k * 16u + sub; c[k] += f32(last[base + (ch >> 2u)][ch & 3u]); }
   return c;
 }
+fn lz(v: f32) -> f32 {
+  let x = abs(v);
+  if (x < 1e-5) { return 1.0; }
+  if (x >= 2.0) { return 0.0; }
+  let a = 3.14159265 * x;
+  return 2.0 * sin(a) * sin(a * 0.5) / (a * a);
+}
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let X = i32(pos.x) - p.px; let Y = i32(pos.y) - p.py;
   if (X < 0 || Y < 0 || X >= p.pw || Y >= p.ph) { return vec4f(0.0, 0.0, 0.0, 1.0); }
   let c = (vec2f(f32(X), f32(Y)) + 0.5) * p.step - vec2f(0.0, f32(p.by0 * 4u));
   let lim = vec2f(f32(p.w * 4u), f32(p.bh * 4u));
+  if (p.sharp == 1u) {
+    let sc = max(p.step, 1.0); let cl = max(1.0, 0.5 * sc); let R = i32(ceil(2.0 * sc));
+    let b = vec2i(floor(c - 0.5)); let top = vec2i(lim) - 1;
+    var acc = vec3f(0.0); var lo = vec3f(1e9); var hi = vec3f(-1e9); var ws = 0.0;
+    for (var j = 1 - R; j <= R; j++) {
+      let dy = f32(b.y + j) + 0.5 - c.y; let wy = lz(dy / sc);
+      if (wy == 0.0) { continue; }
+      let y = clamp(b.y + j, 0, top.y);
+      for (var i = 1 - R; i <= R; i++) {
+        let dx = f32(b.x + i) + 0.5 - c.x; let wx = lz(dx / sc);
+        if (wx == 0.0) { continue; }
+        let v = t4(clamp(b.x + i, 0, top.x), y);
+        acc += wx * wy * v; ws += wx * wy;
+        if (abs(dx) <= cl && abs(dy) <= cl) { lo = min(lo, v); hi = max(hi, v); }
+      }
+    }
+    return vec4f(clamp(clamp(acc / ws, lo, hi), vec3f(0.0), vec3f(1.0)), 1.0);
+  }
   var s = vec3f(0.0);
   for (var j = 0u; j < p.n; j++) {
     for (var i = 0u; i < p.n; i++) {
@@ -7840,10 +7915,13 @@ fn t4(u: i32, v: i32) -> vec3f {
   // maxBandPx: at most this many input pixels per band (pictures on phones,
   // so each band's GPU work stays short — see runPaced).
   function planFor(pk, w, h, size, maxBandPx = Infinity) {
-    const key = [w, h, size.iw, size.ih, size.W, size.H, size.x, size.y, maxBandPx].join(',');
+    const s = size.iw / w, step = 4 / s, n = Math.max(1, Math.ceil(step - 1e-6));
+    const sharp = aiSharpResize && step > 1.0001;
+    const key = [w, h, size.iw, size.ih, size.W, size.H, size.x, size.y, maxBandPx, sharp].join(',');
     if (plan && plan.pk === pk && plan.key === key) return plan;
     if (plan) plan.destroy();
-    const halo = pk.convs.length, maxC4 = Math.max(...pk.convs.map(L => L.outC4));
+    // Rows around a band: one per conv, plus two for the sharp resize's reach.
+    const halo = pk.convs.length + (sharp ? 2 : 0), maxC4 = Math.max(...pk.convs.map(L => L.outC4));
     // Each activation buffer stays within the binding limits and a share of the
     // GPU memory budget (two of them plus the input are alive at once).
     const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize, 1 << 30, gpuBudget() / 6);
@@ -7853,7 +7931,6 @@ fn t4(u: i32, v: i32) -> vec3f {
     const bandRows = Math.min(h, core + 2 * halo);
     const buf = c4 => device.createBuffer({ size: w * bandRows * c4 * VS, usage: GPUBufferUsage.STORAGE });
     const inp = buf(1), A = buf(maxC4), B = buf(maxC4);
-    const s = size.iw / w, step = 4 / s, n = Math.max(1, Math.ceil(step - 1e-6));
     const bands = [];
     for (let c0 = 0; c0 < h; c0 += core) {
       const c1 = Math.min(h, c0 + core), b0 = Math.max(0, c0 - halo), b1 = Math.min(h, c1 + halo);
@@ -7882,7 +7959,7 @@ fn t4(u: i32, v: i32) -> vec3f {
       });
       const output = device.createBindGroup({ layout: outputPipe.getBindGroupLayout(0), entries: [
         { binding: 0, resource: { buffer: src } }, { binding: 1, resource: { buffer: inp } },
-        { binding: 2, resource: { buffer: ubuf([w, bh, b0, n, step, size.x, size.y, size.iw, size.ih, 0, 0, 0], [4]) } },
+        { binding: 2, resource: { buffer: ubuf([w, bh, b0, n, step, size.x, size.y, size.iw, size.ih, sharp ? 1 : 0, 0, 0], [4]) } },
       ] });
       bands.push({ b0, bh, ty0, ty1, inputU, convs, output, uniforms, input: null });
     }
