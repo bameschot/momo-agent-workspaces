@@ -650,6 +650,72 @@
     #video-stop[hidden], #video-cancel[hidden], #video-go[hidden], #video-clip-btn[hidden] { display: none; }
     .dialog-actions button:disabled { opacity: 0.45; cursor: default; }
 
+    /* ── VIDEO PLAYER ── Full-screen overlay on top of the video dialog: plays a
+       queue video, or its original and converted file in sync (A/B). */
+    #player { display: none; position: fixed; inset: 0; z-index: 1470; background: rgba(5,0,8,0.96); backdrop-filter: blur(6px);
+      flex-direction: column; padding: var(--sa-t) var(--sa-r) var(--sa-b) var(--sa-l); color: var(--text); }
+    #player.open { display: flex; }
+    body.gpu-busy #player { backdrop-filter: none; }
+    .pl-top { display: flex; align-items: center; gap: 0.6rem 1rem; flex-wrap: wrap; padding: 0.6rem 1rem; }
+    .pl-title { flex: 1 1 14rem; min-width: 0; display: flex; flex-direction: column; }
+    .pl-title b { font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-title small { color: var(--text-muted); font-size: 0.76rem; font-variant-numeric: tabular-nums; }
+    #pl-views[hidden], .pl-nav[hidden] { display: none; }
+    #pl-views span { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
+    #pl-views input:disabled + span { opacity: 0.4; cursor: default; }
+    .pl-nav { display: flex; align-items: center; gap: 0.4rem; }
+    #pl-count { color: var(--accent2); font-size: 0.8rem; min-width: 3.2rem; text-align: center; font-variant-numeric: tabular-nums; }
+    .pl-top button { background: var(--surface2); border: 1px solid var(--border); color: var(--accent2); border-radius: 8px; padding: 0.3rem 0.7rem; cursor: pointer; font-size: 0.85rem; }
+    .pl-top button:hover:not(:disabled) { border-color: var(--accent2); }
+    .pl-top button:disabled { opacity: 0.4; cursor: default; }
+    #pl-close { font-size: 1.2rem; line-height: 1; padding: 0.25rem 0.6rem; }
+    #pl-note { display: flex; align-items: center; justify-content: center; gap: 0.6rem; flex-wrap: wrap; padding: 0 1rem 0.5rem; font-size: 0.8rem; color: #ffcc80; text-align: center; }
+    #pl-note[hidden] { display: none; }
+    #pl-note button { background: var(--surface2); border: 1px solid #ffcc80; color: #ffcc80; border-radius: 6px; padding: 0.2rem 0.6rem; cursor: pointer; font-size: 0.78rem; }
+    #pl-note button[hidden] { display: none; }
+    .pl-stage { position: relative; flex: 1 1 auto; min-height: 0; background: #000; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+    .pl-stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: transparent; }
+    .pl-stage video[hidden] { display: none; }
+    .pl-stage.idle { cursor: none; }
+    .pl-split { position: absolute; top: 0; bottom: 0; width: 28px; margin-left: -14px; cursor: ew-resize; touch-action: none; z-index: 2; }
+    .pl-split[hidden] { display: none; }
+    .pl-split i { position: absolute; top: 0; bottom: 0; left: 13px; width: 2px; background: rgba(255,255,255,0.85); box-shadow: 0 0 6px rgba(0,0,0,0.8); }
+    .pl-split i::after { content: '⇆'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 2rem; height: 2rem; border-radius: 50%;
+      background: rgba(20,0,30,0.85); border: 2px solid #fff; color: #fff; display: grid; place-items: center; font-size: 0.9rem; font-style: normal; }
+    .pl-lab { position: absolute; top: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 6px; background: rgba(0,0,0,0.6); color: #fff; font-size: 0.72rem; white-space: nowrap; pointer-events: none; }
+    .pl-lab.l { right: 22px; } .pl-lab.r { left: 22px; }
+    .pl-bar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 2.2rem 0.9rem 0.6rem;
+      background: linear-gradient(transparent, rgba(0,0,0,0.85)); transition: opacity 0.25s; }
+    .pl-stage.idle .pl-bar, .pl-stage.idle .pl-lab { opacity: 0; pointer-events: none; }
+    .pl-seek { position: relative; }
+    #pl-seek { --p: 0%; display: block; width: 100%; height: 18px; margin: 0; background: transparent; cursor: pointer; -webkit-appearance: none; appearance: none; }
+    #pl-seek::-webkit-slider-runnable-track { height: 5px; border-radius: 3px; background: linear-gradient(90deg, var(--accent2) var(--p), rgba(255,255,255,0.25) var(--p)); }
+    #pl-seek::-moz-range-track { height: 5px; border-radius: 3px; background: linear-gradient(90deg, var(--accent2) var(--p), rgba(255,255,255,0.25) var(--p)); }
+    #pl-seek::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -4.5px; border-radius: 50%; background: #fff; border: none; }
+    #pl-seek::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; }
+    #pl-tip { position: absolute; bottom: 22px; transform: translateX(-50%); padding: 0.1rem 0.4rem; border-radius: 4px; background: rgba(0,0,0,0.8); color: #fff; font-size: 0.72rem; pointer-events: none; font-variant-numeric: tabular-nums; }
+    #pl-tip[hidden] { display: none; }
+    .pl-ctrls { display: flex; align-items: center; gap: 0.15rem 0.3rem; flex-wrap: wrap; margin-top: 0.2rem; }
+    .pl-ctrls button { display: grid; place-items: center; width: 2.2rem; height: 2.2rem; padding: 0; border: none; border-radius: 8px; background: transparent; color: #fff; cursor: pointer; }
+    .pl-ctrls button:hover { background: rgba(255,255,255,0.14); }
+    .pl-ctrls button:focus-visible, #pl-rate:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
+    .pl-ctrls button[hidden] { display: none; }
+    .pl-ctrls svg { width: 22px; height: 22px; fill: currentColor; }
+    .pl-ctrls .pl-sm svg { width: 19px; height: 19px; }
+    #pl-time { color: #fff; font-size: 0.8rem; margin: 0 0.4rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .pl-gap { flex: 1 1 0; }
+    #pl-vol { width: 5.5rem; accent-color: var(--accent2); }
+    #pl-rate { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.25); border-radius: 6px; padding: 0.2rem 0.3rem; font-size: 0.78rem; cursor: pointer; }
+    #pl-rate option { background: var(--surface); }
+    .pl-stage:fullscreen { background: #000; }
+    @media (max-width: 560px) {
+      .pl-top { padding: 0.5rem 0.75rem; }
+      .pl-bar { padding: 1.6rem 0.5rem 0.4rem; }
+      .pl-ctrls button { width: 2rem; height: 2rem; }
+      #pl-vol { display: none; }
+      .pl-ctrls .pl-step { display: none; }
+    }
+
     /* ── TOAST ── */
     /* ── LOAD PROGRESS ── */
     #progress-overlay {
@@ -1221,6 +1287,50 @@
       </div>
     </div>
   </div>
+</div>
+
+<!-- Video player: a queue video, or its original and converted file in sync -->
+<div id="player" role="dialog" aria-modal="true" aria-label="Video player">
+  <div class="pl-top">
+    <div class="pl-title"><b id="pl-name"></b><small id="pl-info"></small></div>
+    <div class="chips" id="pl-views" role="radiogroup" aria-label="View (A)">
+      <label title="Only the original video"><input type="radio" name="plview" value="a"><span>Original</span></label>
+      <label title="Original on the left, converted on the right: drag the line"><input type="radio" name="plview" value="split"><span>⇆ Split</span></label>
+      <label title="Only the converted video"><input type="radio" name="plview" value="b"><span>Converted</span></label>
+    </div>
+    <div class="pl-nav">
+      <button type="button" id="pl-prev" title="Previous video (P)" aria-label="Previous video">◀</button>
+      <span id="pl-count"></span>
+      <button type="button" id="pl-next" title="Next video (N)" aria-label="Next video">▶</button>
+    </div>
+    <button type="button" id="pl-close" title="Close (Esc)" aria-label="Close">×</button>
+  </div>
+  <div id="pl-note" hidden><span></span><button type="button" id="pl-note-btn" hidden></button></div>
+  <div class="pl-stage" id="pl-stage">
+    <video id="pl-a" playsinline preload="auto"></video>
+    <video id="pl-b" playsinline preload="auto"></video>
+    <div class="pl-split" id="pl-split" hidden><span class="pl-lab l">Original</span><i></i><span class="pl-lab r">Converted</span></div>
+    <div class="pl-bar" id="pl-bar">
+      <div class="pl-seek"><input type="range" id="pl-seek" min="0" max="1" step="any" value="0" aria-label="Position"><output id="pl-tip" hidden></output></div>
+      <div class="pl-ctrls">
+        <button type="button" id="pl-play" title="Play (Space)" aria-label="Play"><svg viewBox="0 0 24 24"><path id="pl-play-icon" d="M8 5v14l11-7z"/></svg></button>
+        <button type="button" class="pl-sm" id="pl-back" title="Back 5 s (←)" aria-label="Back 5 seconds"><svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/><text x="12" y="16.5" font-size="7" text-anchor="middle" font-family="sans-serif" font-weight="700">5</text></svg></button>
+        <button type="button" class="pl-sm" id="pl-fwd" title="Forward 5 s (→)" aria-label="Forward 5 seconds"><svg viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z"/><text x="12" y="16.5" font-size="7" text-anchor="middle" font-family="sans-serif" font-weight="700">5</text></svg></button>
+        <button type="button" class="pl-sm pl-step" id="pl-fprev" title="Previous frame (,)" aria-label="Previous frame"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM19 5v14l-9-7z"/></svg></button>
+        <button type="button" class="pl-sm pl-step" id="pl-fnext" title="Next frame (.)" aria-label="Next frame"><svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l9-7z"/></svg></button>
+        <span id="pl-time">0:00 / 0:00</span>
+        <span class="pl-gap"></span>
+        <button type="button" class="pl-sm" id="pl-mute" title="Mute (M)" aria-label="Mute"><svg viewBox="0 0 24 24"><path id="pl-mute-icon" d=""/></svg></button>
+        <input type="range" id="pl-vol" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+        <select id="pl-rate" title="Speed" aria-label="Speed">
+          <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option>
+        </select>
+        <button type="button" class="pl-sm" id="pl-pip" title="Picture in picture" aria-label="Picture in picture" hidden><svg viewBox="0 0 24 24"><path d="M19 11h-8v6h8zm4 8V5a2 2 0 0 0-2-2H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2zm-2 0H3V5h18z"/></svg></button>
+        <button type="button" class="pl-sm" id="pl-fs" title="Full screen (F)" aria-label="Full screen"><svg viewBox="0 0 24 24"><path id="pl-fs-icon" d=""/></svg></button>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="pl-file" accept="video/mp4,.mp4,.m4v" hidden>
 </div>
 
 <div id="toast"></div>
@@ -9222,18 +9332,24 @@ async function videoRenderPreview() {
   }
 }
 
+// A restored queue item has only its file handle: ask for read access again
+// (needs a click) and get the file. false when the user refused.
+async function vqEnsureFile(item, why) {
+  if (item.file || !item.handle) return true;
+  try {
+    if ((await item.handle.queryPermission({ mode: 'read' })) !== 'granted') await item.handle.requestPermission({ mode: 'read' });
+    item.file = await item.handle.getFile();
+    if (item.state === 'needs-file') { item.state = 'waiting'; vqSave(item); queueRender(); }
+    return true;
+  } catch { showToast('Allow access to ' + item.name + ' to ' + why + ' it.'); return false; }
+}
+
 // The selected queue item drives the frame preview and the 5 s clip.
 async function selectVideo(item) {
   if (!item) return;
   vq.sel = item.id;
   queueRender();
-  if (!item.file && item.handle) {
-    try {
-      if ((await item.handle.queryPermission({ mode: 'read' })) !== 'granted') await item.handle.requestPermission({ mode: 'read' });
-      item.file = await item.handle.getFile();
-      if (item.state === 'needs-file') { item.state = 'waiting'; vqSave(item); queueRender(); }
-    } catch { showToast('Allow access to ' + item.name + ' to preview it.'); return; }
-  }
+  if (!(await vqEnsureFile(item, 'preview'))) return;
   if (!item.file || item.state === 'failed' && !item.demux) {
     Object.assign(vid, { file: null, info: null, frame: null, after: null, afterKey: '' });
     vEls.info.textContent = item.file ? '' : 'Add ' + item.name + ' again to preview it.';
@@ -9434,7 +9550,7 @@ function queueRender() {
       row = document.createElement('div');
       row.className = 'vq-row'; row.dataset.id = it.id;
       row.innerHTML = '<div class="vq-name"><b></b> <small></small></div><span class="vq-state"></span>' +
-        '<span class="vq-actions"><button type="button" data-act="retry" title="Convert again">↻</button><button type="button" data-act="remove" title="Remove from the queue">✕</button></span>' +
+        '<span class="vq-actions"><button type="button" data-act="play" title="Play">▶</button><button type="button" data-act="retry" title="Convert again">↻</button><button type="button" data-act="remove" title="Remove from the queue">✕</button></span>' +
         '<div class="vq-bar"><i></i></div><div class="vq-detail"></div>';
       row.querySelector('b').textContent = it.name;
     }
@@ -9455,6 +9571,9 @@ function queueRender() {
       : it.state === 'needs-file' ? (it.handle ? 'Click to allow access to this file again.' : 'Add this file again to continue it.')
       : 'Waiting';
     row.querySelector('[data-act=retry]').hidden = it.state !== 'failed';
+    const play = row.querySelector('[data-act=play]');
+    play.hidden = !(it.file || it.handle || it.state === 'done');
+    play.title = it.state === 'done' ? 'Play · compare with the result' : 'Play';
     row.querySelector('[data-act=remove]').disabled = it.state === 'converting';
   });
   rows.forEach(r => r.remove());
@@ -9574,7 +9693,7 @@ async function queueOne(it, st, dir) {
       if (now - lastDraw > 500) { lastDraw = now; queueRender(); }
       if (now - lastSave > 5000) { lastSave = now; vqSave(it); }
     }, () => cancelled || vq.cancelled);
-    if (!dir && result) downloadBlob(result, name);
+    if (!dir && result) { downloadBlob(result, name); it.outBlob = result; }   // kept for ▶ Play this session
     Object.assign(it, { state: 'done', outBytes: dir ? (await fh.getFile()).size : result.size, elapsedMs: performance.now() - t0, finishedAt: Date.now() });
   } catch (err) {
     if (sink) await sink.abort();        // (also for errors before videoUpscale got going; a second abort does nothing)
@@ -9627,6 +9746,7 @@ vEls.queue.addEventListener('click', e => {
   const row = e.target.closest('.vq-row'), it = row && vq.items.find(x => x.id === row.dataset.id);
   if (!it) return;
   const act = e.target.closest('button') && e.target.closest('button').dataset.act;
+  if (act === 'play') { playerOpen(it); return; }
   if (act === 'remove') {
     vq.items = vq.items.filter(x => x !== it);
     vqTx('items', 'readwrite', st => st.delete(it.id));
@@ -9666,9 +9786,395 @@ vEls.zoom.addEventListener('change', () => vEls.wrap.classList.toggle('zoom', vE
 vEls.clipBtn.addEventListener('click', () => videoRun());
 vEls.close.addEventListener('click', closeVideo);
 videoDialog.addEventListener('click', e => { if (e.target === videoDialog) closeVideo(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && videoDialog.classList.contains('open')) closeVideo(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && videoDialog.classList.contains('open') && !player.classList.contains('open')) closeVideo(); });
 queueLoad();
 window.addEventListener('beforeunload', e => { if (vq.running) { e.preventDefault(); e.returnValue = ''; } });
+
+// ── VIDEO: PLAYER ─────────────────────────────────────────────────────────────
+// ▶ on a queue row plays that video in a full-screen overlay. With a converted
+// result it plays the original and the result in sync: the result (#pl-b) is
+// the master that the controls drive and that has the audio, the original
+// (#pl-a) follows it, muted. Split view clips the result from the left, so the
+// original shows left of the line and the result right of it. Both videos use
+// object-fit: contain in the same box, so a Fit or Letterbox output lines up.
+// Plain <video> elements: the browser plays the MP4s itself.
+const player = document.getElementById('player');
+const pEls = Object.fromEntries(['name', 'info', 'views', 'prev', 'next', 'count', 'close', 'note', 'note-btn', 'stage', 'a', 'b', 'split', 'bar',
+  'seek', 'tip', 'play', 'play-icon', 'back', 'fwd', 'fprev', 'fnext', 'time', 'mute', 'mute-icon', 'vol', 'rate', 'pip', 'fs', 'fs-icon', 'file']
+  .map(id => [id.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('pl-' + id)]));
+const PL_ICON = {
+  play: 'M8 5v14l11-7z', pause: 'M6 5h4v14H6zm8 0h4v14h-4z',
+  vol: 'M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z',
+  muted: 'M16.5 12A4.5 4.5 0 0 0 14 8v2.2l2.45 2.45c.03-.2.05-.42.05-.65zM19 12a7 7 0 0 1-.55 2.73l1.5 1.5A9 9 0 0 0 14 3.2v2.1A7 7 0 0 1 19 12zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25A7 7 0 0 1 14 18.7v2.1a9 9 0 0 0 3.7-1.8L19.73 21 21 19.73l-9-9zM12 4 9.9 6.1 12 8.2z',
+  fs: 'M7 14H5v5h5v-2H7zm-2-4h2V7h3V5H5zm12 7h-3v2h5v-5h-2zM14 5v2h3v3h2V5z',
+  fsExit: 'M5 16h3v3h2v-5H5zm3-8H5v2h5V5H8zm6 11h2v-3h3v-2h-5zm2-11V5h-2v5h5V8z',
+};
+const pl = { item: null, token: 0, m: pEls.a, s: null, urls: [], view: 'a', split: 50, hold: false, nudge: false, raf: 0, idleTimer: 0,
+  scrubbing: false, resumeAt: 0, autoplay: true, result: null, vol: 1, muted: false, rate: 1 };
+try {
+  const p = JSON.parse(localStorage.getItem('lumity-player') || '{}');
+  if (p.vol >= 0 && p.vol <= 1) pl.vol = p.vol;
+  pl.muted = !!p.muted;
+  if ([0.25, 0.5, 1, 1.5, 2].includes(p.rate)) pl.rate = p.rate;
+} catch { /* defaults */ }
+const plSavePrefs = () => { try { localStorage.setItem('lumity-player', JSON.stringify({ vol: pl.vol, muted: pl.muted, rate: pl.rate })); } catch { /* not kept */ } };
+const plFsEl = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+const plPlayable = it => !!(it.file || it.handle || it.state === 'done');
+
+function plNote(text, btnLabel, action) {
+  pEls.note.hidden = !text;
+  pEls.note.firstElementChild.textContent = text || '';
+  pEls.noteBtn.hidden = !btnLabel;
+  pEls.noteBtn.textContent = btnLabel || '';
+  pEls.noteBtn.onclick = action || null;
+}
+
+// The converted file: from the output folder, or the copy kept after a
+// download (or picked by hand) this session.
+async function playerResult(it) {
+  if (it.state !== 'done') return null;
+  if (it.outBlob) return { blob: it.outBlob };
+  if (vq.dir && it.outName) {
+    try {
+      if ((await vq.dir.queryPermission({ mode: 'read' })) !== 'granted' && (await vq.dir.requestPermission({ mode: 'read' })) !== 'granted') throw 0;
+    } catch { return { need: 'dir', note: 'Allow access to the output folder “' + vq.dir.name + '” to compare with the converted video.' }; }
+    try { const f = await (await vq.dir.getFileHandle(it.outName)).getFile(); if (f.size) return { blob: f }; } catch { /* not there */ }
+    return { need: 'pick', note: '“' + it.outName + '” is no longer in the output folder “' + vq.dir.name + '”.' };
+  }
+  return { need: 'pick', note: '“' + (it.outName || 'The converted video') + '” was downloaded: pick it to compare.' };
+}
+
+async function playerOpen(it) {
+  const token = ++pl.token;
+  const keepTime = pl.item === it && player.classList.contains('open') ? pl.m.currentTime : 0;
+  player.classList.add('open');
+  pl.item = it;
+  plUnload();
+  pEls.name.textContent = it.name;
+  plNote('');
+  plNav();
+  const hasFile = await vqEnsureFile(it, 'play');
+  if (token !== pl.token) return;
+  const res = await playerResult(it);
+  if (token !== pl.token) return;
+  pl.result = res && res.blob || null;
+  let a = hasFile && it.file ? it.file : null;
+  const codec = it.demux && it.demux.video && it.demux.video.config.codec;
+  let note = '';
+  if (a && codec && !pEls.a.canPlayType('video/mp4; codecs="' + codec + '"')) {
+    note = 'This browser can’t play the original’s ' + (it.info ? it.info.codec : codec) + ' video' + (pl.result ? '; showing only the converted one.' : '.');
+    a = null;
+  } else if (!a) note = 'Add ' + it.name + ' again to play the original.';
+  if (res && res.need) {
+    const retry = () => playerOpen(it);
+    if (res.need === 'dir') plNote(res.note, 'Allow access', retry);
+    else plNote(res.note, 'Pick the converted file…', () => pEls.file.click());
+  } else if (note) plNote(note);
+  pl.resumeAt = keepTime;
+  plLoad(a, pl.result);
+}
+
+// Sets the two elements up for an original (a) and/or a result (b).
+function plLoad(a, b) {
+  const A = pEls.a, B = pEls.b;
+  pl.urls.forEach(u => URL.revokeObjectURL(u)); pl.urls = [];
+  const url = f => { const u = URL.createObjectURL(f); pl.urls.push(u); return u; };
+  pl.m = b ? B : A; pl.s = a && b ? A : null;
+  A.hidden = !a; B.hidden = !b;
+  if (a) A.src = url(a); else { A.removeAttribute('src'); A.load(); }
+  if (b) B.src = url(b); else { B.removeAttribute('src'); B.load(); }
+  A.muted = !!pl.s || pl.muted; B.muted = pl.muted;
+  pl.m.volume = pl.vol;
+  A.playbackRate = B.playbackRate = A.defaultPlaybackRate = B.defaultPlaybackRate = pl.rate;
+  const avail = { a: !!a, b: !!b, split: !!(a && b) };
+  pEls.views.querySelectorAll('input').forEach(r => { r.disabled = !avail[r.value]; });
+  pEls.views.hidden = !(a && b) && !(pl.item && pl.item.state === 'done');
+  plView(avail[pl.view] && pl.view !== 'a' ? pl.view : avail.split ? 'split' : b ? 'b' : 'a');
+  pEls.info.textContent = plInfo();
+  plUi();
+}
+
+function plUnload() {
+  cancelAnimationFrame(pl.raf);
+  pl.hold = false; pl.nudge = false;
+  for (const v of [pEls.a, pEls.b]) { v.pause(); v.removeAttribute('src'); v.load(); }
+  pl.urls.forEach(u => URL.revokeObjectURL(u)); pl.urls = [];
+}
+
+function playerClose() {
+  pl.token++;
+  if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+  if (plFsEl()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  plUnload();
+  pl.result = null; pl.item = null;
+  player.classList.remove('open');
+  pEls.stage.classList.remove('idle');
+}
+
+function plInfo() {
+  const it = pl.item, I = it && it.info, B = pEls.b;
+  if (!I) return '';
+  let s = I.w + '×' + I.h + ' · ' + (+I.fps).toFixed(2).replace(/\.?0+$/, '') + ' fps · ' + I.codec + ' · ' + videoClock(I.duration);
+  if (pl.result) s += '  →  ' + (B.videoWidth ? B.videoWidth + '×' + B.videoHeight + ' · ' : '') + formatBytes(pl.result.size);
+  return s;
+}
+
+function plNav() {
+  const list = vq.items.filter(plPlayable), k = list.indexOf(pl.item);
+  pEls.count.textContent = list.length > 1 && k >= 0 ? (k + 1) + ' / ' + list.length : '';
+  pEls.prev.disabled = k <= 0; pEls.next.disabled = k < 0 || k >= list.length - 1;
+  pEls.prev.parentElement.hidden = list.length < 2;
+}
+function plStep(dir) {
+  const list = vq.items.filter(plPlayable), next = list[list.indexOf(pl.item) + dir];
+  if (next) playerOpen(next);
+}
+
+function plView(view) {
+  pl.view = view;
+  const r = pEls.views.querySelector('input[value="' + view + '"]'); if (r) r.checked = true;
+  const both = !!pl.s;
+  pEls.b.style.clipPath = !both ? '' : view === 'a' ? 'inset(0 0 0 100%)' : view === 'split' ? 'inset(0 0 0 ' + pl.split + '%)' : '';
+  pEls.split.hidden = !(both && view === 'split');
+  pEls.split.style.left = pl.split + '%';
+}
+function plCycleView() {
+  if (!pl.s) return;
+  plView({ a: 'split', split: 'b', b: 'a' }[pl.view]);
+}
+
+// ── playback ──
+const plDur = () => { const d = pl.m.duration; return isFinite(d) ? d : pl.item && pl.item.info ? pl.item.info.duration : 0; };
+const plFps = () => (pl.item && pl.item.info && +pl.item.info.fps) || 30;
+const plPlaying = () => !pl.m.paused || pl.hold;
+// Ends a stall hold (see 'waiting' below) without playing on.
+function plDropHold() { if (pl.hold) { pl.hold = false; if (pl.s) pl.s.pause(); return true; } return false; }
+function plToggle() {
+  const m = pl.m;
+  if (!m.src) return;
+  if (plDropHold()) { plUi(); return; }
+  if (m.paused) { if (m.ended || m.currentTime >= plDur() - 0.05) plSeek(0); m.play().catch(() => {}); } else m.pause();
+}
+function plSeek(t) {
+  const m = pl.m;
+  m.currentTime = Math.max(0, Math.min(plDur() - 0.001, t));
+  if (pl.s) pl.s.currentTime = m.currentTime;
+  plUi();
+}
+// One frame: pause and jump to the middle of the next/previous frame, so
+// rounding never lands on a frame boundary.
+function plFrame(dir) {
+  plDropHold();
+  if (!pl.m.paused) pl.m.pause();
+  const fps = plFps(), k = Math.floor(pl.m.currentTime * fps + 1e-3);
+  plSeek((Math.max(0, k + dir) + 0.5) / fps);
+}
+function plSetVol(v) {
+  pl.vol = Math.max(0, Math.min(1, v)); pl.muted = pl.vol === 0 ? pl.muted : false;
+  pl.m.volume = pl.vol; pl.m.muted = pl.muted;
+  plSavePrefs(); plUi();
+}
+function plMute() { pl.muted = !pl.muted; pl.m.muted = pl.muted; plSavePrefs(); plUi(); }
+function plRate(r) {
+  pl.rate = r;
+  for (const v of [pEls.a, pEls.b]) { v.defaultPlaybackRate = r; v.playbackRate = r; }
+  pl.nudge = false; plSavePrefs(); plUi();
+}
+function plFullscreen() {
+  if (plFsEl()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+  const st = pEls.stage;
+  if (st.requestFullscreen) st.requestFullscreen().catch(() => {});
+  else if (st.webkitRequestFullscreen) st.webkitRequestFullscreen();
+  else if (pl.m.webkitEnterFullscreen) pl.m.webkitEnterFullscreen();   // iPhone: the system player
+}
+function plPip() {
+  if (document.pictureInPictureElement) { document.exitPictureInPicture().catch(() => {}); return; }
+  const v = pl.s && pl.view === 'a' ? pl.s : pl.m;
+  v.requestPictureInPicture().catch(err => showToast('Picture in picture: ' + (err.message || err)));
+}
+
+// Per frame while playing: keep the original on the result's clock. A big
+// gap is closed with a jump; a small one by running the original 3 % faster
+// or slower until it has caught up, which doesn't show.
+function plTick() {
+  const m = pl.m, s = pl.s;
+  if (s && !m.paused && !m.seeking && !s.seeking && s.readyState >= 2) {
+    const d = s.currentTime - m.currentTime, ad = Math.abs(d);
+    if (ad > 0.15) { s.currentTime = m.currentTime; pl.nudge = false; s.playbackRate = m.playbackRate; }
+    else if (ad > 0.02 || pl.nudge && ad > 0.006) { pl.nudge = true; s.playbackRate = m.playbackRate * (d > 0 ? 0.97 : 1.03); }
+    else if (pl.nudge) { pl.nudge = false; s.playbackRate = m.playbackRate; }
+    if (s.paused && !pl.hold) s.play().catch(() => {});
+  }
+  plUiTime();
+  pl.raf = !m.paused ? requestAnimationFrame(plTick) : 0;
+}
+
+function plUiTime() {
+  const m = pl.m, dur = plDur(), t = pl.scrubbing ? +pEls.seek.value : m.currentTime;
+  if (!pl.scrubbing) { pEls.seek.max = dur || 1; pEls.seek.value = t; }
+  pEls.seek.style.setProperty('--p', (dur ? t / dur * 100 : 0) + '%');
+  pEls.time.textContent = videoClock(t) + ' / ' + videoClock(dur);
+}
+function plUi() {
+  const playing = plPlaying();
+  pEls.playIcon.setAttribute('d', playing ? PL_ICON.pause : PL_ICON.play);
+  pEls.play.title = (playing ? 'Pause' : 'Play') + ' (Space)'; pEls.play.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  pEls.muteIcon.setAttribute('d', pl.muted || pl.vol === 0 ? PL_ICON.muted : PL_ICON.vol);
+  pEls.mute.title = (pl.muted ? 'Unmute' : 'Mute') + ' (M)';
+  pEls.vol.value = pl.muted ? 0 : pl.vol;
+  pEls.rate.value = String(pl.rate);
+  pEls.fsIcon.setAttribute('d', plFsEl() ? PL_ICON.fsExit : PL_ICON.fs);
+  pEls.pip.hidden = !document.pictureInPictureEnabled;
+  if (!playing) pEls.stage.classList.remove('idle');
+  plUiTime();
+}
+
+// Shows the controls; they hide again after 2.5 s without movement while playing.
+function plWake() {
+  pEls.stage.classList.remove('idle');
+  clearTimeout(pl.idleTimer);
+  pl.idleTimer = setTimeout(() => { if (plPlaying() && !pEls.bar.matches(':hover') && !pl.scrubbing) pEls.stage.classList.add('idle'); }, 2500);
+}
+
+for (const v of [pEls.a, pEls.b]) {
+  const master = () => v === pl.m;
+  v.addEventListener('loadedmetadata', () => {
+    if (!master()) return;
+    if (pl.resumeAt) { plSeek(pl.resumeAt); pl.resumeAt = 0; }
+    pEls.info.textContent = plInfo();
+    if (pl.autoplay) v.play().catch(() => {});
+    plUi();
+  });
+  v.addEventListener('play', () => {
+    if (!master()) return;
+    if (pl.s) { if (Math.abs(pl.s.currentTime - v.currentTime) > 0.05) pl.s.currentTime = v.currentTime; pl.s.play().catch(() => {}); }
+    cancelAnimationFrame(pl.raf); pl.raf = requestAnimationFrame(plTick);
+    plUi(); plWake();
+  });
+  v.addEventListener('pause', () => {
+    if (!master()) return;
+    if (pl.s && !pl.hold) { pl.s.pause(); pl.s.currentTime = v.currentTime; }
+    plUi();
+  });
+  v.addEventListener('seeking', () => { if (master() && pl.s) pl.s.currentTime = v.currentTime; plUiTime(); });
+  v.addEventListener('seeked', () => { if (master() && pl.s && Math.abs(pl.s.currentTime - v.currentTime) > 0.001) pl.s.currentTime = v.currentTime; plUiTime(); });
+  v.addEventListener('ratechange', () => { if (master() && pl.s && !pl.nudge) pl.s.playbackRate = v.playbackRate; });
+  v.addEventListener('timeupdate', () => { if (v.paused) plUiTime(); });
+  v.addEventListener('durationchange', () => { if (master()) plUiTime(); });
+  v.addEventListener('ended', () => { if (master()) { pl.hold = false; if (pl.s) pl.s.pause(); plUi(); } });
+  // A stall on one side holds the other until it can go on.
+  v.addEventListener('waiting', () => {
+    if (master()) { if (pl.s) pl.s.pause(); }
+    else if (v === pl.s && !pl.m.paused && !pl.m.ended) { pl.hold = true; pl.m.pause(); }
+  });
+  v.addEventListener('playing', () => { if (master() && pl.s && pl.s.paused && !pl.hold) pl.s.play().catch(() => {}); });
+  v.addEventListener('canplay', () => {
+    if (v !== pl.s || !pl.hold) return;
+    pl.hold = false;
+    if (pl.m.ended || pl.m.currentTime >= plDur() - 0.05) plUi();   // at the end: stay there (play() would start over)
+    else pl.m.play().catch(() => {});
+  });
+  v.addEventListener('error', () => {
+    if (!v.getAttribute('src') || !pl.item) return;
+    const isResult = v === pEls.b, other = isResult ? pEls.a : pEls.b, t = pl.m.currentTime;
+    const otherOk = !!pl.s && other.getAttribute('src');
+    const what = isResult ? 'the converted video' : 'the original’s ' + (pl.item.info ? pl.item.info.codec : '') + ' video';
+    plNote('Can’t play ' + what + (otherOk ? '; showing only the ' + (isResult ? 'original' : 'converted one') + '.' : '.'));
+    if (!otherOk) return;
+    const keep = isResult ? pl.item.file : pl.result;
+    if (isResult) pl.result = null;
+    pl.resumeAt = t;
+    plLoad(isResult ? keep : null, isResult ? null : keep);
+  });
+}
+
+pEls.play.addEventListener('click', plToggle);
+pEls.back.addEventListener('click', () => plSeek(pl.m.currentTime - 5));
+pEls.fwd.addEventListener('click', () => plSeek(pl.m.currentTime + 5));
+pEls.fprev.addEventListener('click', () => plFrame(-1));
+pEls.fnext.addEventListener('click', () => plFrame(1));
+pEls.mute.addEventListener('click', plMute);
+pEls.vol.addEventListener('input', () => { pl.muted = false; plSetVol(+pEls.vol.value); });
+pEls.rate.addEventListener('change', () => plRate(+pEls.rate.value));
+pEls.fs.addEventListener('click', plFullscreen);
+pEls.pip.addEventListener('click', plPip);
+pEls.close.addEventListener('click', playerClose);
+pEls.prev.addEventListener('click', () => plStep(-1));
+pEls.next.addEventListener('click', () => plStep(1));
+pEls.views.addEventListener('change', e => plView(e.target.value));
+// Buttons don't keep the focus after a click, so Space keeps meaning play/pause.
+pEls.bar.addEventListener('mousedown', e => { if (e.target.closest('button')) e.preventDefault(); });
+document.addEventListener('fullscreenchange', plUi);
+document.addEventListener('webkitfullscreenchange', plUi);
+pEls.file.addEventListener('change', () => {
+  const f = pEls.file.files[0]; pEls.file.value = '';
+  if (!f || !pl.item) return;
+  pl.item.outBlob = f;                     // for this session
+  playerOpen(pl.item);
+});
+
+// Seek bar: drag to scrub (the video follows), hover for the time there.
+pEls.seek.addEventListener('pointerdown', () => { pl.scrubbing = true; });
+pEls.seek.addEventListener('input', () => { pl.scrubbing = true; plSeek(+pEls.seek.value); });
+pEls.seek.addEventListener('change', () => { pl.scrubbing = false; plSeek(+pEls.seek.value); });
+window.addEventListener('pointerup', () => { if (pl.scrubbing) { pl.scrubbing = false; plUiTime(); } });
+pEls.seek.addEventListener('pointermove', e => {
+  const r = pEls.seek.getBoundingClientRect(), f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  pEls.tip.hidden = false; pEls.tip.style.left = f * 100 + '%'; pEls.tip.textContent = videoClock(f * plDur());
+});
+pEls.seek.addEventListener('pointerleave', () => { pEls.tip.hidden = true; });
+
+// Split line: drag it (mouse or touch).
+pEls.split.addEventListener('pointerdown', e => {
+  e.preventDefault(); e.stopPropagation();
+  pEls.split.setPointerCapture(e.pointerId);
+  const move = ev => {
+    const r = pEls.stage.getBoundingClientRect();
+    pl.split = Math.max(0, Math.min(100, (ev.clientX - r.left) / r.width * 100));
+    plView('split');
+  };
+  const up = () => { pEls.split.removeEventListener('pointermove', move); pEls.split.removeEventListener('pointerup', up); pEls.split.removeEventListener('pointercancel', up); };
+  pEls.split.addEventListener('pointermove', move);
+  pEls.split.addEventListener('pointerup', up);
+  pEls.split.addEventListener('pointercancel', up);
+});
+pEls.split.addEventListener('click', e => e.stopPropagation());
+pEls.split.addEventListener('dblclick', e => e.stopPropagation());
+
+// Click on the picture: play/pause (a tap while the controls are hidden only
+// shows them); double-click: full screen.
+pEls.stage.addEventListener('pointermove', plWake);
+pEls.stage.addEventListener('pointerdown', e => { pl.tapWasIdle = e.pointerType === 'touch' && pEls.stage.classList.contains('idle'); });
+pEls.stage.addEventListener('click', e => {
+  if (e.target.closest('.pl-bar')) return;
+  const idle = pl.tapWasIdle; pl.tapWasIdle = false;
+  plWake();
+  if (!idle) plToggle();
+});
+pEls.stage.addEventListener('dblclick', e => { if (!e.target.closest('.pl-bar')) plFullscreen(); });
+
+document.addEventListener('keydown', e => {
+  if (!player.classList.contains('open') || e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target, tag = t.tagName, k = e.key;
+  if (k === 'Escape') {                                  // in full screen the browser leaves that first
+    if (!plFsEl()) { e.preventDefault(); playerClose(); }
+    return;
+  }
+  if (tag === 'SELECT' || tag === 'BUTTON' && (k === ' ' || k === 'Enter') || tag === 'INPUT' && t.type !== 'range') return;
+  const lower = k.length === 1 ? k.toLowerCase() : k;
+  const act = {
+    ' ': plToggle, k: plToggle,
+    ArrowLeft: () => plSeek(pl.m.currentTime - 5), ArrowRight: () => plSeek(pl.m.currentTime + 5),
+    ',': () => plFrame(-1), '.': () => plFrame(1),
+    ArrowUp: () => plSetVol(pl.vol + 0.1), ArrowDown: () => plSetVol(pl.vol - 0.1),
+    m: plMute, f: plFullscreen, a: plCycleView, n: () => plStep(1), p: () => plStep(-1),
+    Home: () => plSeek(0), End: () => plSeek(plDur()),
+  }[lower];
+  if (!act) return;
+  e.preventDefault(); e.stopPropagation();
+  act(); plWake();
+});
+plUi();
 
 // ── FAVOURITES ────────────────────────────────────────────────────────────────
 // A favourite is a flag on the picture: stored with it in IndexedDB and in
