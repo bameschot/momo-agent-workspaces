@@ -596,6 +596,7 @@
     @media (max-width: 560px) { .goal-cards { grid-template-columns: 1fr; } }
     .vd-opts { display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.75rem; }
     .vd-opts[hidden], #video-size-note[hidden], #video-speed[hidden] { display: none; }
+    .chips[hidden], #video-codec-note[hidden], #video-grow-note[hidden] { display: none; }
     .vd-warn { color: #ffcc80; }
     .vd-rate { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
     #video-more { border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); }
@@ -647,6 +648,7 @@
     .vq-actions button, .vq-tools button { background: var(--surface); border: 1px solid var(--border); color: var(--accent2); border-radius: 6px; padding: 0.15rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
     .vq-actions button:disabled, .vq-tools button:disabled { opacity: 0.45; cursor: default; }
     .vq-tools { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+    .vq-tools button[hidden] { display: none; }
     #video-stop[hidden], #video-cancel[hidden], #video-go[hidden], #video-clip-btn[hidden] { display: none; }
     .dialog-actions button:disabled { opacity: 0.45; cursor: default; }
 
@@ -1161,6 +1163,8 @@
           <div class="vq-tools">
             <button type="button" id="video-add">＋ Add videos…</button>
             <button type="button" id="video-clear">Clear finished</button>
+            <button type="button" id="video-reset" title="Keep the finished videos in the list and set them to Waiting, to convert them again (files already saved stay where they are)">↺ Reset finished</button>
+            <button type="button" id="video-folder" hidden></button>
           </div>
           <p class="dialog-sub" id="video-info"></p>
           <p class="dialog-sub" id="video-qsum"></p>
@@ -1170,7 +1174,7 @@
           <div class="goal-cards" id="video-goal">
             <label><input type="radio" name="vgoal" value="ai"><span><b>✨ AI upscale</b><small>Sharpest result for anime and cartoons; the slowest.</small></span></label>
             <label><input type="radio" name="vgoal" value="builtin"><span><b>🧰 Upscale + clean up</b><small>No AI: the gallery’s own upscaler with a cleanup preset.</small></span></label>
-            <label><input type="radio" name="vgoal" value="resize"><span><b>📐 Resize only</b><small>Just scale and re-encode, e.g. 720p → 480p or a lower bitrate. Fast.</small></span></label>
+            <label><input type="radio" name="vgoal" value="resize"><span><b>📐 Resize only</b><small>Scale and/or compress, e.g. 720p → 480p, or the same size in a smaller file (H.264, HEVC or AV1). Fast.</small></span></label>
           </div>
           <div class="vd-opts" id="video-ai-opts">
             <div class="opt-row"><span>AI model</span><div class="chips" id="video-engines"></div></div>
@@ -1225,7 +1229,7 @@
           <label title="HD, 1280×720: same AI work, smaller files"><input type="radio" name="vres" value="720"><span>720p</span></label>
           <label title="854×480 (DVD size). AI and Built-in only enlarge smaller videos; 📐 Resize only also shrinks"><input type="radio" name="vres" value="480"><span>480p</span></label>
           <label title="640×360, for small phone copies. AI and Built-in only enlarge smaller videos; 📐 Resize only also shrinks"><input type="radio" name="vres" value="360"><span>360p</span></label>
-          <label title="The video's own size: no enlarging, only the cleanup (or the AI at 1×); with 📐 Resize only: re-encoded at the chosen bitrate"><input type="radio" name="vres" value="orig"><span id="video-orig-text">Original</span></label>
+          <label title="The video's own size: no enlarging, only the cleanup (or the AI at 1×); with 📐 Resize only: the same size, compressed into a smaller file"><input type="radio" name="vres" value="orig"><span id="video-orig-text">Original</span></label>
         </div>
       </div>
           <p class="dialog-sub vd-warn" id="video-size-note" hidden></p>
@@ -1235,10 +1239,25 @@
           <label id="video-box-label"><input type="radio" name="vmode" value="box"><span>Letterbox</span></label>
         </div>
       </div>
-          <div class="opt-row"><span>Bitrate</span>
+          <div class="opt-row" id="video-codec-row" hidden><span>Codec</span>
+        <div class="chips" id="video-codec">
+          <label title="Plays everywhere: phones, TVs, browsers, editors. The safe choice."><input type="radio" name="vcodec" value="h264" checked><span>H.264</span></label>
+          <label><input type="radio" name="vcodec" value="hevc"><span>HEVC</span></label>
+          <label><input type="radio" name="vcodec" value="av1"><span>AV1</span></label>
+        </div>
+      </div>
+          <p class="dialog-sub vd-warn" id="video-codec-note" hidden></p>
+          <div class="opt-row"><span id="video-rate-label">Bitrate</span>
             <div class="vd-rate"><div class="chips" id="video-rates"></div>
-              <label id="video-mbps-row" hidden><input type="number" id="video-mbps" min="0.3" max="40" step="0.1" value="2.5"> Mbps</label></div>
+              <div class="chips" id="video-levels" hidden>
+          <label><input type="radio" name="vlevel" value="light"><span>Light · 70%</span></label>
+          <label><input type="radio" name="vlevel" value="medium" checked><span>Medium · 50%</span></label>
+          <label><input type="radio" name="vlevel" value="strong"><span>Strong · 30%</span></label>
+          <label title="Any bitrate from 0.1 to 40 Mbps"><input type="radio" name="vlevel" value="custom"><span>Custom</span></label>
+        </div>
+              <label id="video-mbps-row" hidden><input type="number" id="video-mbps" min="0.1" max="40" step="0.1" value="2.5"> Mbps</label></div>
           </div>
+          <p class="dialog-sub vd-warn" id="video-grow-note" hidden></p>
           <p class="dialog-sub" id="video-out"></p>
         </fieldset>
         <details id="video-speed"><summary><span class="vd-step">4</span>Speed <span id="video-speed-sum"></span></summary>
@@ -7171,8 +7190,8 @@ async function* mp4DecodeFrames(file, v, start, end, isCancelled) {
 // ── VIDEO: MP4 WRITER ─────────────────────────────────────────────────────────
 // Writes ftyp, then the samples into one mdat as they come (handed to a sink
 // in ~4 MB pieces), then moov at the end; the mdat size is patched in last.
-// Video: H.264 from VideoEncoder. Audio: the source track's samples and
-// sample description, copied unchanged.
+// Video: H.264, HEVC or AV1 from VideoEncoder. Audio: the source track's
+// samples and sample description, copied unchanged.
 function mp4Box(type, ...parts) {
   const bufs = parts.map(p => p instanceof Uint8Array ? p : Uint8Array.from(p));
   const out = new Uint8Array(8 + bufs.reduce((n, b) => n + b.length, 0));
@@ -7227,10 +7246,55 @@ const MP4_PRIMARIES = { bt709: 1, bt470bg: 5, smpte170m: 6, bt2020: 9, smpte432:
 const MP4_TRANSFER = { bt709: 1, smpte170m: 6, linear: 8, 'iec61966-2-1': 13, pq: 16, hlg: 18 };
 const MP4_MATRIXC = { rgb: 0, bt709: 1, bt470bg: 5, smpte170m: 6, 'bt2020-ncl': 9 };
 
+// AV1 in MP4 (AV1-ISOBMFF): the OBUs of a chunk as [type, start, end], or
+// null when one has no size field (then it can't be split).
+function av1Obus(d) {
+  const out = [];
+  for (let i = 0; i < d.length;) {
+    const h = d[i], type = (h >> 3) & 15, start = i;
+    i += 1 + ((h >> 2) & 1);                                      // header (+ extension byte)
+    if (!((h >> 1) & 1)) return null;
+    let size = 0;
+    for (let k = 0; k < 8; k++) { const b = d[i++]; size += (b & 127) * 2 ** (7 * k); if (!(b & 128)) break; }
+    i += size;
+    if (i > d.length) return null;
+    out.push([type, start, i]);
+  }
+  return out;
+}
+// av1C: profile, level and tier of operating point 0 read from the sequence
+// header OBU (8 bit 4:2:0, as configured), then that OBU itself.
+function av1Config(seq) {
+  let bit = 0, o = 1 + ((seq[0] >> 2) & 1);                       // past the OBU header
+  while (seq[o++] & 128);                                         // skip the leb128 size
+  const f = n => { let v = 0; for (let k = 0; k < n; k++, bit++) v = v * 2 + ((seq[o + (bit >> 3)] >> (7 - (bit & 7))) & 1); return v; };
+  const uvlc = () => { let z = 0; while (!f(1) && z < 32) z++; return z >= 32 ? 0 : f(z) + 2 ** z - 1; };
+  const profile = f(3); f(1);
+  let level = 31, tier = 0;
+  if (f(1)) level = f(5);                                         // reduced_still_picture_header
+  else {
+    let model = 0, delayLen = 0;
+    if (f(1)) {                                                   // timing_info
+      f(32); f(32); if (f(1)) uvlc();
+      if ((model = f(1))) { delayLen = f(5) + 1; f(32); f(5); f(5); }
+    }
+    const initDelay = f(1), ops = f(5) + 1;
+    for (let i = 0; i < ops; i++) {
+      f(12); const l = f(5), t = l > 7 ? f(1) : 0;
+      if (i === 0) { level = l; tier = t; }
+      if (model && f(1)) { f(delayLen); f(delayLen); f(1); }
+      if (initDelay && f(1)) f(4);
+    }
+  }
+  return Uint8Array.from([0x81, (profile << 5) | level, (tier << 7) | (profile === 1 ? 0 : 0x0c), 0, ...seq]);
+}
+
 // sink: { write(parts) , patch(position, bytes), close() → result, abort() }
 // audio: { stsd, scale } | null. Video times are µs from the clip start.
-function mp4Muxer(sink, { width, height, scale, audio }) {
-  const ftyp = mp4Box('ftyp', mp4Ascii('isom'), mp4U32([0x200]), mp4Ascii('isomiso2avc1mp41'));
+// codec: the encoder's codec string (avc1… / hvc1… / hev1… / av01…).
+function mp4Muxer(sink, { width, height, scale, audio, codec = 'avc1' }) {
+  const kind = codec.startsWith('av01') ? 'av1' : /^(hvc1|hev1)/.test(codec) ? 'hevc' : 'h264';
+  const ftyp = mp4Box('ftyp', mp4Ascii('isom'), mp4U32([0x200]), mp4Ascii('isomiso2' + (kind === 'av1' ? 'av01' : kind === 'h264' ? 'avc1' : '') + 'mp41'));
   const mdatAt = ftyp.length, head = new Uint8Array(mdatAt + 16);
   head.set(ftyp);
   head.set([0, 0, 0, 1, ...mp4Ascii('mdat')], mdatAt);           // 64-bit size, patched at the end
@@ -7249,10 +7313,26 @@ function mp4Muxer(sink, { width, height, scale, audio }) {
       if (cfg && cfg.description && !avcC) {
         const d = cfg.description;
         avcC = (ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : new Uint8Array(d)).slice();
+        if (kind === 'av1' && avcC[0] !== 0x81) avcC = null;          // (not an av1C: built from the stream instead)
       }
       if (cfg && cfg.colorSpace && !color) color = cfg.colorSpace;
     },
-    addVideo(data, pts, key) { V.pts.push(pts); V.sizes.push(data.length); V.offsets.push(pos); V.keys.push(key); add(data); },
+    addVideo(data, pts, key) {
+      // AV1: temporal delimiters are left out of MP4 samples; the first
+      // sequence header becomes the av1C (when the encoder gave none).
+      const obus = kind === 'av1' && av1Obus(data);
+      if (obus) {
+        const seq = obus.find(x => x[0] === 1);
+        if (seq && !avcC) avcC = av1Config(data.slice(seq[1], seq[2]));
+        if (obus.some(x => x[0] === 2)) {
+          const keep = obus.filter(x => x[0] !== 2), out = new Uint8Array(keep.reduce((n, x) => n + x[2] - x[1], 0));
+          let at = 0;
+          for (const [, a, b] of keep) { out.set(data.subarray(a, b), at); at += b - a; }
+          data = out;
+        }
+      }
+      V.pts.push(pts); V.sizes.push(data.length); V.offsets.push(pos); V.keys.push(key); add(data);
+    },
     // start: this sample's time (µs) relative to the clip start
     addAudio(data, dur, start) {
       if (A.start === null) A.start = start;
@@ -7279,8 +7359,10 @@ function mp4Muxer(sink, { width, height, scale, audio }) {
       const colr = color && color.primaries in MP4_PRIMARIES && color.transfer in MP4_TRANSFER && color.matrix in MP4_MATRIXC
         ? [mp4Box('colr', mp4Ascii('nclx'), mp4U16(MP4_PRIMARIES[color.primaries]), mp4U16(MP4_TRANSFER[color.transfer]),
           mp4U16(MP4_MATRIXC[color.matrix]), [color.fullRange ? 0x80 : 0])] : [];
-      const avc1 = mp4Box('avc1', [0, 0, 0, 0, 0, 0, 0, 1], new Uint8Array(16), mp4U16(width), mp4U16(height),
-        mp4U32([0x480000, 0x480000, 0]), [0, 1], new Uint8Array(32), [0, 0x18, 0xff, 0xff], mp4Box('avcC', avcC), ...colr);
+      // Sample entry: avc1 + avcC, hvc1 (or hev1) + hvcC, or av01 + av1C
+      const [entry, cfgBox] = kind === 'av1' ? ['av01', 'av1C'] : kind === 'hevc' ? [codec.slice(0, 4), 'hvcC'] : ['avc1', 'avcC'];
+      const avc1 = mp4Box(entry, [0, 0, 0, 0, 0, 0, 0, 1], new Uint8Array(16), mp4U16(width), mp4U16(height),
+        mp4U32([0x480000, 0x480000, 0]), [0, 1], new Uint8Array(32), [0, 0x18, 0xff, 0xff], mp4Box(cfgBox, avcC), ...colr);
       const vTables = [mp4Full('stts', 0, 0, mp4U32([mp4Runs(durs).length / 2]), mp4U32(mp4Runs(durs)))];
       if (comp.some(c => c)) vTables.push(mp4Full('ctts', 0, 0, mp4U32([mp4Runs(comp).length / 2]), mp4U32(mp4Runs(comp))));
       const keys = V.keys.map((k, i) => k ? i + 1 : 0).filter(Boolean);
@@ -8697,7 +8779,32 @@ const VIDEO_RES = {
   360: { W: 640, H: 360, rates: [0.8, 1.2, 2] },
   orig: { rates: [1.5, 2.5, 4] },
 };
-const VIDEO_MBPS = [0.3, 40];                // the Custom bitrate's range
+const VIDEO_MBPS = [0.1, 40];                // the Custom bitrate's range
+
+// 📐 Resize only: the codec (H.264 by default; HEVC and AV1 give smaller files
+// at the same quality but don't play everywhere, so they are only ever picked
+// by hand) and the compression level, a share of the source's own bitrate.
+const VIDEO_CODECS = {
+  h264: { name: 'H.264' },
+  hevc: { name: 'HEVC', missing: 'This browser has no HEVC encoder (Safari, or Chrome and Edge with a hardware HEVC encoder, have one)',
+    warn: '⚠️ HEVC files play on Apple devices, most Android phones and Windows with the HEVC extension, but not on older phones, many smart TVs or in Firefox on most systems. Pick H.264 if the video has to play everywhere.' },
+  av1: { name: 'AV1', missing: 'This browser has no AV1 encoder (Chrome and Edge have one; Safari doesn’t)',
+    warn: '⚠️ AV1 files play in recent Chrome, Edge and Firefox and on newer phones, but not on older phones, iPhones before the 15 Pro, Macs before M3 in Safari, or most smart TVs. AV1 encoding is also slower. Pick H.264 if the video has to play everywhere.' },
+};
+const VIDEO_LEVELS = { light: 0.7, medium: 0.5, strong: 0.3 };
+const VIDEO_LEVEL_NAMES = { light: 'Light', medium: 'Medium', strong: 'Strong', custom: 'Custom' };
+// The source's video bitrate (bit/s, without audio).
+const videoSourceBps = info => info.video.samples.reduce((n, x) => n + x.size, 0) * 8 / (info.duration || 1);
+// The bitrate a job encodes at: the chosen one, or for 📐 Resize only with a
+// compression level that share of the source's bitrate, scaled by the change
+// in picture size (black letterbox bars cost next to nothing).
+function videoBitrateFor(info, st, size) {
+  if (st.engine !== 'resize' || !VIDEO_LEVELS[st.level] || !size) return st.bitrate;
+  const v = info.video, pixels = size.iw * size.ih / (Math.round(v.width) * Math.round(v.height) || 1);
+  const mbps = videoSourceBps(info) * pixels * VIDEO_LEVELS[st.level] / 1e6;
+  return +Math.min(VIDEO_MBPS[1], Math.max(VIDEO_MBPS[0], mbps)).toPrecision(2) * 1e6;
+}
+const videoCodecOf = st => st.engine === 'resize' && VIDEO_CODECS[st.codec] ? st.codec : 'h264';
 
 // The lowest H.264 level for a frame size and rate: [code, max macroblocks
 // per frame, max macroblocks per second] (3.0 … 5.1).
@@ -8729,22 +8836,58 @@ function videoTargetSize(w, h, mode, res = 1080, anySize = false) {
   return { iw, ih, W, H, x: (W - iw) >> 1, y: (H - ih) >> 1 };
 }
 
-// H.264 High profile first, in latencyMode 'quality' where that works and
-// 'realtime' where it doesn't: Safari 27's encoder takes High and Main
-// profile frames in 'quality' mode but holds them all until a flush, which
-// stalls a running job. Each config is tried before it is used.
-async function videoEncoderConfig(W, H, fps, bitrate) {
-  const level = videoLevel(W, H, fps);
-  const base = { width: W, height: H, bitrate, framerate: fps, bitrateMode: 'variable', avc: { format: 'avc' } };
-  for (const codec of ['avc1.6400' + level, 'avc1.4d00' + level, 'avc1.42e0' + level]) {
+// The lowest HEVC level (general_level_idc, 30 × the level) and AV1 level
+// (seq_level_idx) for a frame size and rate: [code, max luma samples per
+// frame, per second].
+function videoHevcLevel(W, H, fps) {
+  const ps = W * H, rate = ps * fps;
+  for (const [code, fs, sps] of [[60, 122880, 3686400], [63, 245760, 7372800], [90, 552960, 16588800], [93, 983040, 33177600],
+    [120, 2228224, 66846720], [123, 2228224, 133693440], [150, 8912896, 267386880], [153, 8912896, 534773760]]) if (ps <= fs && rate <= sps) return code;
+  return 156;
+}
+function videoAv1Level(W, H, fps) {
+  const ps = W * H, rate = ps * fps;
+  for (const [idx, fs, sps] of [[0, 147456, 4423680], [1, 278784, 8363520], [4, 665856, 19975680], [5, 1065024, 31950720],
+    [8, 2359296, 70778880], [9, 2359296, 141557760], [12, 8912896, 267386880], [13, 8912896, 534773760]]) if (ps <= fs && rate <= sps) return idx;
+  return 14;
+}
+
+// The encoder config for a codec, most wanted first. H.264: High profile
+// first, in latencyMode 'quality' where that works and 'realtime' where it
+// doesn't: Safari 27's encoder takes High and Main profile frames in
+// 'quality' mode but holds them all until a flush, which stalls a running
+// job. HEVC: Main profile, the stream header (hvcC) as description. AV1:
+// Main profile, 8 bit. Each config is tried before it is used.
+async function videoEncoderConfig(W, H, fps, bitrate, codec = 'h264') {
+  const base = { width: W, height: H, bitrate, framerate: fps, bitrateMode: 'variable' };
+  let codecs, extra = {};
+  if (codec === 'hevc') {
+    const L = videoHevcLevel(W, H, fps);
+    codecs = ['hvc1.1.6.L' + L + '.B0', 'hev1.1.6.L' + L + '.B0']; extra = { hevc: { format: 'hevc' } };
+  } else if (codec === 'av1') {
+    codecs = ['av01.0.' + String(videoAv1Level(W, H, fps)).padStart(2, '0') + 'M.08'];
+  } else {
+    const level = videoLevel(W, H, fps);
+    codecs = ['avc1.6400' + level, 'avc1.4d00' + level, 'avc1.42e0' + level]; extra = { avc: { format: 'avc' } };
+  }
+  for (const c of codecs) {
     for (const latencyMode of ['quality', 'realtime']) {
       for (const hardwareAcceleration of ['prefer-hardware', 'no-preference']) {
-        const cfg = { ...base, latencyMode, codec, hardwareAcceleration };
+        const cfg = { ...base, ...extra, latencyMode, codec: c, hardwareAcceleration };
         try { if ((await VideoEncoder.isConfigSupported(cfg)).supported && await videoEncoderWorks(cfg)) return cfg; } catch { /* try the next */ }
       }
     }
   }
-  throw new Error('This browser cannot encode H.264 video at ' + W + '×' + H + '.');
+  throw new Error('This browser cannot encode ' + VIDEO_CODECS[codec].name + ' video at ' + W + '×' + H + '.');
+}
+
+// Whether HEVC / AV1 can be encoded here at all (720p, 30 fps), once per page;
+// the codec chips are greyed out until this says yes.
+const videoCodecOk = { h264: true };
+function videoProbeCodecs() {
+  return videoProbeCodecs.p || (videoProbeCodecs.p = Promise.all(['hevc', 'av1'].map(async c => {
+    try { await videoEncoderConfig(1280, 720, 30, 2e6, c); videoCodecOk[c] = true; } catch { videoCodecOk[c] = false; }
+  })));
 }
 
 // Once per config and page: encodes 8 frames *without* a flush, as a running
@@ -8755,7 +8898,8 @@ function videoEncoderWorks(cfg) {
   const key = JSON.stringify(cfg);
   if (!videoEncoderChecks.has(key)) videoEncoderChecks.set(key, (async () => {
     let out = 0;
-    const enc = new VideoEncoder({ output: () => { out++; }, error: () => {} });
+    const needsHeader = /^(hvc1|hev1)/.test(cfg.codec);            // (H.264 as before; AV1's header is built from the stream)
+    const enc = new VideoEncoder({ output: (chunk, meta) => { if (!needsHeader || meta && meta.decoderConfig && meta.decoderConfig.description) out++; }, error: () => {} });
     try {
       enc.configure(cfg);
       const c = new OffscreenCanvas(cfg.width, cfg.height), x = c.getContext('2d');
@@ -8969,8 +9113,9 @@ async function videoChain(st, w, h, size, direct) {
   return chain;
 }
 
-// settings: { engine ('builtin' or an AI model), denoise, preset ('none' = AI
-// as-is), flatness, lines, extras, res (1080 | 720), mode, bitrate (bit/s) };
+// settings: { engine ('builtin', 'resize' or an AI model), denoise, preset
+// ('none' = AI as-is), flatness, lines, extras, res (1080 | 720 | …), mode,
+// bitrate (bit/s), and for 'resize' codec and level (see videoBitrateFor) };
 // range: { start, end } µs. onProgress(done, total). Resolves with sink.close()'s result.
 async function videoUpscale(src, settings, range, sink, onProgress, isCancelled) {
   const { file, info } = src, v = info.video;
@@ -8978,10 +9123,10 @@ async function videoUpscale(src, settings, range, sink, onProgress, isCancelled)
   const size = videoSizeFor(v, settings);
   if (!size) throw new Error('This video is already ' + settings.res + 'p or larger.');
   const total = v.samples.filter(s => s.pts >= range.start && s.pts < range.end).length || 1;
-  const config = await videoEncoderConfig(size.W, size.H, v.fps, settings.bitrate);
+  const config = await videoEncoderConfig(size.W, size.H, v.fps, videoBitrateFor(info, settings, size), videoCodecOf(settings));
   const scale = v.scale >= 600 ? v.scale : 90000;
   const A = info.audio;
-  const mux = mp4Muxer(sink, { width: size.W, height: size.H, scale, audio: A && { stsd: A.stsd, scale: A.scale } });
+  const mux = mp4Muxer(sink, { width: size.W, height: size.H, scale, audio: A && { stsd: A.stsd, scale: A.scale }, codec: config.codec });
   // Stall: frames handed to the encoder and nothing back for STALL_MS since
   // the later of the last output and the first frame it is still holding.
   let encError = null, wake = null, lastOutput = 0, sent = 0, received = 0, holdingSince = 0;
@@ -9107,7 +9252,8 @@ const vEls = Object.fromEntries(['info', 'engines', 'denoise-row', 'denoise', 'd
   'presets', 'preset-none', 'tuning', 'flatness', 'flatness-out', 'lines', 'lines-out', 'extras', 'x-lines', 'x-fills', 'x-edges', 'x-aa',
   'aa', 'aa-out', 'aa-row', 'cleanup-hint', 'on', 'on-row', 'size-row', 'orig-text', 'aion', 'aion-row', 'aifast', 'aifast-row', 'scale', 'scale-row', 'cleanup', 'mbps', 'mbps-row',
   'goal', 'ai-opts', 'more', 'more-sum', 'speed', 'speed-sum', 'plan', 'size-note', 'cleanup-label',
-  'queue', 'add', 'clear', 'qsum', 'stop', 'cancel']
+  'codec', 'codec-row', 'codec-note', 'levels', 'rate-label', 'grow-note',
+  'queue', 'add', 'clear', 'reset', 'folder', 'qsum', 'stop', 'cancel']
   .map(k => [k.replace(/-(\w)/g, (_, c) => c.toUpperCase()), document.getElementById('video-' + k)]));
 const vid = { file: null, info: null, frame: null, after: null, afterKey: '', ms: {}, busy: false, dirty: false, timer: null, job: null, clipUrl: null };
 
@@ -9126,10 +9272,13 @@ function videoSettings() {
   if (engine === 'builtin' && preset === 'none') preset = 'lumity';     // the built-in engine always cleans up
   if (engine === 'resize') preset = 'none';                             // 📐 Resize only: no cleanup
   const custom = Math.min(VIDEO_MBPS[1], Math.max(VIDEO_MBPS[0], +vEls.mbps.value || VIDEO_RES[res].rates[1]));
-  return { engine, denoise: +vEls.denoise.value, preset, flatness: +vEls.flatness.value, lines: +vEls.lines.value, scale: pick('vscale') || 'smooth',
+  // 📐 Resize only: a compression level (Custom: the typed bitrate) and the codec
+  const level = engine === 'resize' ? pick('vlevel') || 'medium' : null;
+  const rate = engine === 'resize' ? (level === 'custom' ? custom : VIDEO_RES[res].rates[1]) : pick('vbitrate') === 'custom' ? custom : +pick('vbitrate') || VIDEO_RES[res].rates[1];
+  return { codec: engine === 'resize' ? pick('vcodec') || 'h264' : 'h264', level, engine, denoise: +vEls.denoise.value, preset, flatness: +vEls.flatness.value, lines: +vEls.lines.value, scale: pick('vscale') || 'smooth',
     extras: { lines: vEls.xLines.checked, fills: vEls.xFills.checked, edges: vEls.xEdges.checked, aa: vEls.xAa.checked ? +vEls.aa.value : 0 },
     cleanupOn: pick('von') || 'original', aiOn: pick('vaion') || 'webgpu', aiFast: vEls.aifast.checked,
-    res, mode: pick('vmode') || 'fit', bitrate: (pick('vbitrate') === 'custom' ? custom : +pick('vbitrate') || VIDEO_RES[res].rates[1]) * 1e6 };
+    res, mode: pick('vmode') || 'fit', bitrate: rate * 1e6 };
 }
 
 // Everything that changes the picture (not the time or file settings).
@@ -9233,8 +9382,21 @@ function videoTexts() {
   vEls.cleanupHint.textContent = st.preset === 'none'
     ? 'Off: the AI result as it is. A cleanup runs the gallery’s picture engine on every frame after the AI.'
     : 'Runs on every frame and adds time. Lumity, flat fills and line redraw decide per frame and can shimmer: check with ▶ Preview 5 s.';
-  // ③ bitrate field
-  vEls.mbpsRow.hidden = (vEls.rates.querySelector('input:checked') || {}).value !== 'custom';
+  // ③ Resize only: codec (with its warning) and compression levels instead of bitrates
+  vEls.codecRow.hidden = !resize;
+  for (const c of ['hevc', 'av1']) {
+    const input = vEls.codec.querySelector('input[value=' + c + ']');
+    input.disabled = videoCodecOk[c] === false;                    // (still being checked: can be picked)
+    input.parentNode.title = videoCodecOk[c] === false ? VIDEO_CODECS[c].missing + '.'
+      : 'Smaller files at the same quality, but it doesn’t play everywhere' + (videoCodecOk[c] ? '' : ' (checking this browser’s encoder…)');
+  }
+  if (vEls.codec.querySelector('input:checked').disabled) vEls.codec.querySelector('input[value=h264]').checked = true;
+  if (resize) st.codec = vEls.codec.querySelector('input:checked').value;
+  vEls.codecNote.hidden = !resize || st.codec === 'h264';
+  vEls.codecNote.textContent = (VIDEO_CODECS[st.codec] || {}).warn || '';
+  vEls.rateLabel.textContent = resize ? 'Compression' : 'Bitrate';
+  vEls.rates.hidden = resize; vEls.levels.hidden = !resize;
+  vEls.mbpsRow.hidden = resize ? st.level !== 'custom' : (vEls.rates.querySelector('input:checked') || {}).value !== 'custom';
   // ④ Speed: where the AI and the cleanup run (nothing to choose for Resize only)
   vEls.aionRow.hidden = !VIDEO_GPU_MODELS.has(st.engine);            // AI · Best / Anime+ always use WebGL
   vEls.aion.querySelector('input[value=webgpu]').disabled = !navigator.gpu || !!gpuOff;
@@ -9254,9 +9416,20 @@ function videoTexts() {
   const v = vid.info.video, size = videoSize();
   vEls.sizeNote.hidden = !!size;
   vEls.sizeNote.textContent = 'This video is already ' + st.res + 'p or larger. Pick a bigger size, or 📐 Resize only to shrink it.';
-  const est = st.bitrate / 8 * vid.info.duration + vid.audioBytes;
+  const bitrate = videoBitrateFor(vid.info, st, size), est = bitrate / 8 * vid.info.duration + vid.audioBytes;
+  const srcMbps = videoSourceBps(vid.info) / 1e6, fileBytes = vid.file ? vid.file.size : 0;
+  for (const input of vEls.levels.querySelectorAll('input')) {
+    if (input.value === 'custom') continue;
+    const mbps = videoBitrateFor(vid.info, { ...st, level: input.value }, size) / 1e6;
+    input.parentNode.title = VIDEO_LEVELS[input.value] * 100 + '% of the source’s ' + srcMbps.toFixed(1) + ' Mbps' +
+      (size && size.iw * size.ih !== Math.round(v.width) * Math.round(v.height) ? ', scaled to the new size' : '') + ': ' + (size ? mbps + ' Mbps for this video' : '');
+  }
   vEls.out.textContent = !size ? '' : 'Output ' + size.W + '×' + size.H + (size.W !== size.iw || size.H !== size.ih ? ' (picture ' + size.iw + '×' + size.ih + ')' : '') +
-    ' · H.264 · about ' + formatBytes(est) + ' for this video';
+    ' · ' + VIDEO_CODECS[videoCodecOf(st)].name + (resize ? ' · ' + bitrate / 1e6 + ' Mbps' : '') + ' · about ' + formatBytes(est) + ' for this video' +
+    (resize && fileBytes ? ' (now ' + formatBytes(fileBytes) + ')' : '');
+  vEls.growNote.hidden = !resize || !size || !fileBytes || est < fileBytes;
+  vEls.growNote.textContent = '⚠️ At ' + bitrate / 1e6 + ' Mbps the result would be about as big as the original or bigger (source ' + srcMbps.toFixed(1) +
+    ' Mbps, ' + formatBytes(fileBytes) + '). Pick a stronger compression or a lower bitrate.';
   const ms = st.engine && size && vid.ms[videoChainKey(st, size)];
   vEls.summary.textContent = !size ? '' : !st.engine ? 'Download an AI model (2 · What to do) to preview and convert.'
     : resize ? 'Resize only is fast: mostly limited by decoding and encoding the video.'
@@ -9379,6 +9552,7 @@ async function selectVideo(item) {
 
 async function openVideoDialog() {
   videoDialog.classList.add('open');
+  videoProbeCodecs().then(() => { if (!vq.running) videoTexts(); });
   await aiRefreshUi();
   videoRefreshModels();
   if (vq.restoredSettings) { videoApplySettings(vq.restoredSettings); vq.restoredSettings = null; }
@@ -9441,7 +9615,11 @@ function videoApplySettings(st) {
   if (x.aa) vEls.aa.value = x.aa;
   videoRefreshRes();
   const mbps = st.bitrate / 1e6;
-  if (vEls.rates.querySelector('input[value="' + mbps + '"]')) set('vbitrate', mbps);
+  set('vcodec', st.codec || 'h264');
+  if (st.engine === 'resize') {                                   // (saved before levels: a bitrate = Custom)
+    set('vlevel', st.level || 'custom');
+    if (!st.level || st.level === 'custom') vEls.mbps.value = mbps;
+  } else if (vEls.rates.querySelector('input[value="' + mbps + '"]')) set('vbitrate', mbps);
   else { set('vbitrate', 'custom'); vEls.mbps.value = mbps; vEls.mbpsRow.hidden = false; }   // a typed bitrate
 }
 
@@ -9475,11 +9653,16 @@ async function vqTx(store, mode, fn) {
     });
   } catch (err) { console.warn('Video queue storage', err); return null; }
 }
-const VQ_FIELDS = ['id', 'order', 'name', 'size', 'lastModified', 'handle', 'info', 'state', 'done', 'total', 'outName', 'outBytes', 'note', 'error', 'elapsedMs', 'finishedAt'];
+// outDir: the folder a result was saved to (the output folder can change later).
+const VQ_FIELDS = ['id', 'order', 'name', 'size', 'lastModified', 'handle', 'info', 'state', 'done', 'total', 'outName', 'outBytes', 'outDir', 'note', 'error', 'elapsedMs', 'finishedAt'];
 const vqSave = it => vqTx('items', 'readwrite', st => st.put(Object.fromEntries(VQ_FIELDS.map(k => [k, it[k] ?? null]))));
 const vqSaveMeta = () => vqTx('meta', 'readwrite', st => st.put({ settings: vq.settings, dir: vq.dir }, 'queue'));
 const vqKey = x => x.name + '|' + x.size + '|' + x.lastModified;
 const vqSet = (it, patch) => { Object.assign(it, patch); vqSave(it); queueRender(); };
+// ↻ / ↺ Reset finished: back to Waiting, keeping the item (and any saved file).
+const vqReset = it => vqSet(it, { state: it.file || it.handle ? 'waiting' : 'needs-file', done: 0, error: null, note: null,
+  outName: null, outBytes: null, outDir: null, outBlob: null, elapsedMs: null, finishedAt: null });
+const VQ_FINISHED = ['done', 'skipped', 'failed'];
 
 async function queueLoad() {
   const [items, meta] = await Promise.all([vqTx('items', 'readonly', st => st.getAll()), vqTx('meta', 'readonly', st => st.get('queue'))]);
@@ -9522,8 +9705,9 @@ async function queueAdd(entries) {
   if (first && (!vid.info || !vq.items.some(it => it.id === vq.sel))) selectVideo(first);
 }
 
-function queueOutName(name, st, size) {
-  if (st.engine === 'resize') return stripExt(name) + (st.res === 'orig' ? '.reencoded-' + size.ih + 'p-' + st.bitrate / 1e6 + 'mbps.mp4' : '.resized-' + st.res + 'p.mp4');
+// bitrate: the one this video is encoded at (see videoBitrateFor).
+function queueOutName(name, st, size, bitrate = st.bitrate) {
+  if (st.engine === 'resize') return stripExt(name) + '.compressed-' + videoCodecOf(st) + (st.res === 'orig' ? '' : '-' + st.res + 'p') + '-' + bitrate / 1e6 + 'mbps.mp4';
   return stripExt(name) + (st.res === 'orig' ? '.cleaned-' + size.ih + 'p.mp4' : '.upscaled-' + st.res + 'p.mp4');
 }
 
@@ -9550,7 +9734,7 @@ function queueRender() {
       row = document.createElement('div');
       row.className = 'vq-row'; row.dataset.id = it.id;
       row.innerHTML = '<div class="vq-name"><b></b> <small></small></div><span class="vq-state"></span>' +
-        '<span class="vq-actions"><button type="button" data-act="play" title="Play">▶</button><button type="button" data-act="retry" title="Convert again">↻</button><button type="button" data-act="remove" title="Remove from the queue">✕</button></span>' +
+        '<span class="vq-actions"><button type="button" data-act="play" title="Play">▶</button><button type="button" data-act="retry" title="Convert again: set back to Waiting">↻</button><button type="button" data-act="remove" title="Remove from the queue">✕</button></span>' +
         '<div class="vq-bar"><i></i></div><div class="vq-detail"></div>';
       row.querySelector('b').textContent = it.name;
     }
@@ -9570,7 +9754,7 @@ function queueRender() {
       : it.state === 'failed' ? it.error || 'Failed'
       : it.state === 'needs-file' ? (it.handle ? 'Click to allow access to this file again.' : 'Add this file again to continue it.')
       : 'Waiting';
-    row.querySelector('[data-act=retry]').hidden = it.state !== 'failed';
+    row.querySelector('[data-act=retry]').hidden = !VQ_FINISHED.includes(it.state);
     const play = row.querySelector('[data-act=play]');
     play.hidden = !(it.file || it.handle || it.state === 'done');
     play.title = it.state === 'done' ? 'Play · compare with the result' : 'Play';
@@ -9589,7 +9773,11 @@ function queueRender() {
   vEls.go.textContent = (vq.restored ? '▶ Continue' : '🎬 Convert all') + (waiting ? ' (' + waiting + ')' : '');
   vEls.go.disabled = !waiting || !!vid.job;
   vEls.stop.disabled = vq.stopAfter;
-  vEls.clear.disabled = vq.running || !vq.items.some(it => ['done', 'skipped', 'failed'].includes(it.state));
+  vEls.clear.disabled = vEls.reset.disabled = vq.running || !vq.items.some(it => VQ_FINISHED.includes(it.state));
+  vEls.folder.hidden = !window.showDirectoryPicker;
+  vEls.folder.disabled = vq.running;
+  vEls.folder.textContent = vq.dir ? '📁 Output: “' + vq.dir.name + '” · change' : '📁 Output folder…';
+  vEls.folder.title = 'Where converted videos are saved' + (vq.dir ? ': pick another folder for the next run' : '');
   const lbl = document.querySelector('#video-btn .lbl');
   if (lbl) {
     const total = vq.items.filter(it => it.state !== 'failed' && it.state !== 'skipped').length;
@@ -9603,7 +9791,8 @@ function queueRender() {
     : st.engine === 'builtin' ? '🧰 ' + PRESET_NAMES[st.preset]
     : !st.engine ? '✨ AI (download a model)' : '✨ ' + AI_MODELS.find(m => m.id === st.engine).title + (st.preset !== 'none' ? ' → ' + PRESET_NAMES[st.preset] : '');
   vEls.plan.textContent = !vq.items.length ? '' : [vq.running && conv ? 'Converting ' + (done + 1) + ' of ' + (done + waiting + 1) : waiting ? waiting + (waiting > 1 ? ' videos' : ' video') + ' to convert' : 'Nothing waiting',
-    what, st.res === 'orig' ? 'own size' : st.res + 'p' + (st.mode === 'box' ? ' letterbox' : ''), st.bitrate / 1e6 + ' Mbps',
+    what, st.res === 'orig' ? 'own size' : st.res + 'p' + (st.mode === 'box' ? ' letterbox' : ''),
+    st.engine === 'resize' ? VIDEO_CODECS[st.codec].name + ' · ' + (st.level === 'custom' ? st.bitrate / 1e6 + ' Mbps' : VIDEO_LEVEL_NAMES[st.level] + ' (' + VIDEO_LEVELS[st.level] * 100 + '% of each source)') : st.bitrate / 1e6 + ' Mbps',
     eta && 'about ' + formatEta(eta).replace('about ', '') + ' left', vq.dir && 'saving to “' + vq.dir.name + '”'].filter(Boolean).join(' · ');
 }
 
@@ -9642,7 +9831,10 @@ async function queueRun(opts = {}) {
     } catch { it.state = 'needs-file'; }
   }
   if (!dir) {
-    const big = vq.items.filter(it => it.state === 'waiting').map(it => st.bitrate / 8 * ((it.info && it.info.duration) || 0)).filter(b => b > 1e9);
+    const big = vq.items.filter(it => it.state === 'waiting').map(it => {
+      const size = it.demux && videoSizeFor(it.demux.video, st);
+      return (size ? videoBitrateFor(it.demux, st, size) : st.bitrate) / 8 * ((it.info && it.info.duration) || 0);
+    }).filter(b => b > 1e9);
     if (big.length && !confirm('This browser can only save each video once it is finished, so a whole file (up to about ' +
       formatBytes(Math.max(...big)) + ') is kept in memory at a time. Continue?')) return;
   }
@@ -9673,11 +9865,11 @@ async function queueOne(it, st, dir) {
   catch (err) { vqSet(it, { state: 'failed', error: err.message || String(err) }); return; }
   const v = info.video, size = videoSizeFor(v, st);
   if (!size) { vqSet(it, { state: 'skipped', note: 'already ' + st.res + 'p or larger' }); return; }
-  const name = it.outName = queueOutName(it.name, st, size);
+  const name = it.outName = queueOutName(it.name, st, size, videoBitrateFor(info, st, size));
   if (dir) {
     try {
       const existing = await (await dir.getFileHandle(name)).getFile();
-      if (existing.size > 0) { vqSet(it, { state: 'skipped', note: '“' + name + '” is already in the folder', outBytes: existing.size }); return; }
+      if (existing.size > 0) { vqSet(it, { state: 'skipped', note: '“' + name + '” is already in the folder', outBytes: existing.size, outDir: dir }); return; }
     } catch { /* not there yet */ }
   }
   vqSet(it, { state: 'converting', done: 0, total: v.samples.length, fps: 0, error: null, note: null });
@@ -9694,7 +9886,7 @@ async function queueOne(it, st, dir) {
       if (now - lastSave > 5000) { lastSave = now; vqSave(it); }
     }, () => cancelled || vq.cancelled);
     if (!dir && result) { downloadBlob(result, name); it.outBlob = result; }   // kept for ▶ Play this session
-    Object.assign(it, { state: 'done', outBytes: dir ? (await fh.getFile()).size : result.size, elapsedMs: performance.now() - t0, finishedAt: Date.now() });
+    Object.assign(it, { state: 'done', outBytes: dir ? (await fh.getFile()).size : result.size, outDir: dir || null, elapsedMs: performance.now() - t0, finishedAt: Date.now() });
   } catch (err) {
     if (sink) await sink.abort();        // (also for errors before videoUpscale got going; a second abort does nothing)
     // getFileHandle(create) leaves an empty file; don't let it count as done later.
@@ -9736,6 +9928,14 @@ document.getElementById('video-file-input').addEventListener('change', async e =
   if (!videoDialog.classList.contains('open')) await openVideoDialog();
   queueAdd(files.map(file => ({ file })));
 });
+vEls.reset.addEventListener('click', () => { for (const it of vq.items.filter(x => VQ_FINISHED.includes(x.state))) vqReset(it); });
+vEls.folder.addEventListener('click', async () => {
+  if (vq.running) return;
+  try { vq.dir = await window.showDirectoryPicker({ id: 'lumity-video-out', mode: 'readwrite' }); }
+  catch (err) { if (err.name !== 'AbortError') showToast('Could not open the folder: ' + (err.message || err)); return; }
+  vqSaveMeta();
+  queueRender();
+});
 vEls.add.addEventListener('click', async () => { const entries = await queuePick(); if (entries && entries.length) queueAdd(entries); });
 vEls.clear.addEventListener('click', () => {
   for (const it of vq.items.filter(x => ['done', 'skipped', 'failed'].includes(x.state))) vqTx('items', 'readwrite', st => st.delete(it.id));
@@ -9752,9 +9952,8 @@ vEls.queue.addEventListener('click', e => {
     vqTx('items', 'readwrite', st => st.delete(it.id));
     if (vq.sel === it.id) { vq.sel = null; Object.assign(vid, { file: null, info: null, frame: null, after: null }); vEls.info.textContent = ''; }
     queueRender();
-  } else if (act === 'retry') {
-    vqSet(it, { state: it.file || it.handle ? 'waiting' : 'needs-file', done: 0, error: null, note: null });
-  } else selectVideo(it);
+  } else if (act === 'retry') vqReset(it);
+  else selectVideo(it);
 });
 vEls.go.addEventListener('click', () => queueRun());
 vEls.stop.addEventListener('click', () => { vq.stopAfter = true; queueRender(); });
@@ -9778,6 +9977,17 @@ vEls.rates.addEventListener('change', () => {
   }
   videoTexts();
 });
+vEls.levels.addEventListener('change', () => {
+  const st = videoSettings();
+  if (st.level === 'custom' && vEls.mbpsRow.hidden) {
+    // start from Medium for the previewed video (or the middle suggestion)
+    const size = vid.info && videoSize();
+    vEls.mbps.value = size ? videoBitrateFor(vid.info, { ...st, level: 'medium' }, size) / 1e6 : VIDEO_RES[st.res].rates[1];
+    vEls.mbpsRow.hidden = false; vEls.mbps.focus();
+  }
+  videoTexts();
+});
+vEls.codec.addEventListener('change', videoTexts);
 videoDialog.querySelectorAll('input[name=vres]').forEach(r => r.addEventListener('change', () => { videoRefreshRes(); videoUpdate(); }));
 videoRefreshRes();
 vEls.time.addEventListener('input', () => { vEls.timeOut.textContent = videoClock(+vEls.time.value); videoSchedulePreview(350); });
@@ -9834,12 +10044,13 @@ function plNote(text, btnLabel, action) {
 async function playerResult(it) {
   if (it.state !== 'done') return null;
   if (it.outBlob) return { blob: it.outBlob };
-  if (vq.dir && it.outName) {
+  const dir = it.outDir || vq.dir;                               // (the folder it was saved to)
+  if (dir && it.outName) {
     try {
-      if ((await vq.dir.queryPermission({ mode: 'read' })) !== 'granted' && (await vq.dir.requestPermission({ mode: 'read' })) !== 'granted') throw 0;
-    } catch { return { need: 'dir', note: 'Allow access to the output folder “' + vq.dir.name + '” to compare with the converted video.' }; }
-    try { const f = await (await vq.dir.getFileHandle(it.outName)).getFile(); if (f.size) return { blob: f }; } catch { /* not there */ }
-    return { need: 'pick', note: '“' + it.outName + '” is no longer in the output folder “' + vq.dir.name + '”.' };
+      if ((await dir.queryPermission({ mode: 'read' })) !== 'granted' && (await dir.requestPermission({ mode: 'read' })) !== 'granted') throw 0;
+    } catch { return { need: 'dir', note: 'Allow access to the output folder “' + dir.name + '” to compare with the converted video.' }; }
+    try { const f = await (await dir.getFileHandle(it.outName)).getFile(); if (f.size) return { blob: f }; } catch { /* not there */ }
+    return { need: 'pick', note: '“' + it.outName + '” is no longer in the output folder “' + dir.name + '”.' };
   }
   return { need: 'pick', note: '“' + (it.outName || 'The converted video') + '” was downloaded: pick it to compare.' };
 }
