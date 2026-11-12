@@ -1128,6 +1128,7 @@
     <p class="dialog-sub" id="storage-quota"></p>
     <div class="st-actions">
       <button type="button" id="st-remove-enhanced">Remove all enhanced copies</button>
+      <button type="button" id="st-remove-pictures">Remove all pictures</button>
       <button type="button" id="st-remove-models">Remove AI models</button>
     </div>
     <div class="dialog-actions"><button type="button" class="primary" id="storage-close">Close</button></div>
@@ -1596,8 +1597,10 @@ let loadBusy = false;
 // Loaded pictures are persisted in the browser so they survive a page reload.
 // IndexedDB is used rather than window.localStorage: localStorage is capped at
 // ~5MB and only holds strings, while IndexedDB stores image Blobs natively and
-// gets a quota of hundreds of MB. Every "Open Folder" / "Load JSON" wipes the
-// stored set and writes the new one in its place — nothing accumulates.
+// gets a quota of hundreds of MB. "Open Folder" / "Load JSON" only add the
+// pictures that aren't stored yet (compared by file contents, see hashBlob),
+// so loading the same folder again picks up just its new files and keeps
+// favourites and enhanced copies. "Remove all pictures" (Storage) starts over.
 const DB_NAME = 'lumity-gallery';
 const DB_VERSION = 2;                    // 2: adds the AI model store
 const IMG_STORE = 'images';
@@ -1634,38 +1637,148 @@ function runTx(db, mode, fn) {
   });
 }
 
-// items: [{id, name, blob, modified, upscale}], source: {label, kind}. Clears, then repopulates.
-async function replaceStoredImages(items, source, onProgress) {
+// items: new pictures [{id, name, blob, modified, upscale, favorite, hash}] to
+// add next to the stored ones (nothing is cleared). source: {label, kind, name,
+// count}. A failed write (usually quota) rolls the whole transaction back, so
+// the previously stored set stays intact.
+async function addStoredImages(items, source, onProgress) {
   const db = await openDb();
-  try {
-    await runTx(db, 'readwrite', tx => {
-      const imgs = tx.objectStore(IMG_STORE);
-      const meta = tx.objectStore(META_STORE);
-      imgs.clear();
-      meta.clear();
-      let saved = 0, frame = 0;
-      items.forEach((item, i) => {
-        const req = imgs.put(toRecord(item));
-        if (onProgress) req.onsuccess = () => {
-          saved++;
-          // Batch UI updates to one per animation frame.
-          if (!frame) frame = requestAnimationFrame(() => { frame = 0; onProgress(saved, items.length); });
-        };
-      });
-      meta.put({ key: 'source', label: source.label, kind: source.kind, count: items.length, savedAt: Date.now() });
+  await runTx(db, 'readwrite', tx => {
+    const imgs = tx.objectStore(IMG_STORE);
+    const meta = tx.objectStore(META_STORE);
+    let saved = 0, frame = 0;
+    items.forEach(item => {
+      const req = imgs.put(toRecord(item));
+      if (onProgress) req.onsuccess = () => {
+        saved++;
+        // Batch UI updates to one per animation frame.
+        if (!frame) frame = requestAnimationFrame(() => { frame = 0; onProgress(saved, items.length); });
+      };
     });
-  } catch (err) {
-    // A failed write (usually quota) rolls the whole transaction back, which
-    // would leave the *previous* set stored — clear it so a reload doesn't
-    // resurrect stale pictures, then let the caller report the failure.
-    try { await clearStoredImages(); } catch {}
-    throw err;
-  }
+    meta.put({ key: 'source', label: source.label, kind: source.kind, name: source.name, count: source.count, savedAt: Date.now() });
+    // The set was unique before and the new pictures were checked against it.
+    if (storageChecked) meta.put({ key: 'dedup', version: DEDUP_VERSION, at: Date.now() });
+  });
 }
 
-// The stored shape of one picture. `upscale` is null for originals.
+// The stored shape of one picture. `upscale` is null for originals; `hash`
+// is the content fingerprint used to spot duplicates.
 function toRecord(item) {
-  return { id: item.id, name: item.name, blob: item.blob, modified: item.modified ?? null, upscale: item.upscale ?? null, favorite: !!item.favorite };
+  return { id: item.id, name: item.name, blob: item.blob, modified: item.modified ?? null, upscale: item.upscale ?? null, favorite: !!item.favorite, hash: item.hash ?? null };
+}
+
+// ── DUPLICATES ────────────────────────────────────────────────────────────────
+// Two pictures are duplicates when their files are byte-for-byte identical;
+// names, dates, favourites and other metadata don't matter. Each picture's
+// fingerprint is a SHA-256 of its bytes (or, where Web Crypto is unavailable,
+// a 64-bit FNV-1a hash plus the size). The prefix names the algorithm so a
+// fingerprint made the other way is simply recomputed.
+const HASH_PREFIX = (window.crypto && crypto.subtle) ? 'sha256:' : 'fnv:';
+const DEDUP_VERSION = 1;
+// True once the stored set is known to be unique (start-up check done, or
+// nothing stored); only then may a save mark the storage as checked.
+let storageChecked = false;
+
+async function hashBlob(blob) {
+  const buf = await blob.arrayBuffer();
+  if (HASH_PREFIX === 'sha256:') {
+    const d = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+    let hex = '';
+    for (let i = 0; i < d.length; i++) hex += d[i].toString(16).padStart(2, '0');
+    return HASH_PREFIX + hex;
+  }
+  const u8 = new Uint8Array(buf);
+  let h1 = 0x811c9dc5, h2 = 0x01000193 ^ u8.length;
+  for (let i = 0; i < u8.length; i++) { h1 = Math.imul(h1 ^ u8[i], 0x01000193); h2 = Math.imul(h2 ^ u8[i], 0x5bd1e995); }
+  return HASH_PREFIX + (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0') + ':' + u8.length;
+}
+
+const hasCurrentHash = item => typeof item.hash === 'string' && item.hash.startsWith(HASH_PREFIX);
+
+// Fill in `hash` on every item that lacks a current one. A blob that can't be
+// read gets a fingerprint of its own so it is never treated as a duplicate.
+async function hashItems(items, onProgress) {
+  let last = performance.now();
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!hasCurrentHash(it)) {
+      try { it.hash = await hashBlob(it.blob); }
+      catch { it.hash = HASH_PREFIX + 'unreadable:' + i + ':' + Math.random(); }
+    }
+    if (performance.now() - last > 50) { onProgress(i + 1, items.length); last = performance.now(); }
+  }
+  onProgress(items.length, items.length);
+}
+
+// One-time clean-up of what is already stored (run at start-up). Skipped once
+// the storage is marked checked and every record has a current fingerprint —
+// from then on duplicates are refused on the way in.
+// In each group of identical pictures the one kept is, in order: an original
+// that has an enhanced copy, a favourite, an original rather than a copy, the
+// oldest. It inherits the ♥ of any removed twin, and enhanced copies of a
+// removed original move to it (or are dropped if it already has one).
+// → { items, ran, removed, extraCopies }
+async function dedupeStored(items) {
+  const db = await openDb();
+  let flag = null;
+  await runTx(db, 'readonly', tx => {
+    const r = tx.objectStore(META_STORE).get('dedup');
+    r.onsuccess = () => { flag = r.result || null; };
+  });
+  const stale = items.filter(r => !hasCurrentHash(r));
+  if (flag && flag.version >= DEDUP_VERSION && !stale.length) {
+    storageChecked = true;
+    return { items, ran: false, removed: 0, extraCopies: 0 };
+  }
+  const label = 'Checking for duplicates…';
+  if (stale.length) {
+    setProgress(label, 0, stale.length);
+    await hashItems(stale, (done, total) => setProgress(label, done, total));
+  }
+
+  const copiesOf = new Map();               // original id → its enhanced copies
+  for (const r of items) {
+    if (r.upscale && r.upscale.of != null) {
+      const list = copiesOf.get(r.upscale.of);
+      list ? list.push(r) : copiesOf.set(r.upscale.of, [r]);
+    }
+  }
+  const groups = new Map();                 // fingerprint → records
+  for (const r of items) {
+    const g = groups.get(r.hash);
+    g ? g.push(r) : groups.set(r.hash, [r]);
+  }
+  const rank = r => (!r.upscale && copiesOf.has(r.id) ? 4 : 0) + (r.favorite ? 2 : 0) + (r.upscale ? 0 : 1);
+  const remove = new Set(), changed = new Set(stale), keeperOf = new Map();
+  let removed = 0, extraCopies = 0;
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    g.sort((a, b) => rank(b) - rank(a) || a.id - b.id);
+    const keep = g[0];
+    if (!keep.favorite && g.some(r => r.favorite)) { keep.favorite = true; changed.add(keep); }
+    for (const r of g.slice(1)) { remove.add(r); keeperOf.set(r.id, keep); removed++; }
+  }
+  for (const [lostId, keep] of keeperOf) {
+    for (const c of copiesOf.get(lostId) || []) {
+      if (remove.has(c)) continue;
+      const keeperHasCopy = (copiesOf.get(keep.id) || []).some(x => !remove.has(x));
+      if (!keep.upscale && !keeperHasCopy) {
+        c.upscale = { ...c.upscale, of: keep.id };
+        changed.add(c);
+        copiesOf.set(keep.id, [c]);
+      } else { remove.add(c); extraCopies++; }
+    }
+  }
+
+  if (changed.size || remove.size) setProgress('Saving the cleaned-up gallery…', null);
+  await runTx(db, 'readwrite', tx => {
+    const st = tx.objectStore(IMG_STORE);
+    for (const r of changed) if (!remove.has(r)) st.put(r);
+    for (const r of remove) st.delete(r.id);
+    tx.objectStore(META_STORE).put({ key: 'dedup', version: DEDUP_VERSION, at: Date.now() });
+  });
+  storageChecked = true;
+  return { items: items.filter(r => !remove.has(r)), ran: true, removed, extraCopies };
 }
 
 // Add one picture (a new upscaled copy) and optionally remove the copy it
@@ -1726,6 +1839,15 @@ function setImages(images) {
   imagesGeneration++;
 }
 
+// Append newly loaded pictures to the in-memory set (nothing is released).
+function addImages(images) {
+  for (const img of images) {
+    ALL_IMAGES.push(img);
+    nextImageId = Math.max(nextImageId, img.id + 1);
+  }
+  imagesGeneration++;
+}
+
 function blobsToImages(items) {
   return items.map((item, i) => ({
     id: item.id ?? i,
@@ -1734,6 +1856,7 @@ function blobsToImages(items) {
     modified: item.modified ?? null,
     upscale: item.upscale ?? null,
     favorite: !!item.favorite,
+    hash: item.hash ?? null,
   }));
 }
 
@@ -1850,15 +1973,6 @@ function upscaledCopyOf(original) {
   return ALL_IMAGES.find(img => img.upscale && img.upscale.of === original.id) || null;
 }
 
-// Loading a new set clears storage — warn when that would drop upscaled copies.
-function confirmReplaceSet() {
-  const count = ALL_IMAGES.filter(img => img.upscale).length;
-  if (!count) return true;
-  return confirm('This gallery has ' + count + ' upscaled picture' + (count === 1 ? '' : 's') +
-    '. Loading a new folder or JSON replaces the whole set and removes ' + (count === 1 ? 'it' : 'them') +
-    '.\n\nUse "Download JSON" first to keep them.\n\nContinue?');
-}
-
 function base64ToBlob(b64, mime) {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -1871,25 +1985,75 @@ function setSourceBadge(label) {
   sourceBadge.className = 'json-mode';
 }
 
-// Replace the gallery with `items`, then persist them (clearing the old set).
+// "📁 Holiday — 240 images" for the source badge. `source` is the stored meta
+// record ({name, kind} for sets saved by this version, older ones only have
+// a ready-made label whose count is brought up to date).
+function badgeLabel(source, total) {
+  const n = total + ' image' + (total === 1 ? '' : 's');
+  if (source && source.name) return (source.kind === 'json' ? '📦 ' : '📁 ') + source.name + ' — ' + n + (source.kind === 'json' ? ' (JSON)' : '');
+  if (source && source.label) return source.label.replace(/\d+ images?/, n);
+  return '💾 Saved gallery — ' + n;
+}
+
+const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+
+// Add the pictures in `items` that aren't in the gallery yet, then persist
+// just those. Skipped: pictures whose file is already stored, and repeats
+// within this load. `items` carry temporary ids (0…n-1) that `upscale.of`
+// refers to; new pictures get fresh ids, and a copy whose original turned
+// out to be already stored is linked to the stored one.
 // The progress panel must already be open (the caller owns showProgress /
-// hideProgress); `stepPrefix` is e.g. "Step 3 of 3".
-async function applyAndStore(items, label, kind, loadedMsg, stepPrefix) {
-  setImages(blobsToImages(items));
+// hideProgress); this does steps `step` and `step + 1` of `steps`.
+async function mergeAndStore(items, src, step, steps) {
+  const checkLabel = 'Step ' + step + ' of ' + steps + ' · Checking for duplicates…';
+  setProgress(checkLabel, 0, items.length);
+  await hashItems(items, (done, total) => setProgress(checkLabel, done, total));
+
+  const stored = new Map();                 // fingerprint → id, for what's already here
+  for (const img of ALL_IMAGES) if (img.hash) stored.set(img.hash, img.id);
+  const seen = new Map();                   // fingerprint → new id, within this load
+  const idMap = new Map();                  // temporary id → final id
+  const fresh = [];
+  let alreadyHere = 0, repeats = 0;
+  for (const it of items) {
+    if (stored.has(it.hash)) { idMap.set(it.id, stored.get(it.hash)); alreadyHere++; continue; }
+    if (seen.has(it.hash)) { idMap.set(it.id, seen.get(it.hash)); repeats++; continue; }
+    const id = nextImageId++;
+    seen.set(it.hash, id);
+    idMap.set(it.id, id);
+    fresh.push(it);
+  }
+  for (const it of fresh) {
+    it.id = idMap.get(it.id);
+    if (it.upscale) it.upscale = { ...it.upscale, of: it.upscale.of != null && idMap.has(it.upscale.of) ? idMap.get(it.upscale.of) : null };
+  }
+
+  const total = ALL_IMAGES.length + fresh.length;
+  const label = badgeLabel(src, total);
+  const skippedBits = (alreadyHere ? ' · ' + alreadyHere + ' already in gallery' : '')
+    + (repeats ? ' · ' + plural(repeats, 'duplicate', 'duplicates') + ' skipped' : '');
+  const unique = ' · ' + total + ' unique in gallery';
   setSourceBadge(label);
+  if (!fresh.length) {
+    showToast('No new pictures — ' + (items.length === 1 ? 'it was' : 'all ' + items.length + ' were')
+      + ' already here' + (repeats ? ' or duplicates' : '') + unique);
+    return;
+  }
+  addImages(blobsToImages(fresh));
   resetGallery();
   requestPersistentStorage();
-  const saveLabel = stepPrefix + ' · Saving to local storage…';
-  setProgress(saveLabel, 0, items.length);
+  const loadedMsg = 'Loaded ' + plural(fresh.length, 'new picture', 'new pictures') + skippedBits;
+  const saveLabel = 'Step ' + (step + 1) + ' of ' + steps + ' · Saving to local storage…';
+  setProgress(saveLabel, 0, fresh.length);
   try {
-    await replaceStoredImages(items, { label, kind }, (done, total) => {
-      if (done < total) setProgress(saveLabel, done, total);
-      else setProgress(stepPrefix + ' · Finishing up…', null);
+    await addStoredImages(fresh, { label, kind: src.kind, name: src.name, count: total }, (done, n) => {
+      if (done < n) setProgress(saveLabel, done, n);
+      else setProgress('Step ' + (step + 1) + ' of ' + steps + ' · Finishing up…', null);
     });
-    showToast(loadedMsg + ' · saved for next time 💾');
+    showToast(loadedMsg + unique + ' 💾');
   } catch (err) {
     console.error('Saving images to local storage failed', err);
-    showToast(loadedMsg + ' · could not save (storage full?)');
+    showToast(loadedMsg + unique + ' · could not save (storage full?)');
   }
 }
 
@@ -1939,15 +2103,14 @@ async function loadFromJson(file) {
     return;
   }
   if (loadBusy) { showToast('Still busy — please wait…'); return; }
-  if (!confirmReplaceSet()) return;
   loadBusy = true;
   showProgress('Loading ' + file.name);
   try {
-    setProgress('Step 1 of 3 · Reading file…', 0, file.size, 'bytes');
+    setProgress('Step 1 of 4 · Reading file…', 0, file.size, 'bytes');
     const text = await readFileAsText(file, (loaded, total) =>
-      setProgress('Step 1 of 3 · Reading file…', loaded, total, 'bytes'));
+      setProgress('Step 1 of 4 · Reading file…', loaded, total, 'bytes'));
 
-    setProgress('Step 1 of 3 · Parsing JSON…', null);
+    setProgress('Step 1 of 4 · Parsing JSON…', null);
     await yieldToBrowser();
     let data;
     try { data = JSON.parse(text); }
@@ -1968,16 +2131,12 @@ async function loadFromJson(file) {
         rawId: f.id,
         rawUpscale: f.upscale,
         favorite: f.favorite === true,
-      }), (done, total) => setProgress('Step 2 of 3 · Decoding images…', done, total));
+      }), (done, total) => setProgress('Step 2 of 4 · Decoding images…', done, total));
     } catch { showToast('JSON contains invalid image data.'); return; }
     resolveUpscales(items);
 
     const folderName = data.folder || file.name.replace('.json','');
-    await applyAndStore(items,
-      '📦 ' + folderName + ' — ' + items.length + ' images (JSON)',
-      'json',
-      'Loaded ' + items.length + ' images from JSON ✨',
-      'Step 3 of 3');
+    await mergeAndStore(items, { name: folderName, kind: 'json' }, 3, 4);
   } catch (err) {
     console.error('Loading JSON failed', err);
     showToast('Could not read that file.');
@@ -2381,7 +2540,6 @@ folderFileInput.addEventListener('change', async e => {
   e.target.value = '';
   if (!files.length) { showToast('No images found in folder.'); return; }
   if (loadBusy) { showToast('Still busy — please wait…'); return; }
-  if (!confirmReplaceSet()) return;
   loadBusy = true;
 
   const folderName = files[0].webkitRelativePath.split('/')[0] || 'Folder';
@@ -2394,14 +2552,10 @@ folderFileInput.addEventListener('change', async e => {
       name: f.name,
       blob: new Blob([f], { type: f.type || extMime(f.name) }),
       modified: f.lastModified || null
-    }), (done, total) => setProgress('Step 1 of 2 · Preparing images…', done, total));
+    }), (done, total) => setProgress('Step 1 of 3 · Preparing images…', done, total));
     resolveUpscales(items);   // "name.upscaled-2x.png" files keep their marker
 
-    await applyAndStore(items,
-      '📁 ' + folderName + ' — ' + items.length + ' images',
-      'folder',
-      'Loaded ' + items.length + ' images from folder ✨',
-      'Step 2 of 2');
+    await mergeAndStore(items, { name: folderName, kind: 'folder' }, 2, 3);
   } catch (err) {
     console.error('Loading folder failed', err);
     showToast('Could not load that folder.');
@@ -4143,6 +4297,7 @@ async function enhanceOne(original, settings, onProgress, isCancelled) {
     id: nextImageId++,
     name: stripExt(original.name) + (size.label === 'cleaned' ? '.cleaned' : '.upscaled-' + size.label) + (settings.format === 'png' ? '.png' : '.jpg'),
     blob,
+    hash: await hashBlob(blob),
     modified: original.modified ?? null,
     // A copy of a ♥ picture is ♥ too, and a re-enhance keeps the ♥ of the copy it replaces.
     favorite: !!original.favorite || !!(previous && previous.favorite),
@@ -4164,7 +4319,7 @@ async function enhanceOne(original, settings, onProgress, isCancelled) {
   try { await storeOnePicture(item, previous ? previous.id : null); }
   catch (err) { console.error('Saving upscaled picture failed', err); saved = false; }
 
-  const img = { id: item.id, name: item.name, url: URL.createObjectURL(blob), modified: item.modified, upscale: item.upscale, favorite: item.favorite };
+  const img = { id: item.id, name: item.name, url: URL.createObjectURL(blob), modified: item.modified, upscale: item.upscale, favorite: item.favorite, hash: item.hash };
   addUpscaledToView(img, original, previous);
   onProgress(1, 'Done');
   return { img, saved, capped: size.capped };
@@ -10639,6 +10794,7 @@ async function refreshStorage() {
   }
   document.getElementById('st-remove-enhanced').disabled = !enh.n && !ALL_IMAGES.some(img => img.upscale);
   document.getElementById('st-remove-models').disabled = !models.length;
+  document.getElementById('st-remove-pictures').disabled = !orig.n && !enh.n && !ALL_IMAGES.length;
 }
 function openStorage() {
   storageDialog.classList.add('open');
@@ -10772,6 +10928,21 @@ document.getElementById('st-remove-enhanced').addEventListener('click', async ()
   showToast('Removed ' + copies.length + ' enhanced cop' + (copies.length === 1 ? 'y' : 'ies'));
   refreshStorage();
 });
+document.getElementById('st-remove-pictures').addEventListener('click', async () => {
+  if (loadBusy) { showToast('Still busy — please wait…'); return; }
+  const n = ALL_IMAGES.length;
+  if (!confirm('Remove all ' + plural(n, 'picture', 'pictures') + ' from this browser, including enhanced copies and favourites? AI models are kept.\n\nUse "Download JSON" first to keep them.')) return;
+  try { await clearStoredImages(); }
+  catch (err) { console.error('Removing pictures failed', err); showToast('Could not remove the pictures.'); return; }
+  storageChecked = true;                     // nothing stored, so nothing to check
+  setImages([]);
+  sourceBadge.textContent = 'No images loaded';
+  sourceBadge.className = '';
+  resetGallery();
+  updateCount();
+  showToast('Removed ' + plural(n, 'picture', 'pictures') + ' · the gallery is empty');
+  refreshStorage();
+});
 document.getElementById('st-remove-models').addEventListener('click', async () => {
   if (!confirm('Remove all downloaded AI models? They can be downloaded again later.')) return;
   try { await modelStoreTx('readwrite', st => st.clear()); } catch (err) { console.error('Removing AI models failed', err); }
@@ -10877,12 +11048,20 @@ setupInstallability();
   try {
     const stored = await readStoredImages();
     if (stored) {
-      setImages(blobsToImages(stored.items));
-      const label = (stored.source && stored.source.label) || ('💾 Saved gallery — ' + stored.items.length + ' images');
-      setSourceBadge(label);
+      let items = stored.items, check = null;
+      try { check = await dedupeStored(items); items = check.items; }
+      catch (err) { console.warn('Duplicate check failed', err); }
+      setImages(blobsToImages(items));
+      setSourceBadge(badgeLabel(stored.source, items.length));
       resetGallery();
+      if (check && check.ran) {
+        showToast('Duplicate check: ' + (check.removed ? 'removed ' + plural(check.removed, 'duplicate', 'duplicates') : 'no duplicates')
+          + (check.extraCopies ? ' (+ ' + plural(check.extraCopies, 'extra enhanced copy', 'extra enhanced copies') + ')' : '')
+          + ' · ' + plural(items.length, 'unique picture', 'unique pictures') + (check.removed || check.extraCopies ? ' left' : ''));
+      }
       return;
     }
+    storageChecked = true;                     // nothing stored yet
   } catch (err) {
     console.warn('Could not read saved images', err);
   } finally {
