@@ -30,6 +30,7 @@ jobs:
           cp -r ereader _site/
           cp -r map-generator _site/
           cp -r lumity-gallery _site/
+          cp -r paint-98 _site/
           cp -r rss-reader _site/
           cp -r shape-draw _site/
           cp -r statement-insights _site/
