@@ -8876,9 +8876,13 @@ const videoSourceBps = info => info.video.samples.reduce((n, x) => n + x.size, 0
 // compression level that share of the source's bitrate, scaled by the change
 // in picture size (black letterbox bars cost next to nothing).
 function videoBitrateFor(info, st, size) {
+  return videoBitrateFrom(st.engine === 'resize' ? videoSourceBps(info) : 0, info.video.width, info.video.height, st, size);
+}
+// The same from the source's bitrate (bit/s) and display size, without a demux (queue totals).
+function videoBitrateFrom(srcBps, w, h, st, size) {
   if (st.engine !== 'resize' || !VIDEO_LEVELS[st.level] || !size) return st.bitrate;
-  const v = info.video, pixels = size.iw * size.ih / (Math.round(v.width) * Math.round(v.height) || 1);
-  const mbps = videoSourceBps(info) * pixels * VIDEO_LEVELS[st.level] / 1e6;
+  const pixels = size.iw * size.ih / (Math.round(w) * Math.round(h) || 1);
+  const mbps = srcBps * pixels * VIDEO_LEVELS[st.level] / 1e6;
   return +Math.min(VIDEO_MBPS[1], Math.max(VIDEO_MBPS[0], mbps)).toPrecision(2) * 1e6;
 }
 const videoCodecOf = st => st.engine === 'resize' && VIDEO_CODECS[st.codec] ? st.codec : 'h264';
@@ -9771,7 +9775,8 @@ async function queueAdd(entries) {
       const info = it.demux = await mp4Demux(file), v = info.video;
       const support = await VideoDecoder.isConfigSupported(v.config).catch(() => ({ supported: false }));
       if (!support.supported) throw new Error('This browser cannot decode this video (' + v.codec + ').');
-      it.info = { w: Math.round(v.width), h: Math.round(v.height), fps: v.fps, duration: info.duration, frames: v.samples.length, codec: videoCodecName(v) };
+      it.info = { w: Math.round(v.width), h: Math.round(v.height), fps: v.fps, duration: info.duration, frames: v.samples.length, codec: videoCodecName(v),
+        ...vqFacts(info) };
       it.total = v.samples.length;
     } catch (err) { it.state = 'failed'; it.error = err.message || String(err); }
     vq.items.push(it);
@@ -9788,17 +9793,91 @@ function queueOutName(name, st, size, bitrate = st.bitrate) {
   return stripExt(name) + (st.res === 'orig' ? '.cleaned-' + size.ih + 'p.mp4' : '.upscaled-' + st.res + 'p.mp4');
 }
 
-// Remaining work in seconds: frames left at the current (or measured) rate.
-function queueEta() {
-  const cur = vq.items.find(it => it.state === 'converting');
-  let fps = cur && cur.fps;
-  if (!fps && vid.info && videoSettings().engine !== 'resize') {     // (Resize only: the frame preview says nothing about the encoder's speed)
-    const st = videoSettings(), size = videoSize(), ms = size && vid.ms[videoChainKey(st, size)];
-    if (ms) fps = 1000 / (ms + 10);
+// ── VIDEO: QUEUE TOTALS (size and time left) ─────────────────────────────────
+const VQ_TODO = ['waiting', 'needs-file', 'converting'];
+// What the totals need from a video, kept in it.info so they survive a reload:
+// exact display size and the bytes of its video and audio samples.
+const vqFacts = info => ({ vw: info.video.width, vh: info.video.height, vbytes: info.video.samples.reduce((n, x) => n + x.size, 0),
+  abytes: info.audio ? info.audio.samples.reduce((n, s) => n + s.size, 0) : 0 });
+// { w, h, duration, frames, vbytes, abytes }, or null (no info: failed to open).
+// Items saved before these were kept: the whole file stands in for the video bytes.
+function vqDims(it) {
+  const I = it.info;
+  if (!I) return null;
+  if (it.demux && I.vbytes == null) Object.assign(I, vqFacts(it.demux));
+  return { w: I.vw || I.w, h: I.vh || I.h, duration: I.duration || 0, frames: I.frames || it.total || 0,
+    vbytes: I.vbytes != null ? I.vbytes : it.size || 0, abytes: I.abytes || 0 };
+}
+const vqSizeOf = (d, st) => videoTargetSize(d.w, d.h, st.mode, st.res, st.engine === 'resize');
+// The output file's bytes with these settings (as “about X for this video”).
+const vqOutBytes = (d, st, size) => videoBitrateFrom(d.vbytes * 8 / (d.duration || 1), d.w, d.h, st, size) / 8 * d.duration + d.abytes;
+// Work per frame, in megapixels weighted so that one rate (seconds per unit)
+// fits videos of every size (fitted to measured runs): 📐 Resize only is
+// encoding the output plus a fixed part per frame (decoding is in hardware);
+// 🧰 cleanup on the GPU mostly scales with the output; AI and cleanup on the
+// original scale with the source picture.
+function vqWork(d, st, size) {
+  const src = Math.round(d.w) * Math.round(d.h) / 1e6, out = size.W * size.H / 1e6;
+  if (st.engine === 'resize') return out + 1.5;
+  return src + out * (st.engine === 'builtin' && st.cleanupOn !== 'original' ? 2 : 0.05);
+}
+
+// The whole queue's output with these settings: n videos, bytes, the
+// originals' bytes, the part still to convert, and how many would be skipped.
+function queueTotals(st) {
+  const t = { n: 0, bytes: 0, orig: 0, todoN: 0, todoBytes: 0, skipped: 0 };
+  for (const it of vq.items) {
+    const d = it.state === 'failed' ? null : vqDims(it);
+    if (!d) continue;
+    const size = vqSizeOf(d, st);
+    if (!size) { t.skipped++; continue; }
+    const b = vqOutBytes(d, st, size);
+    t.n++; t.bytes += b; t.orig += it.size || 0;
+    if (VQ_TODO.includes(it.state)) { t.todoN++; t.todoBytes += b; }
   }
-  if (!fps) return null;
-  const frames = vq.items.reduce((n, it) => n + (it.state === 'waiting' || it.state === 'needs-file' ? it.total || 0 : it.state === 'converting' ? (it.total || 0) - (it.done || 0) : 0), 0);
-  return frames / fps;
+  return t;
+}
+
+// Seconds per megapixel of work per frame, and start-up seconds per video, for
+// these settings, remembered from earlier runs in this browser.
+const VETA_KEY = 'lumity-video-eta-v1';
+const videoEtaSig = st => videoChainKey(st, { iw: 0, ih: 0 }) + (st.engine === 'resize' ? '|' + videoCodecOf(st) : '');
+function vqRates() { try { return JSON.parse(localStorage.getItem(VETA_KEY)) || {}; } catch { return {}; } }
+function vqLearn(st, rate, start) {
+  const all = vqRates(), sig = videoEtaSig(st), old = all[sig];
+  const mix = (a, b) => num(a) != null ? a * 0.5 + b * 0.5 : b;
+  all[sig] = { r: +mix(old && old.r, rate).toPrecision(4), s: +mix(old && old.s, start).toPrecision(3) };
+  try { localStorage.setItem(VETA_KEY, JSON.stringify(all)); } catch { /* private mode: not remembered */ }
+}
+
+// Time left in seconds. The converting video: its frames left at its own rate
+// (measured from its first frame, so start-up doesn't count). The others: their
+// work at the seconds per megapixel measured in this run, else remembered from
+// earlier runs, else from the frame preview, plus a start-up each. Videos that
+// would be skipped add nothing. null: no rate known yet.
+function queueEta() {
+  const st = vq.running && vq.settings || videoSettings(), E = vq.running && vq.eta;
+  const cur = vq.items.find(it => it.state === 'converting');
+  const learned = vqRates()[videoEtaSig(st)];
+  let sec = E ? E.sec : 0, work = E ? E.work : 0;
+  if (cur && cur.fps && cur.work) { const n = cur.done - cur.d1; sec += n / cur.fps; work += n * cur.work; }
+  let rate = work > 0 ? sec / work : learned && num(learned.r);
+  if (!rate && vid.info && st.engine && st.engine !== 'resize') {   // (Resize only: the frame preview says nothing about the encoder's speed)
+    const size = videoSize(), ms = size && vid.ms[videoChainKey(st, size)];
+    if (ms) rate = (ms + 10) / 1000 / vqWork({ w: vid.info.video.width, h: vid.info.video.height }, st, size);
+  }
+  if (!rate) return null;
+  const start = E && E.n ? E.start / E.n : cur && cur.t1 ? cur.startMs / 1000 : learned && num(learned.s) || 0;
+  let left = 0;
+  for (const it of vq.items) {
+    if (!VQ_TODO.includes(it.state)) continue;
+    const d = vqDims(it), size = d && vqSizeOf(d, st);
+    if (!size) continue;
+    if (it !== cur) { left += d.frames * vqWork(d, st, size) * rate + start; continue; }
+    const rest = Math.max(0, (it.total || d.frames) - (it.done || 0));
+    left += it.fps ? rest / it.fps : rest * vqWork(d, st, size) * rate + (it.t1 ? 0 : start);
+  }
+  return left;
 }
 
 const VQ_LABEL = { waiting: 'Waiting', converting: 'Converting', done: 'Done', skipped: 'Skipped', failed: 'Failed', 'needs-file': 'Needs file' };
@@ -9842,9 +9921,14 @@ function queueRender() {
   const count = st => vq.items.filter(it => it.state === st).length;
   const waiting = count('waiting') + count('needs-file'), done = count('done'), conv = vq.items.find(it => it.state === 'converting');
   const eta = waiting || conv ? queueEta() : null;
+  const st = videoSettings(), tot = queueTotals(st);
+  const res = st.res === 'orig' ? '' : st.res + 'p';
   vEls.qsum.textContent = !vq.items.length ? '' : [waiting && waiting + ' waiting', conv && '1 converting', done && done + ' done',
     count('skipped') && count('skipped') + ' skipped', count('failed') && count('failed') + ' failed'].filter(Boolean).join(' · ') +
     (eta ? ' · ' + formatEta(eta) + ' left' : '') +
+    (tot.n ? ' · output ≈ ' + formatBytes(tot.bytes) + ' for ' + tot.n + (tot.n > 1 ? ' videos' : ' video') + ' (originals ' + formatBytes(tot.orig) + ')' +
+      (tot.todoN && tot.todoN < tot.n ? ', ' + formatBytes(tot.todoBytes) + ' of it still to convert' : '') : '') +
+    (tot.skipped ? ' · ' + tot.skipped + ' would be skipped (already ' + res + ' or larger)' : '') +
     (vq.dir ? ' · saving to “' + vq.dir.name + '”' : window.showDirectoryPicker ? '' : ' · finished videos are downloaded');
   vEls.go.hidden = vq.running; vEls.stop.hidden = !vq.running; vEls.cancel.hidden = !vq.running;
   vEls.go.textContent = (vq.restored ? '▶ Continue' : '🎬 Convert all') + (waiting ? ' (' + waiting + ')' : '');
@@ -9863,13 +9947,13 @@ function queueRender() {
   // Settings are fixed while the queue runs.
   for (const fs of videoDialog.querySelectorAll('#video-settings fieldset:not(#video-queue-fs)')) fs.disabled = vq.running;
   // Footer: what Convert will do, in one line
-  const st = videoSettings();
   const what = st.engine === 'resize' ? '📐 Resize only (' + (st.scale === 'sharp' ? 'Sharp' : 'Smooth') + ')'
     : st.engine === 'builtin' ? '🧰 ' + PRESET_NAMES[st.preset]
     : !st.engine ? '✨ AI (download a model)' : '✨ ' + AI_MODELS.find(m => m.id === st.engine).title + (st.preset !== 'none' ? ' → ' + PRESET_NAMES[st.preset] : '');
   vEls.plan.textContent = !vq.items.length ? '' : [vq.running && conv ? 'Converting ' + (done + 1) + ' of ' + (done + waiting + 1) : waiting ? waiting + (waiting > 1 ? ' videos' : ' video') + ' to convert' : 'Nothing waiting',
     what, st.res === 'orig' ? 'own size' : st.res + 'p' + (st.mode === 'box' ? ' letterbox' : ''),
     st.engine === 'resize' ? VIDEO_CODECS[st.codec].name + ' · ' + (st.level === 'custom' ? st.bitrate / 1e6 + ' Mbps' : VIDEO_LEVEL_NAMES[st.level] + ' (' + VIDEO_LEVELS[st.level] * 100 + '% of each source)') : st.bitrate / 1e6 + ' Mbps',
+    tot.todoN && '≈ ' + formatBytes(tot.todoBytes) + ' to write',
     eta && 'about ' + formatEta(eta).replace('about ', '') + ' left', vq.dir && 'saving to “' + vq.dir.name + '”'].filter(Boolean).join(' · ');
 }
 
@@ -9909,13 +9993,13 @@ async function queueRun(opts = {}) {
   }
   if (!dir) {
     const big = vq.items.filter(it => it.state === 'waiting').map(it => {
-      const size = it.demux && videoSizeFor(it.demux.video, st);
-      return (size ? videoBitrateFor(it.demux, st, size) : st.bitrate) / 8 * ((it.info && it.info.duration) || 0);
+      const d = vqDims(it), size = d && vqSizeOf(d, st);
+      return size ? vqOutBytes(d, st, size) : 0;
     }).filter(b => b > 1e9);
     if (big.length && !confirm('This browser can only save each video once it is finished, so a whole file (up to about ' +
       formatBytes(Math.max(...big)) + ') is kept in memory at a time. Continue?')) return;
   }
-  Object.assign(vq, { running: true, stopAfter: false, cancelled: false, restored: false, settings: st, dir });
+  Object.assign(vq, { running: true, stopAfter: false, cancelled: false, restored: false, settings: st, dir, eta: { sec: 0, work: 0, start: 0, n: 0 } });
   vqSaveMeta();
   queueWakeLock(true);
   queueRender();
@@ -9949,7 +10033,10 @@ async function queueOne(it, st, dir) {
       if (existing.size > 0) { vqSet(it, { state: 'skipped', note: '“' + name + '” is already in the folder', outBytes: existing.size, outDir: dir }); return; }
     } catch { /* not there yet */ }
   }
-  vqSet(it, { state: 'converting', done: 0, total: v.samples.length, fps: 0, error: null, note: null });
+  // fps: frames per second since the first finished frame (t1, d1), so model
+  // upload and encoder start-up (startMs) don't count as frame time.
+  const work = vqWork(vqDims(it) || { w: v.width, h: v.height }, st, size);
+  vqSet(it, { state: 'converting', done: 0, total: v.samples.length, fps: 0, t1: 0, d1: 0, startMs: 0, work, error: null, note: null });
   let sink = null, fh = null, cancelled = false, lastSave = 0, lastDraw = 0;
   vq.job = { cancel() { cancelled = true; } };
   const t0 = performance.now();
@@ -9958,12 +10045,20 @@ async function queueOne(it, st, dir) {
     else sink = blobSink();
     const result = await videoUpscale({ file: it.file, info }, st, { start: 0, end: Infinity }, sink, (done, total) => {
       const now = performance.now();
-      it.done = done; it.total = total; it.fps = done / ((now - t0) / 1000);
+      it.done = done; it.total = total;
+      if (!it.t1) Object.assign(it, { t1: now, d1: done, startMs: now - t0 });
+      else if (done - it.d1 >= 3 && now - it.t1 >= 400) it.fps = (done - it.d1) / ((now - it.t1) / 1000);
       if (now - lastDraw > 500) { lastDraw = now; queueRender(); }
       if (now - lastSave > 5000) { lastSave = now; vqSave(it); }
     }, () => cancelled || vq.cancelled);
     if (!dir && result) { downloadBlob(result, name); it.outBlob = result; }   // kept for ▶ Play this session
-    Object.assign(it, { state: 'done', outBytes: dir ? (await fh.getFile()).size : result.size, outDir: dir || null, elapsedMs: performance.now() - t0, finishedAt: Date.now() });
+    const end = performance.now(), frames = it.total - it.d1;
+    if (it.t1 && frames >= 5 && vq.eta) {                       // (the end includes the encoder's flush)
+      const sec = (end - it.t1) / 1000;
+      Object.assign(vq.eta, { sec: vq.eta.sec + sec, work: vq.eta.work + frames * work, start: vq.eta.start + it.startMs / 1000, n: vq.eta.n + 1 });
+      vqLearn(st, sec / (frames * work), it.startMs / 1000);
+    }
+    Object.assign(it, { state: 'done', outBytes: dir ? (await fh.getFile()).size : result.size, outDir: dir || null, elapsedMs: end - t0, finishedAt: Date.now() });
   } catch (err) {
     if (sink) await sink.abort();        // (also for errors before videoUpscale got going; a second abort does nothing)
     // getFileHandle(create) leaves an empty file; don't let it count as done later.
